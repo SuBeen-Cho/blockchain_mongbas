@@ -1,0 +1,75 @@
+################################################################################
+# crypto-config.yaml
+# 조직 및 노드 인증서 생성 설정 (cryptogen 툴 사용)
+#
+# 다중 조직 구성 (n-of-m 승인 정책 구현을 위한 기관 분리)
+#   - ElectionCommissionOrg : 선거관리위원회 (peer0, peer1)
+#   - PartyObserverOrg      : 참관 정당       (peer0)
+#   - CivilSocietyOrg       : 시민단체        (peer0)
+#
+# 승인 정책 목표: 3개 기관 중 2개 이상 서명 (2-of-3)
+#   → 특정 기관 단독으로 투표 데이터 조작 불가능
+#
+# BFT 오더러: 3f+1 = 4 (f=1, 비잔틴 노드 1개 허용)
+################################################################################
+
+OrdererOrgs:
+  - Name: Orderer
+    Domain: orderer.voting.example.com
+    Specs:
+      - Hostname: orderer1
+        SANS:
+          - localhost
+          - 127.0.0.1
+      - Hostname: orderer2
+        SANS:
+          - localhost
+          - 127.0.0.1
+      - Hostname: orderer3
+        SANS:
+          - localhost
+          - 127.0.0.1
+      - Hostname: orderer4
+        SANS:
+          - localhost
+          - 127.0.0.1
+
+PeerOrgs:
+  # ── 조직 1: 선거관리위원회 ─────────────────────────────────
+  # 실제 투표 채널 운영 주체. 피어 2개로 고가용성 확보.
+  - Name: ElectionCommission
+    Domain: ec.voting.example.com
+    EnableNodeOUs: true
+    Template:
+      Count: 2          # peer0.ec, peer1.ec
+      SANS:
+        - localhost
+        - 127.0.0.1
+    Users:
+      Count: 2          # Admin 외 일반 운영자 2명
+
+  # ── 조직 2: 참관 정당 ─────────────────────────────────────
+  # 투표 결과의 독립적 검증. 트랜잭션 승인에 서명 참여.
+  - Name: PartyObserver
+    Domain: party.voting.example.com
+    EnableNodeOUs: true
+    Template:
+      Count: 1          # peer0.party
+      SANS:
+        - localhost
+        - 127.0.0.1
+    Users:
+      Count: 1
+
+  # ── 조직 3: 시민단체 ──────────────────────────────────────
+  # 제3자 감시 기관. n-of-m 정책의 마지막 서명 주체.
+  - Name: CivilSociety
+    Domain: civil.voting.example.com
+    EnableNodeOUs: true
+    Template:
+      Count: 1          # peer0.civil
+      SANS:
+        - localhost
+        - 127.0.0.1
+    Users:
+      Count: 1

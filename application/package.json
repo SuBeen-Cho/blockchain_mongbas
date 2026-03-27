@@ -1,0 +1,20 @@
+{
+  "name": "voting-backend",
+  "version": "1.0.0",
+  "description": "BFT 익명 전자투표 블록체인 REST API 서버",
+  "main": "src/app.js",
+  "scripts": {
+    "start": "node src/app.js",
+    "dev": "nodemon src/app.js"
+  },
+  "dependencies": {
+    "@hyperledger/fabric-gateway": "^1.4.0",
+    "@grpc/grpc-js": "^1.10.0",
+    "express": "^4.18.0",
+    "express-session": "^1.17.0",
+    "uuid": "^9.0.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.0"
+  }
+}

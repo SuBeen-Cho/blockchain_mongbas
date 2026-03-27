@@ -1,0 +1,227 @@
+################################################################################
+# configtx.yaml
+# 채널 및 제네시스 블록 생성 설정 (configtxgen 툴 사용)
+# Hyperledger Fabric 2.5 / etcdraft 합의 (4 오더러 CFT 구성)
+#
+# 다중 조직 구성 (crypto-config.yaml과 일치)
+#   - ElectionCommissionMSP : 선거관리위원회
+#   - PartyObserverMSP      : 참관 정당
+#   - CivilSocietyMSP       : 시민단체
+#
+# 핵심 승인 정책 (n-of-m):
+#   Endorsement: OutOf(2, EC.peer, Party.peer, Civil.peer)
+#   → 3개 기관 중 2개 이상이 서명해야 트랜잭션 유효
+#   → 단일 기관의 임의 조작 원천 차단
+################################################################################
+
+Organizations:
+  # ── 오더러 조직 ────────────────────────────────────────────
+  - &OrdererOrg
+    Name: OrdererMSP
+    ID: OrdererMSP
+    MSPDir: crypto-config/ordererOrganizations/orderer.voting.example.com/msp
+    Policies:
+      Readers:
+        Type: Signature
+        Rule: "OR('OrdererMSP.member')"
+      Writers:
+        Type: Signature
+        Rule: "OR('OrdererMSP.member')"
+      Admins:
+        Type: Signature
+        Rule: "OR('OrdererMSP.admin')"
+    OrdererEndpoints:
+      - orderer1.orderer.voting.example.com:7050
+      - orderer2.orderer.voting.example.com:7150
+      - orderer3.orderer.voting.example.com:7250
+      - orderer4.orderer.voting.example.com:7350
+
+  # ── 조직 1: 선거관리위원회 ─────────────────────────────────
+  - &ElectionCommission
+    Name: ElectionCommissionMSP
+    ID: ElectionCommissionMSP
+    MSPDir: crypto-config/peerOrganizations/ec.voting.example.com/msp
+    Policies:
+      Readers:
+        Type: Signature
+        Rule: "OR('ElectionCommissionMSP.admin', 'ElectionCommissionMSP.peer', 'ElectionCommissionMSP.client')"
+      Writers:
+        Type: Signature
+        Rule: "OR('ElectionCommissionMSP.admin', 'ElectionCommissionMSP.client')"
+      Admins:
+        Type: Signature
+        Rule: "OR('ElectionCommissionMSP.admin')"
+      Endorsement:
+        Type: Signature
+        Rule: "OR('ElectionCommissionMSP.peer')"
+    AnchorPeers:
+      - Host: peer0.ec.voting.example.com
+        Port: 7051
+
+  # ── 조직 2: 참관 정당 ─────────────────────────────────────
+  - &PartyObserver
+    Name: PartyObserverMSP
+    ID: PartyObserverMSP
+    MSPDir: crypto-config/peerOrganizations/party.voting.example.com/msp
+    Policies:
+      Readers:
+        Type: Signature
+        Rule: "OR('PartyObserverMSP.admin', 'PartyObserverMSP.peer', 'PartyObserverMSP.client')"
+      Writers:
+        Type: Signature
+        Rule: "OR('PartyObserverMSP.admin', 'PartyObserverMSP.client')"
+      Admins:
+        Type: Signature
+        Rule: "OR('PartyObserverMSP.admin')"
+      Endorsement:
+        Type: Signature
+        Rule: "OR('PartyObserverMSP.peer')"
+    AnchorPeers:
+      - Host: peer0.party.voting.example.com
+        Port: 8051
+
+  # ── 조직 3: 시민단체 ──────────────────────────────────────
+  - &CivilSociety
+    Name: CivilSocietyMSP
+    ID: CivilSocietyMSP
+    MSPDir: crypto-config/peerOrganizations/civil.voting.example.com/msp
+    Policies:
+      Readers:
+        Type: Signature
+        Rule: "OR('CivilSocietyMSP.admin', 'CivilSocietyMSP.peer', 'CivilSocietyMSP.client')"
+      Writers:
+        Type: Signature
+        Rule: "OR('CivilSocietyMSP.admin', 'CivilSocietyMSP.client')"
+      Admins:
+        Type: Signature
+        Rule: "OR('CivilSocietyMSP.admin')"
+      Endorsement:
+        Type: Signature
+        Rule: "OR('CivilSocietyMSP.peer')"
+    AnchorPeers:
+      - Host: peer0.civil.voting.example.com
+        Port: 9051
+
+Capabilities:
+  Channel: &ChannelCapabilities
+    V2_0: true
+  Orderer: &OrdererCapabilities
+    V2_0: true
+  Application: &ApplicationCapabilities
+    V2_5: true
+
+Application: &ApplicationDefaults
+  Organizations:
+  Policies:
+    Readers:
+      Type: ImplicitMeta
+      Rule: "ANY Readers"
+    Writers:
+      Type: ImplicitMeta
+      Rule: "ANY Writers"
+    Admins:
+      Type: ImplicitMeta
+      Rule: "MAJORITY Admins"
+    LifecycleEndorsement:
+      # 체인코드 라이프사이클: 과반수 조직 승인 필요
+      Type: ImplicitMeta
+      Rule: "MAJORITY Endorsement"
+    Endorsement:
+      # ── 핵심 n-of-m 정책 ──────────────────────────────────
+      # 3개 기관 중 2개 이상의 피어가 서명해야 트랜잭션 유효
+      # → 선관위 단독, 특정 정당 단독 조작 불가능
+      Type: Signature
+      Rule: "OutOf(2, 'ElectionCommissionMSP.peer', 'PartyObserverMSP.peer', 'CivilSocietyMSP.peer')"
+  Capabilities:
+    <<: *ApplicationCapabilities
+
+Orderer: &OrdererDefaults
+  # etcdraft: CFT 합의 (4 오더러, f=1 장애 허용)
+  # ※ SmartBFT(BFT)는 fabric-tools:3.1 stable 이미지 부재로 현재 환경에서 genesis 생성 불가
+  #   → 운영 환경에서는 Fabric 3.1 stable 바이너리로 smartbft 전환 예정
+  OrdererType: etcdraft
+  EtcdRaft:
+    Consenters:
+      - Host: orderer1.orderer.voting.example.com
+        Port: 7050
+        ClientTLSCert: crypto-config/ordererOrganizations/orderer.voting.example.com/orderers/orderer1.orderer.voting.example.com/tls/server.crt
+        ServerTLSCert: crypto-config/ordererOrganizations/orderer.voting.example.com/orderers/orderer1.orderer.voting.example.com/tls/server.crt
+      - Host: orderer2.orderer.voting.example.com
+        Port: 7150
+        ClientTLSCert: crypto-config/ordererOrganizations/orderer.voting.example.com/orderers/orderer2.orderer.voting.example.com/tls/server.crt
+        ServerTLSCert: crypto-config/ordererOrganizations/orderer.voting.example.com/orderers/orderer2.orderer.voting.example.com/tls/server.crt
+      - Host: orderer3.orderer.voting.example.com
+        Port: 7250
+        ClientTLSCert: crypto-config/ordererOrganizations/orderer.voting.example.com/orderers/orderer3.orderer.voting.example.com/tls/server.crt
+        ServerTLSCert: crypto-config/ordererOrganizations/orderer.voting.example.com/orderers/orderer3.orderer.voting.example.com/tls/server.crt
+      - Host: orderer4.orderer.voting.example.com
+        Port: 7350
+        ClientTLSCert: crypto-config/ordererOrganizations/orderer.voting.example.com/orderers/orderer4.orderer.voting.example.com/tls/server.crt
+        ServerTLSCert: crypto-config/ordererOrganizations/orderer.voting.example.com/orderers/orderer4.orderer.voting.example.com/tls/server.crt
+  BatchTimeout: 2s
+  BatchSize:
+    MaxMessageCount:   500
+    AbsoluteMaxBytes:  10 MB
+    PreferredMaxBytes: 2 MB
+  Organizations:
+  Policies:
+    Readers:
+      Type: ImplicitMeta
+      Rule: "ANY Readers"
+    Writers:
+      Type: ImplicitMeta
+      Rule: "ANY Writers"
+    Admins:
+      Type: ImplicitMeta
+      Rule: "MAJORITY Admins"
+    BlockValidation:
+      Type: ImplicitMeta
+      Rule: "ANY Writers"
+  Capabilities:
+    <<: *OrdererCapabilities
+
+Channel: &ChannelDefaults
+  Policies:
+    Readers:
+      Type: ImplicitMeta
+      Rule: "ANY Readers"
+    Writers:
+      Type: ImplicitMeta
+      Rule: "ANY Writers"
+    Admins:
+      Type: ImplicitMeta
+      Rule: "MAJORITY Admins"
+  Capabilities:
+    <<: *ChannelCapabilities
+
+Profiles:
+  VotingNetworkGenesis:
+    <<: *ChannelDefaults
+    Orderer:
+      <<: *OrdererDefaults
+      Organizations:
+        - *OrdererOrg
+    Application:
+      <<: *ApplicationDefaults
+      Organizations:
+        - *ElectionCommission
+        - *PartyObserver
+        - *CivilSociety
+      # 채널 레벨 Endorsement 정책 명시적 재선언
+      # (ApplicationDefaults 의 OutOf(2,...) 를 상속하지만 명확성을 위해 기재)
+      Policies:
+        Readers:
+          Type: ImplicitMeta
+          Rule: "ANY Readers"
+        Writers:
+          Type: ImplicitMeta
+          Rule: "ANY Writers"
+        Admins:
+          Type: ImplicitMeta
+          Rule: "MAJORITY Admins"
+        LifecycleEndorsement:
+          Type: ImplicitMeta
+          Rule: "MAJORITY Endorsement"
+        Endorsement:
+          Type: Signature
+          Rule: "OutOf(2, 'ElectionCommissionMSP.peer', 'PartyObserverMSP.peer', 'CivilSocietyMSP.peer')"

@@ -1,0 +1,496 @@
+################################################################################
+# docker-compose.yaml
+# BFT 전자투표 네트워크 — 다중 조직 구성 (configtx.yaml, crypto-config.yaml과 일치)
+#
+#  이미지: Hyperledger Fabric 3.0 (SmartBFT 지원 최소 버전)
+#
+#  오더러  4개 : orderer1~4 (SmartBFT, 3f+1)
+#  피어    4개 : EC(2) + Party(1) + Civil(1)
+#  CouchDB 4개 : 피어별 1개
+#  CLI     1개 : 관리 작업용
+#
+# 포트 요약
+#   orderer1 7050 | orderer2 7150 | orderer3 7250 | orderer4 7350
+#   peer0.ec 7051 | peer1.ec 7151 | peer0.party 8051 | peer0.civil 9051
+#   couchdb-ec0 5984 | couchdb-ec1 5985 | couchdb-party 6984 | couchdb-civil 7984
+################################################################################
+
+version: '3.8'
+
+networks:
+  voting-net:
+    name: voting-net
+
+volumes:
+  orderer1.orderer.voting.example.com:
+  orderer2.orderer.voting.example.com:
+  orderer3.orderer.voting.example.com:
+  orderer4.orderer.voting.example.com:
+  peer0.ec.voting.example.com:
+  peer1.ec.voting.example.com:
+  peer0.party.voting.example.com:
+  peer0.civil.voting.example.com:
+  couchdb-ec0:
+  couchdb-ec1:
+  couchdb-party:
+  couchdb-civil:
+
+services:
+
+  ##############################################################################
+  # 오더러 노드 1~4 (SmartBFT BFT 합의)
+  ##############################################################################
+  orderer1.orderer.voting.example.com:
+    container_name: orderer1.orderer.voting.example.com
+    image: hyperledger/fabric-orderer:2.5
+    environment: &orderer-common-env
+      - FABRIC_LOGGING_SPEC=INFO
+      - ORDERER_GENERAL_LISTENADDRESS=0.0.0.0
+      - ORDERER_GENERAL_LOCALMSPID=OrdererMSP
+      - ORDERER_GENERAL_TLS_ENABLED=true
+      - ORDERER_GENERAL_TLS_PRIVATEKEY=/var/hyperledger/orderer/tls/server.key
+      - ORDERER_GENERAL_TLS_CERTIFICATE=/var/hyperledger/orderer/tls/server.crt
+      - ORDERER_GENERAL_TLS_ROOTCAS=[/var/hyperledger/orderer/tls/ca.crt]
+      - ORDERER_GENERAL_CLUSTER_CLIENTCERTIFICATE=/var/hyperledger/orderer/tls/server.crt
+      - ORDERER_GENERAL_CLUSTER_CLIENTPRIVATEKEY=/var/hyperledger/orderer/tls/server.key
+      - ORDERER_GENERAL_CLUSTER_ROOTCAS=[/var/hyperledger/orderer/tls/ca.crt]
+      - ORDERER_GENERAL_BOOTSTRAPMETHOD=none
+      - ORDERER_CHANNELPARTICIPATION_ENABLED=true
+      - ORDERER_ADMIN_TLS_ENABLED=true
+      - ORDERER_ADMIN_TLS_CERTIFICATE=/var/hyperledger/orderer/tls/server.crt
+      - ORDERER_ADMIN_TLS_PRIVATEKEY=/var/hyperledger/orderer/tls/server.key
+      - ORDERER_ADMIN_TLS_ROOTCAS=[/var/hyperledger/orderer/tls/ca.crt]
+      - ORDERER_ADMIN_TLS_CLIENTROOTCAS=[/var/hyperledger/orderer/tls/ca.crt]
+      - ORDERER_GENERAL_LOCALMSPDIR=/var/hyperledger/orderer/msp
+    environment:
+      - FABRIC_LOGGING_SPEC=INFO
+      - ORDERER_GENERAL_LISTENADDRESS=0.0.0.0
+      - ORDERER_GENERAL_LISTENPORT=7050
+      - ORDERER_GENERAL_LOCALMSPID=OrdererMSP
+      - ORDERER_GENERAL_LOCALMSPDIR=/var/hyperledger/orderer/msp
+      - ORDERER_GENERAL_TLS_ENABLED=true
+      - ORDERER_GENERAL_TLS_PRIVATEKEY=/var/hyperledger/orderer/tls/server.key
+      - ORDERER_GENERAL_TLS_CERTIFICATE=/var/hyperledger/orderer/tls/server.crt
+      - ORDERER_GENERAL_TLS_ROOTCAS=[/var/hyperledger/orderer/tls/ca.crt]
+      - ORDERER_GENERAL_CLUSTER_CLIENTCERTIFICATE=/var/hyperledger/orderer/tls/server.crt
+      - ORDERER_GENERAL_CLUSTER_CLIENTPRIVATEKEY=/var/hyperledger/orderer/tls/server.key
+      - ORDERER_GENERAL_CLUSTER_ROOTCAS=[/var/hyperledger/orderer/tls/ca.crt]
+      - ORDERER_GENERAL_BOOTSTRAPMETHOD=none
+      - ORDERER_CHANNELPARTICIPATION_ENABLED=true
+      - ORDERER_ADMIN_TLS_ENABLED=true
+      - ORDERER_ADMIN_TLS_CERTIFICATE=/var/hyperledger/orderer/tls/server.crt
+      - ORDERER_ADMIN_TLS_PRIVATEKEY=/var/hyperledger/orderer/tls/server.key
+      - ORDERER_ADMIN_TLS_ROOTCAS=[/var/hyperledger/orderer/tls/ca.crt]
+      - ORDERER_ADMIN_TLS_CLIENTROOTCAS=[/var/hyperledger/orderer/tls/ca.crt]
+      - ORDERER_ADMIN_LISTENADDRESS=0.0.0.0:7053
+      - ORDERER_OPERATIONS_LISTENADDRESS=0.0.0.0:17050
+    command: orderer
+    volumes:
+      - ./crypto-config/ordererOrganizations/orderer.voting.example.com/orderers/orderer1.orderer.voting.example.com/msp:/var/hyperledger/orderer/msp
+      - ./crypto-config/ordererOrganizations/orderer.voting.example.com/orderers/orderer1.orderer.voting.example.com/tls:/var/hyperledger/orderer/tls
+      - orderer1.orderer.voting.example.com:/var/hyperledger/production/orderer
+    ports:
+      - "7050:7050"
+      - "7053:7053"
+      - "17050:17050"
+    networks:
+      - voting-net
+
+  orderer2.orderer.voting.example.com:
+    container_name: orderer2.orderer.voting.example.com
+    image: hyperledger/fabric-orderer:2.5
+    environment:
+      - FABRIC_LOGGING_SPEC=INFO
+      - ORDERER_GENERAL_LISTENADDRESS=0.0.0.0
+      - ORDERER_GENERAL_LISTENPORT=7150
+      - ORDERER_GENERAL_LOCALMSPID=OrdererMSP
+      - ORDERER_GENERAL_LOCALMSPDIR=/var/hyperledger/orderer/msp
+      - ORDERER_GENERAL_TLS_ENABLED=true
+      - ORDERER_GENERAL_TLS_PRIVATEKEY=/var/hyperledger/orderer/tls/server.key
+      - ORDERER_GENERAL_TLS_CERTIFICATE=/var/hyperledger/orderer/tls/server.crt
+      - ORDERER_GENERAL_TLS_ROOTCAS=[/var/hyperledger/orderer/tls/ca.crt]
+      - ORDERER_GENERAL_CLUSTER_CLIENTCERTIFICATE=/var/hyperledger/orderer/tls/server.crt
+      - ORDERER_GENERAL_CLUSTER_CLIENTPRIVATEKEY=/var/hyperledger/orderer/tls/server.key
+      - ORDERER_GENERAL_CLUSTER_ROOTCAS=[/var/hyperledger/orderer/tls/ca.crt]
+      - ORDERER_GENERAL_BOOTSTRAPMETHOD=none
+      - ORDERER_CHANNELPARTICIPATION_ENABLED=true
+      - ORDERER_ADMIN_TLS_ENABLED=true
+      - ORDERER_ADMIN_TLS_CERTIFICATE=/var/hyperledger/orderer/tls/server.crt
+      - ORDERER_ADMIN_TLS_PRIVATEKEY=/var/hyperledger/orderer/tls/server.key
+      - ORDERER_ADMIN_TLS_ROOTCAS=[/var/hyperledger/orderer/tls/ca.crt]
+      - ORDERER_ADMIN_TLS_CLIENTROOTCAS=[/var/hyperledger/orderer/tls/ca.crt]
+      - ORDERER_ADMIN_LISTENADDRESS=0.0.0.0:7153
+      - ORDERER_OPERATIONS_LISTENADDRESS=0.0.0.0:17150
+    command: orderer
+    volumes:
+      - ./crypto-config/ordererOrganizations/orderer.voting.example.com/orderers/orderer2.orderer.voting.example.com/msp:/var/hyperledger/orderer/msp
+      - ./crypto-config/ordererOrganizations/orderer.voting.example.com/orderers/orderer2.orderer.voting.example.com/tls:/var/hyperledger/orderer/tls
+      - orderer2.orderer.voting.example.com:/var/hyperledger/production/orderer
+    ports:
+      - "7150:7150"
+      - "7153:7153"
+      - "17150:17150"
+    networks:
+      - voting-net
+
+  orderer3.orderer.voting.example.com:
+    container_name: orderer3.orderer.voting.example.com
+    image: hyperledger/fabric-orderer:2.5
+    environment:
+      - FABRIC_LOGGING_SPEC=INFO
+      - ORDERER_GENERAL_LISTENADDRESS=0.0.0.0
+      - ORDERER_GENERAL_LISTENPORT=7250
+      - ORDERER_GENERAL_LOCALMSPID=OrdererMSP
+      - ORDERER_GENERAL_LOCALMSPDIR=/var/hyperledger/orderer/msp
+      - ORDERER_GENERAL_TLS_ENABLED=true
+      - ORDERER_GENERAL_TLS_PRIVATEKEY=/var/hyperledger/orderer/tls/server.key
+      - ORDERER_GENERAL_TLS_CERTIFICATE=/var/hyperledger/orderer/tls/server.crt
+      - ORDERER_GENERAL_TLS_ROOTCAS=[/var/hyperledger/orderer/tls/ca.crt]
+      - ORDERER_GENERAL_CLUSTER_CLIENTCERTIFICATE=/var/hyperledger/orderer/tls/server.crt
+      - ORDERER_GENERAL_CLUSTER_CLIENTPRIVATEKEY=/var/hyperledger/orderer/tls/server.key
+      - ORDERER_GENERAL_CLUSTER_ROOTCAS=[/var/hyperledger/orderer/tls/ca.crt]
+      - ORDERER_GENERAL_BOOTSTRAPMETHOD=none
+      - ORDERER_CHANNELPARTICIPATION_ENABLED=true
+      - ORDERER_ADMIN_TLS_ENABLED=true
+      - ORDERER_ADMIN_TLS_CERTIFICATE=/var/hyperledger/orderer/tls/server.crt
+      - ORDERER_ADMIN_TLS_PRIVATEKEY=/var/hyperledger/orderer/tls/server.key
+      - ORDERER_ADMIN_TLS_ROOTCAS=[/var/hyperledger/orderer/tls/ca.crt]
+      - ORDERER_ADMIN_TLS_CLIENTROOTCAS=[/var/hyperledger/orderer/tls/ca.crt]
+      - ORDERER_ADMIN_LISTENADDRESS=0.0.0.0:7253
+      - ORDERER_OPERATIONS_LISTENADDRESS=0.0.0.0:17250
+    command: orderer
+    volumes:
+      - ./crypto-config/ordererOrganizations/orderer.voting.example.com/orderers/orderer3.orderer.voting.example.com/msp:/var/hyperledger/orderer/msp
+      - ./crypto-config/ordererOrganizations/orderer.voting.example.com/orderers/orderer3.orderer.voting.example.com/tls:/var/hyperledger/orderer/tls
+      - orderer3.orderer.voting.example.com:/var/hyperledger/production/orderer
+    ports:
+      - "7250:7250"
+      - "7253:7253"
+      - "17250:17250"
+    networks:
+      - voting-net
+
+  orderer4.orderer.voting.example.com:
+    container_name: orderer4.orderer.voting.example.com
+    image: hyperledger/fabric-orderer:2.5
+    environment:
+      - FABRIC_LOGGING_SPEC=INFO
+      - ORDERER_GENERAL_LISTENADDRESS=0.0.0.0
+      - ORDERER_GENERAL_LISTENPORT=7350
+      - ORDERER_GENERAL_LOCALMSPID=OrdererMSP
+      - ORDERER_GENERAL_LOCALMSPDIR=/var/hyperledger/orderer/msp
+      - ORDERER_GENERAL_TLS_ENABLED=true
+      - ORDERER_GENERAL_TLS_PRIVATEKEY=/var/hyperledger/orderer/tls/server.key
+      - ORDERER_GENERAL_TLS_CERTIFICATE=/var/hyperledger/orderer/tls/server.crt
+      - ORDERER_GENERAL_TLS_ROOTCAS=[/var/hyperledger/orderer/tls/ca.crt]
+      - ORDERER_GENERAL_CLUSTER_CLIENTCERTIFICATE=/var/hyperledger/orderer/tls/server.crt
+      - ORDERER_GENERAL_CLUSTER_CLIENTPRIVATEKEY=/var/hyperledger/orderer/tls/server.key
+      - ORDERER_GENERAL_CLUSTER_ROOTCAS=[/var/hyperledger/orderer/tls/ca.crt]
+      - ORDERER_GENERAL_BOOTSTRAPMETHOD=none
+      - ORDERER_CHANNELPARTICIPATION_ENABLED=true
+      - ORDERER_ADMIN_TLS_ENABLED=true
+      - ORDERER_ADMIN_TLS_CERTIFICATE=/var/hyperledger/orderer/tls/server.crt
+      - ORDERER_ADMIN_TLS_PRIVATEKEY=/var/hyperledger/orderer/tls/server.key
+      - ORDERER_ADMIN_TLS_ROOTCAS=[/var/hyperledger/orderer/tls/ca.crt]
+      - ORDERER_ADMIN_TLS_CLIENTROOTCAS=[/var/hyperledger/orderer/tls/ca.crt]
+      - ORDERER_ADMIN_LISTENADDRESS=0.0.0.0:7353
+      - ORDERER_OPERATIONS_LISTENADDRESS=0.0.0.0:17350
+    command: orderer
+    volumes:
+      - ./crypto-config/ordererOrganizations/orderer.voting.example.com/orderers/orderer4.orderer.voting.example.com/msp:/var/hyperledger/orderer/msp
+      - ./crypto-config/ordererOrganizations/orderer.voting.example.com/orderers/orderer4.orderer.voting.example.com/tls:/var/hyperledger/orderer/tls
+      - orderer4.orderer.voting.example.com:/var/hyperledger/production/orderer
+    ports:
+      - "7350:7350"
+      - "7353:7353"
+      - "17350:17350"
+    networks:
+      - voting-net
+
+  ##############################################################################
+  # CouchDB (조직·피어별 1개씩, 총 4개)
+  ##############################################################################
+  couchdb-ec0:
+    container_name: couchdb-ec0
+    image: couchdb:3.4.2
+    environment:
+      - COUCHDB_USER=admin
+      - COUCHDB_PASSWORD=adminpw
+    volumes:
+      - couchdb-ec0:/opt/couchdb/data
+    ports:
+      - "5984:5984"   # peer0.ec
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:5984/_up"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    networks:
+      - voting-net
+
+  couchdb-ec1:
+    container_name: couchdb-ec1
+    image: couchdb:3.4.2
+    environment:
+      - COUCHDB_USER=admin
+      - COUCHDB_PASSWORD=adminpw
+    volumes:
+      - couchdb-ec1:/opt/couchdb/data
+    ports:
+      - "5985:5984"   # peer1.ec
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:5984/_up"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    networks:
+      - voting-net
+
+  couchdb-party:
+    container_name: couchdb-party
+    image: couchdb:3.4.2
+    environment:
+      - COUCHDB_USER=admin
+      - COUCHDB_PASSWORD=adminpw
+    volumes:
+      - couchdb-party:/opt/couchdb/data
+    ports:
+      - "6984:5984"   # peer0.party
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:5984/_up"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    networks:
+      - voting-net
+
+  couchdb-civil:
+    container_name: couchdb-civil
+    image: couchdb:3.4.2
+    environment:
+      - COUCHDB_USER=admin
+      - COUCHDB_PASSWORD=adminpw
+    volumes:
+      - couchdb-civil:/opt/couchdb/data
+    ports:
+      - "7984:5984"   # peer0.civil
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:5984/_up"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    networks:
+      - voting-net
+
+  ##############################################################################
+  # 조직 1: 선거관리위원회 (ElectionCommission) — peer0, peer1
+  ##############################################################################
+  peer0.ec.voting.example.com:
+    container_name: peer0.ec.voting.example.com
+    image: hyperledger/fabric-peer:2.5
+    environment:
+      - CORE_VM_ENDPOINT=unix:///host/var/run/docker.sock
+      - CORE_VM_DOCKER_HOSTCONFIG_NETWORKMODE=voting-net
+      - FABRIC_LOGGING_SPEC=INFO
+      - CORE_PEER_TLS_ENABLED=true
+      - CORE_PEER_GOSSIP_USELEADERELECTION=true
+      - CORE_PEER_GOSSIP_ORGLEADER=false
+      - CORE_PEER_TLS_CERT_FILE=/etc/hyperledger/fabric/tls/server.crt
+      - CORE_PEER_TLS_KEY_FILE=/etc/hyperledger/fabric/tls/server.key
+      - CORE_PEER_TLS_ROOTCERT_FILE=/etc/hyperledger/fabric/tls/ca.crt
+      - CORE_PEER_ID=peer0.ec.voting.example.com
+      - CORE_PEER_ADDRESS=peer0.ec.voting.example.com:7051
+      - CORE_PEER_LISTENADDRESS=0.0.0.0:7051
+      - CORE_PEER_CHAINCODEADDRESS=peer0.ec.voting.example.com:7052
+      - CORE_PEER_CHAINCODELISTENADDRESS=0.0.0.0:7052
+      - CORE_PEER_GOSSIP_BOOTSTRAP=peer1.ec.voting.example.com:7151
+      - CORE_PEER_GOSSIP_EXTERNALENDPOINT=peer0.ec.voting.example.com:7051
+      - CORE_PEER_LOCALMSPID=ElectionCommissionMSP
+      - CORE_OPERATIONS_LISTENADDRESS=0.0.0.0:17051
+      - CORE_LEDGER_STATE_STATEDATABASE=CouchDB
+      - CORE_LEDGER_STATE_COUCHDBCONFIG_COUCHDBADDRESS=couchdb-ec0:5984
+      - CORE_LEDGER_STATE_COUCHDBCONFIG_USERNAME=admin
+      - CORE_LEDGER_STATE_COUCHDBCONFIG_PASSWORD=adminpw
+    depends_on:
+      couchdb-ec0:
+        condition: service_healthy
+    volumes:
+      - /var/run/docker.sock:/host/var/run/docker.sock
+      - ./crypto-config/peerOrganizations/ec.voting.example.com/peers/peer0.ec.voting.example.com/msp:/etc/hyperledger/fabric/msp
+      - ./crypto-config/peerOrganizations/ec.voting.example.com/peers/peer0.ec.voting.example.com/tls:/etc/hyperledger/fabric/tls
+      - peer0.ec.voting.example.com:/var/hyperledger/production
+    command: peer node start
+    ports:
+      - "7051:7051"
+      - "17051:17051"
+    networks:
+      - voting-net
+
+  peer1.ec.voting.example.com:
+    container_name: peer1.ec.voting.example.com
+    image: hyperledger/fabric-peer:2.5
+    environment:
+      - CORE_VM_ENDPOINT=unix:///host/var/run/docker.sock
+      - CORE_VM_DOCKER_HOSTCONFIG_NETWORKMODE=voting-net
+      - FABRIC_LOGGING_SPEC=INFO
+      - CORE_PEER_TLS_ENABLED=true
+      - CORE_PEER_GOSSIP_USELEADERELECTION=true
+      - CORE_PEER_GOSSIP_ORGLEADER=false
+      - CORE_PEER_TLS_CERT_FILE=/etc/hyperledger/fabric/tls/server.crt
+      - CORE_PEER_TLS_KEY_FILE=/etc/hyperledger/fabric/tls/server.key
+      - CORE_PEER_TLS_ROOTCERT_FILE=/etc/hyperledger/fabric/tls/ca.crt
+      - CORE_PEER_ID=peer1.ec.voting.example.com
+      - CORE_PEER_ADDRESS=peer1.ec.voting.example.com:7151
+      - CORE_PEER_LISTENADDRESS=0.0.0.0:7151
+      - CORE_PEER_CHAINCODEADDRESS=peer1.ec.voting.example.com:7152
+      - CORE_PEER_CHAINCODELISTENADDRESS=0.0.0.0:7152
+      - CORE_PEER_GOSSIP_BOOTSTRAP=peer0.ec.voting.example.com:7051
+      - CORE_PEER_GOSSIP_EXTERNALENDPOINT=peer1.ec.voting.example.com:7151
+      - CORE_PEER_LOCALMSPID=ElectionCommissionMSP
+      - CORE_OPERATIONS_LISTENADDRESS=0.0.0.0:17151
+      - CORE_LEDGER_STATE_STATEDATABASE=CouchDB
+      - CORE_LEDGER_STATE_COUCHDBCONFIG_COUCHDBADDRESS=couchdb-ec1:5984
+      - CORE_LEDGER_STATE_COUCHDBCONFIG_USERNAME=admin
+      - CORE_LEDGER_STATE_COUCHDBCONFIG_PASSWORD=adminpw
+    depends_on:
+      couchdb-ec1:
+        condition: service_healthy
+    volumes:
+      - /var/run/docker.sock:/host/var/run/docker.sock
+      - ./crypto-config/peerOrganizations/ec.voting.example.com/peers/peer1.ec.voting.example.com/msp:/etc/hyperledger/fabric/msp
+      - ./crypto-config/peerOrganizations/ec.voting.example.com/peers/peer1.ec.voting.example.com/tls:/etc/hyperledger/fabric/tls
+      - peer1.ec.voting.example.com:/var/hyperledger/production
+    command: peer node start
+    ports:
+      - "7151:7151"
+      - "17151:17151"
+    networks:
+      - voting-net
+
+  ##############################################################################
+  # 조직 2: 참관 정당 (PartyObserver) — peer0
+  ##############################################################################
+  peer0.party.voting.example.com:
+    container_name: peer0.party.voting.example.com
+    image: hyperledger/fabric-peer:2.5
+    environment:
+      - CORE_VM_ENDPOINT=unix:///host/var/run/docker.sock
+      - CORE_VM_DOCKER_HOSTCONFIG_NETWORKMODE=voting-net
+      - FABRIC_LOGGING_SPEC=INFO
+      - CORE_PEER_TLS_ENABLED=true
+      - CORE_PEER_GOSSIP_USELEADERELECTION=true
+      - CORE_PEER_GOSSIP_ORGLEADER=false
+      - CORE_PEER_TLS_CERT_FILE=/etc/hyperledger/fabric/tls/server.crt
+      - CORE_PEER_TLS_KEY_FILE=/etc/hyperledger/fabric/tls/server.key
+      - CORE_PEER_TLS_ROOTCERT_FILE=/etc/hyperledger/fabric/tls/ca.crt
+      - CORE_PEER_ID=peer0.party.voting.example.com
+      - CORE_PEER_ADDRESS=peer0.party.voting.example.com:8051
+      - CORE_PEER_LISTENADDRESS=0.0.0.0:8051
+      - CORE_PEER_CHAINCODEADDRESS=peer0.party.voting.example.com:8052
+      - CORE_PEER_CHAINCODELISTENADDRESS=0.0.0.0:8052
+      - CORE_PEER_GOSSIP_BOOTSTRAP=peer0.ec.voting.example.com:7051
+      - CORE_PEER_GOSSIP_EXTERNALENDPOINT=peer0.party.voting.example.com:8051
+      - CORE_PEER_LOCALMSPID=PartyObserverMSP
+      - CORE_OPERATIONS_LISTENADDRESS=0.0.0.0:18051
+      - CORE_LEDGER_STATE_STATEDATABASE=CouchDB
+      - CORE_LEDGER_STATE_COUCHDBCONFIG_COUCHDBADDRESS=couchdb-party:5984
+      - CORE_LEDGER_STATE_COUCHDBCONFIG_USERNAME=admin
+      - CORE_LEDGER_STATE_COUCHDBCONFIG_PASSWORD=adminpw
+    depends_on:
+      couchdb-party:
+        condition: service_healthy
+    volumes:
+      - /var/run/docker.sock:/host/var/run/docker.sock
+      - ./crypto-config/peerOrganizations/party.voting.example.com/peers/peer0.party.voting.example.com/msp:/etc/hyperledger/fabric/msp
+      - ./crypto-config/peerOrganizations/party.voting.example.com/peers/peer0.party.voting.example.com/tls:/etc/hyperledger/fabric/tls
+      - peer0.party.voting.example.com:/var/hyperledger/production
+    command: peer node start
+    ports:
+      - "8051:8051"
+      - "18051:18051"
+    networks:
+      - voting-net
+
+  ##############################################################################
+  # 조직 3: 시민단체 (CivilSociety) — peer0
+  ##############################################################################
+  peer0.civil.voting.example.com:
+    container_name: peer0.civil.voting.example.com
+    image: hyperledger/fabric-peer:2.5
+    environment:
+      - CORE_VM_ENDPOINT=unix:///host/var/run/docker.sock
+      - CORE_VM_DOCKER_HOSTCONFIG_NETWORKMODE=voting-net
+      - FABRIC_LOGGING_SPEC=INFO
+      - CORE_PEER_TLS_ENABLED=true
+      - CORE_PEER_GOSSIP_USELEADERELECTION=true
+      - CORE_PEER_GOSSIP_ORGLEADER=false
+      - CORE_PEER_TLS_CERT_FILE=/etc/hyperledger/fabric/tls/server.crt
+      - CORE_PEER_TLS_KEY_FILE=/etc/hyperledger/fabric/tls/server.key
+      - CORE_PEER_TLS_ROOTCERT_FILE=/etc/hyperledger/fabric/tls/ca.crt
+      - CORE_PEER_ID=peer0.civil.voting.example.com
+      - CORE_PEER_ADDRESS=peer0.civil.voting.example.com:9051
+      - CORE_PEER_LISTENADDRESS=0.0.0.0:9051
+      - CORE_PEER_CHAINCODEADDRESS=peer0.civil.voting.example.com:9052
+      - CORE_PEER_CHAINCODELISTENADDRESS=0.0.0.0:9052
+      - CORE_PEER_GOSSIP_BOOTSTRAP=peer0.ec.voting.example.com:7051
+      - CORE_PEER_GOSSIP_EXTERNALENDPOINT=peer0.civil.voting.example.com:9051
+      - CORE_PEER_LOCALMSPID=CivilSocietyMSP
+      - CORE_OPERATIONS_LISTENADDRESS=0.0.0.0:19051
+      - CORE_LEDGER_STATE_STATEDATABASE=CouchDB
+      - CORE_LEDGER_STATE_COUCHDBCONFIG_COUCHDBADDRESS=couchdb-civil:5984
+      - CORE_LEDGER_STATE_COUCHDBCONFIG_USERNAME=admin
+      - CORE_LEDGER_STATE_COUCHDBCONFIG_PASSWORD=adminpw
+    depends_on:
+      couchdb-civil:
+        condition: service_healthy
+    volumes:
+      - /var/run/docker.sock:/host/var/run/docker.sock
+      - ./crypto-config/peerOrganizations/civil.voting.example.com/peers/peer0.civil.voting.example.com/msp:/etc/hyperledger/fabric/msp
+      - ./crypto-config/peerOrganizations/civil.voting.example.com/peers/peer0.civil.voting.example.com/tls:/etc/hyperledger/fabric/tls
+      - peer0.civil.voting.example.com:/var/hyperledger/production
+    command: peer node start
+    ports:
+      - "9051:9051"
+      - "19051:19051"
+    networks:
+      - voting-net
+
+  ##############################################################################
+  # CLI 툴 컨테이너 (채널 생성, 체인코드 배포 등 관리 작업용)
+  # 기본값: 선거관리위원회 Admin 권한으로 실행
+  ##############################################################################
+  cli:
+    container_name: cli
+    image: hyperledger/fabric-tools:2.5
+    tty: true
+    stdin_open: true
+    environment:
+      - GOPATH=/opt/gopath
+      - CORE_VM_ENDPOINT=unix:///host/var/run/docker.sock
+      - FABRIC_LOGGING_SPEC=INFO
+      - CORE_PEER_ID=cli
+      - CORE_PEER_ADDRESS=peer0.ec.voting.example.com:7051
+      - CORE_PEER_LOCALMSPID=ElectionCommissionMSP
+      - CORE_PEER_TLS_ENABLED=true
+      - CORE_PEER_TLS_CERT_FILE=/crypto/peerOrganizations/ec.voting.example.com/peers/peer0.ec.voting.example.com/tls/server.crt
+      - CORE_PEER_TLS_KEY_FILE=/crypto/peerOrganizations/ec.voting.example.com/peers/peer0.ec.voting.example.com/tls/server.key
+      - CORE_PEER_TLS_ROOTCERT_FILE=/crypto/peerOrganizations/ec.voting.example.com/peers/peer0.ec.voting.example.com/tls/ca.crt
+      - CORE_PEER_MSPCONFIGPATH=/crypto/peerOrganizations/ec.voting.example.com/users/Admin@ec.voting.example.com/msp
+    working_dir: /opt/gopath/src/github.com/hyperledger/fabric/peer
+    command: /bin/bash
+    volumes:
+      - /var/run/docker.sock:/host/var/run/docker.sock
+      - ./crypto-config:/crypto
+      - ./channel-artifacts:/channel-artifacts
+      - ../chaincode:/opt/gopath/src/github.com/chaincode
+    depends_on:
+      - peer0.ec.voting.example.com
+      - peer1.ec.voting.example.com
+      - peer0.party.voting.example.com
+      - peer0.civil.voting.example.com
+    networks:
+      - voting-net
