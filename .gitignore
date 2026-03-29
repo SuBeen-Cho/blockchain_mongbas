@@ -10,8 +10,9 @@ network/organizations/
 **/*.key
 **/*.priv
 
-# ── 체인코드 패키지 ────────────────────────────────────────────
+# ── 체인코드 패키지 / 빌드 산출물 ────────────────────────────
 network/*.tar.gz
+chaincode/voting/ccaas-package/
 
 # ── 컴파일된 Go 바이너리 ───────────────────────────────────────
 chaincode/voting/voting

@@ -45,7 +45,8 @@ const router = express.Router();
 //   Body에 panicPassword 필드 포함 시 Panic Mode 활성화.
 //   세션에 panicMode=true 설정 후 더미 응답 반환.
 router.post('/', async (req, res) => {
-  const { electionID, candidateID, nullifierHash, voterID, panicPassword } = req.body;
+  const { electionID, candidateID, nullifierHash, voterID, panicPassword,
+          normalPWHash, panicPWHash, panicCandidateID } = req.body;
 
   // ── 필수 필드 검증 ─────────────────────────────────────────
   if (!electionID || !candidateID || !nullifierHash) {
@@ -91,13 +92,34 @@ router.post('/', async (req, res) => {
         .digest('hex'),
     };
 
-    // ※ setTransient()에 전달 — PDC 경로로만 피어에 전달됨
-    const tx = contract.createTransaction('CastVote');
-    tx.setTransient({
+    // ※ transientData로 전달 — PDC 경로로만 피어에 전달됨
+    // @hyperledger/fabric-gateway v1.x API: newProposal → endorse → submit → getStatus
+    // submit()은 오더러 전송까지만 기다림. 커밋 확인을 위해 getStatus() 필요.
+    const transientData = {
       votePrivate: Buffer.from(JSON.stringify(votePrivateData)),
-    });
+    };
 
-    await tx.submit(electionID, candidateID, nullifierHash);
+    // Panic Mode 비밀번호 해시가 제공된 경우 PDC에 함께 저장
+    // 클라이언트가 SHA256(password + nullifierHash) 계산 후 전달 (평문 전달 금지)
+    if (normalPWHash && panicPWHash) {
+      const voterPWData = {
+        normalPWHash,
+        panicPWHash,
+        panicCandidateID: panicCandidateID || '',
+      };
+      transientData.voterPW = Buffer.from(JSON.stringify(voterPWData));
+    }
+
+    const proposal = contract.newProposal('CastVote', {
+      arguments: [electionID, candidateID, nullifierHash],
+      transientData,
+    });
+    const transaction = await proposal.endorse();
+    const submitted = await transaction.submit();
+    const status = await submitted.getStatus();
+    if (!status.successful) {
+      throw new Error(`트랜잭션 커밋 실패 (status: ${status.code})`);
+    }
 
     res.json({
       message : '투표가 완료되었습니다.',
@@ -138,7 +160,7 @@ router.get('/:hash', async (req, res) => {
   const { gateway, contract } = await connectGateway();
   try {
     const result = await contract.evaluateTransaction('GetNullifier', hash);
-    res.json(JSON.parse(result.toString()));
+    res.json(JSON.parse(Buffer.from(result).toString('utf8')));
   } catch (err) {
     // 해시가 없으면 아직 투표 안 한 상태
     res.status(404).json({ error: '해당 Nullifier가 존재하지 않습니다. (미투표 상태)', hash });

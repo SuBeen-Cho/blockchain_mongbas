@@ -1,21 +1,25 @@
 # 팀 몽바스 — BFT 기반 익명 전자투표 블록체인 시스템
 
-> **중간 보고 기준일: 2026-03-27**
-> Hyperledger Fabric 기반 | 다중 기관 합의 | Nullifier 익명 투표 | Private Data Collection
+> **최종 업데이트: 2026-03-30** (STEP 1~5 완료, 전 단계 성능 평가 완료)
+> Hyperledger Fabric 기반 | 다중 기관 합의 | Nullifier 익명 투표 | Shamir SSS | Panic Password
 
 ---
 
 ## 1. 프로젝트 개요
 
 ### 문제 정의
+
 기존 전자투표 시스템은 중앙 서버에 의존하여 **단일 기관에 의한 조작 가능성**과 **유권자 익명성 침해** 위험이 존재합니다.
+또한 E2E 검증을 위한 증명 데이터가 강압 증거로 악용되는 **"검증의 역설"** 문제가 있습니다.
 
 ### 목표
+
 Hyperledger Fabric 블록체인을 활용하여:
 - **단일 기관 조작 불가** — 3개 독립 기관 중 2개 이상 동의해야 트랜잭션 유효
 - **완전한 익명성** — 투표 사실은 증명 가능하되 누가 투표했는지는 알 수 없음
 - **이중투표 원천 차단** — Nullifier 해시로 수학적으로 보장
-- **강압 상황 대응** — Panic Mode (부인 가능 인증) 설계
+- **강압 상황 대응** — Panic Password (부인 가능 인증): 강압자에게 가짜 Merkle 증명 제공
+- **분산 집계** — Shamir SSS: 단일 관리자 없이 n-of-m 기관 합의로 결과 복원
 
 ---
 
@@ -64,42 +68,40 @@ Hyperledger Fabric 블록체인을 활용하여:
           │
           ▼ CastVote 호출
           │
-          ├─→ [공개 원장]  Nullifier { nullifierHash, candidateID }
+          ├─→ [공개 원장]  Nullifier { nullifierHash, candidateID, evictCount }
           │      ↑ 누가 투표했는지 알 수 없음 (해시만 저장)
-          │      ↑ 이중투표 방지 (동일 해시 중복 제출 차단)
+          │      ↑ 재투표 시 덮어쓰기 (Eviction) 지원
           │
           └─→ [PDC: VotePrivateCollection]  VotePrivate { voterID, ... }
                  ↑ 오더러에게 전달되지 않음
                  ↑ 피어의 비공개 사이드DB에만 저장
+                 ↑ Shamir share도 여기에 저장
 ```
 
 ---
 
-## 3. 구현 완료 현황 (중간 보고 기준)
+## 3. 구현 완료 현황
 
 ### 전체 진행률
 
 | 영역 | 항목 | 상태 |
 |-----|-----|------|
-| **네트워크** | crypto-config.yaml (3조직 + 4오더러 인증서 설계) | ✅ 완료 |
-| **네트워크** | configtx.yaml (채널·제네시스 블록, 2-of-3 정책) | ✅ 완료 |
-| **네트워크** | docker-compose.yaml (오더러4·피어4·CouchDB4) | ✅ 완료 |
-| **네트워크** | network.sh (전체 기동 자동화 스크립트) | ✅ 완료 |
-| **네트워크** | 실제 네트워크 기동 및 채널 참여 검증 | ✅ 완료 |
-| **체인코드** | Election / Nullifier / VotePrivate / VoteTally 구조체 | ✅ 완료 |
-| **체인코드** | InitLedger / CreateElection / CloseElection | ✅ 완료 |
-| **체인코드** | CastVote (Nullifier + PDC Transient 처리) | ✅ 완료 |
-| **체인코드** | TallyVotes (CouchDB Rich Query 집계) | ✅ 완료 |
-| **체인코드** | CouchDB 인덱스 설정 | ✅ 완료 |
-| **체인코드** | PDC (VotePrivateCollection) 설정 | ✅ 완료 |
-| **체인코드** | 배포 검증 (3기관 승인 / 2-of-3 커밋) | ✅ 완료 |
-| **체인코드** | 투표 시나리오 테스트 통과 | ✅ 완료 |
-| **백엔드** | Node.js REST API | 🔲 미착수 |
-| **보안** | Panic Mode (부인 가능 인증) | 🔲 미착수 |
-| **보안** | Idemix ZKP 익명 자격증명 | 🔲 미착수 |
-| **프론트엔드** | React 투표 UI | 🔲 미착수 |
-| **검증** | 장애 내성 시뮬레이션 | 🔲 미착수 |
-| **검증** | Caliper 성능 측정 (TPS / Latency) | 🔲 미착수 |
+| **네트워크** | crypto-config.yaml (3조직 + 4오더러 인증서) | ✅ |
+| **네트워크** | configtx.yaml (채널·제네시스 블록, 2-of-3 정책) | ✅ |
+| **네트워크** | docker-compose.yaml + network.sh 자동화 | ✅ |
+| **체인코드** | CreateElection / ActivateElection / CastVote | ✅ |
+| **체인코드** | CloseElection / TallyVotes / GetTally | ✅ |
+| **체인코드** | BuildMerkleTree / GetMerkleProof / GetMerkleRoot | ✅ |
+| **체인코드** | GetMerkleProofWithPassword (Normal/Panic) | ✅ |
+| **체인코드** | CastVote Eviction 모드 (EvictCount 추적) | ✅ |
+| **체인코드** | InitKeySharing / SubmitKeyShare (Shamir SSS) | ✅ |
+| **백엔드** | Node.js REST API (전체 엔드포인트) | ✅ 완료 (200회 벤치마크) |
+| **보안** | Panic Password / Deniable Verification | ✅ 완료 (200회 벤치마크) |
+| **보안** | Nullifier Eviction (재투표 지원) | ✅ 완료 (100회 벤치마크) |
+| **보안** | Shamir SSS n=2/m=3 분산 집계 | ✅ 완료 (50회 벤치마크) |
+| **보안** | Idemix ZKP 익명 자격증명 | 🔲 선택 사항 |
+| **프론트엔드** | React 투표 UI | 🔲 미착수 (STEP 6) |
+| **검증** | Caliper 성능 측정 (TPS / Latency) | 🔲 미착수 (STEP 7) |
 
 ---
 
@@ -110,100 +112,136 @@ Hyperledger Fabric 블록체인을 활용하여:
 | 함수 | 접근 | 설명 |
 |-----|------|------|
 | `InitLedger` | 관리자 | 시연용 선거 데이터 초기화 |
-| `CreateElection` | 관리자 | 새 선거 생성 (MSP ID 자동 기록) |
-| `CastVote` | 유권자 | 익명 투표 — Nullifier 저장 + PDC 비공개 저장 |
-| `GetElection` | 누구나 | 선거 정보 조회 |
-| `GetNullifier` | 누구나 | 투표 여부 확인 (이중투표 방지 검증) |
+| `CreateElection` | 관리자 | 선거 생성 + 더미 Nullifier 3개/후보 자동 생성 |
+| `ActivateElection` | 관리자 | CREATED → ACTIVE 상태 전환 |
+| `CastVote` | 유권자 | 익명 투표 — Nullifier(덮어쓰기 지원) + PDC + 비밀번호 저장 |
 | `CloseElection` | 관리자 | 선거 종료 + 자동 집계 |
 | `TallyVotes` | 관리자 | CouchDB Rich Query 득표 집계 |
 | `GetTally` | 누구나 | 개표 결과 조회 |
+| `BuildMerkleTree` | 관리자 | Merkle Tree 구축, Root Hash 원장 저장 |
+| `GetMerkleProof` | 누구나 | Merkle 포함 증명 (E2E 검증) |
+| `GetMerkleProofWithPassword` | 유권자 | Deniable Verification (Normal/Panic 분기) |
+| `InitKeySharing` | 관리자 | masterKey 생성 → Shamir 3분할 → PDC 저장 |
+| `SubmitKeyShare` | 기관 | share 제출 → n≥2 시 Lagrange 복원 검증 |
+| `GetKeyDecryptionStatus` | 누구나 | Shamir 복원 현황 조회 |
 
-### 4-2. PDC (Private Data Collection) 구조
-
-```
-VotePrivateCollection
-  ├─ policy: OR(선관위.peer, 참관정당.peer, 시민단체.peer)
-  ├─ requiredPeerCount: 2   ← 최소 2개 피어에 복제
-  ├─ maxPeerCount: 4
-  ├─ blockToLive: 0         ← 영구 보존
-  └─ memberOnlyRead: true   ← 구성원 외 읽기 불가
-```
-
-### 4-3. 실제 테스트 결과
+### 4-2. REST API 엔드포인트
 
 ```
-[STEP] [테스트 1/4] 선거 정보 조회
-→ {"electionID":"ELECTION_2026_PRESIDENT","status":"ACTIVE","candidates":["CANDIDATE_A","CANDIDATE_B","CANDIDATE_C"]}
+POST /api/elections                    선거 생성
+POST /api/elections/:id/activate       선거 활성화 (CREATED→ACTIVE)
+GET  /api/elections/:id                선거 정보 조회
+POST /api/elections/:id/close          선거 종료
+GET  /api/elections/:id/tally          개표 결과
+POST /api/elections/:id/merkle         Merkle Tree 구축
+GET  /api/elections/:id/merkle         Merkle Root 조회
+GET  /api/elections/:id/proof/:null    Merkle 포함 증명
+POST /api/elections/:id/proof          Deniable Verification (Normal/Panic)
+POST /api/elections/:id/keysharing     Shamir 키 분산 초기화 (CLOSED 후)
+POST /api/elections/:id/shares         Shamir share 제출 (n≥2 시 자동 복원)
+GET  /api/elections/:id/decryption     복원 현황 조회
+POST /api/vote                         투표 제출 (PDC + Transient + Eviction)
+GET  /api/nullifier/:hash              Nullifier 확인 (evictCount 포함)
+```
 
-[STEP] [테스트 2/4] 투표 제출 (선관위 + 참관 정당 서명으로 2-of-3 충족)
-→ Chaincode invoke successful. result: status:200
+### 4-3. Shamir SSS 수학적 근거
 
-[STEP] [테스트 3/4] Nullifier 확인 (이중투표 방지)
-→ {"nullifierHash":"3a8fc9c0...","candidateID":"CANDIDATE_A"}
+```
+소수체: GF(257)  (p=257 > 255, 모든 바이트값 수용)
+다항식: f(x) = masterKey[i] + coeff[i]·x  mod 257  (degree-1, threshold=2)
 
-[STEP] [테스트 4/4] 이중투표 시도 (에러 발생 시 정상)
-→ [INFO] 이중투표 정상 차단 확인
-
-[INFO] 모든 테스트 통과!
+share 생성:  share_j[i] = f(j)  for j=1,2,3
+복원 (x=0):  f(0) = 2·y₁ + 256·y₂  mod 257  (Lagrange 보간)
+검증:        SHA256(복원된 masterKey) == 원장의 keyHash
 ```
 
 ---
 
-## 5. 향후 계획
+## 5. 성능 평가 결과
 
-### 남은 작업 및 일정
+> 전체 상세: [docs/performance/PERF-SUMMARY.md](./docs/performance/PERF-SUMMARY.md)
 
-| 순서 | 항목 | 핵심 내용 | 난이도 |
+### Latency 요약
+
+| 연산 | 샘플 | 평균 | P95 | 판정 |
+|------|------|------|-----|------|
+| CastVote (신규) | 200회 | 2184.8ms | 2277ms | ❌ BatchTimeout(P95 목표 초과) |
+| 재투표 Eviction | 100회 | 2198.0ms | 2257ms | ✅ CastVote 대비 +13ms |
+| InitKeySharing | 50회 | 2258.4ms | 2363ms | ✅ CastVote 대비 +74ms |
+| GetMerkleProof (N=100) | 200회 | 112.7ms | 172ms | ✅ |
+| Normal/Panic Proof | 200회 | 112.6 / 98.8ms | 191 / 111ms | ✅ |
+
+### 정확도 / 보안
+
+| 지표 | 결과 |
+|------|------|
+| 이중투표 차단 | 100/100 = **100%** ✅ |
+| Eviction 집계 정확도 | 20/20 = **100%** ✅ |
+| Panic 타이밍 차이 | **13.7ms** (< 100ms) ✅ |
+| Shamir threshold 정확도 | 30/30 = **100%** ✅ |
+| Shamir 타이밍 차이 | **22.4ms** (부채널 저항) ✅ |
+
+---
+
+## 6. 향후 계획
+
+| 순서 | 항목 | 핵심 내용 | 상태 |
 |-----|-----|---------|------|
-| 1 | **Node.js 백엔드 API** | Fabric Gateway SDK 연동, REST API 구현 (투표·조회·집계) | ★★☆ |
-| 2 | **React 프론트엔드** | 투표 화면, 결과 조회, 관리자 화면 | ★★☆ |
-| 3 | **Panic Mode** | 패닉 비밀번호 감지 시 가짜 투표 기록 반환 (Deniable UI) | ★★★ |
-| 4 | **장애 내성 검증** | 오더러 노드 강제 종료 후 정상 작동 확인 | ★☆☆ |
-| 5 | **Caliper 성능 측정** | TPS / Latency 측정, 오더러 수·블록 크기 변수 실험 | ★★☆ |
-| 6 | **Idemix ZKP** | Fabric CA 연동, 익명 자격증명 발급 (시간 여유 시) | ★★★★ |
-
-### 기술적 고려사항
-
-**합의 알고리즘:**
-현재 **etcdraft (4-node)** 사용 중입니다. 진정한 BFT(SmartBFT)는 `fabric-tools:3.x` 안정 이미지가 Docker Hub에 출시되면 전환 가능합니다. 현 구성은 **오더러 1개 장애까지 허용**하는 CFT 구성입니다.
-
-**Idemix 현실:**
-Idemix는 Fabric CA에 구현되어 있으나 Node.js SDK 연동이 불완전합니다. 구현 난이도가 높으므로 설계 문서 + 부분 구현으로 접근할 계획입니다.
+| ~~1~~ | ~~Node.js 백엔드 API~~ | — | ✅ 200회 벤치마크 |
+| ~~2~~ | ~~Merkle Tree~~ | — | ✅ 200회 벤치마크 |
+| ~~3~~ | ~~Panic Password~~ | — | ✅ 200회 벤치마크 |
+| ~~4~~ | ~~Nullifier Eviction~~ | — | ✅ 100회 벤치마크 |
+| ~~5~~ | ~~Shamir's Secret Sharing~~ | — | ✅ 50회 벤치마크 |
+| **6** | **React 프론트엔드** | 투표 UI, Deniable UI, 관리자 화면 | 🔲 미착수 |
+| **7** | **Caliper 성능 측정** | TPS / Latency, BatchTimeout 최적화 | 🔲 미착수 |
+| (선택) | Idemix ZKP | Fabric CA 연동, 익명 자격증명 | 🔲 선택 |
 
 ---
 
-## 6. 실행 방법
+## 7. 실행 방법
 
 ```bash
 cd network/
 
-# 1. 네트워크 기동 (인증서 생성 → 제네시스 블록 → Docker → 채널 참여)
+# 1. 네트워크 기동
 ./scripts/network.sh up
 
-# 2. 체인코드 배포 (3기관 승인 → 2-of-3 커밋 → InitLedger)
+# 2. 체인코드 배포 (sequence 자동 감지, 현재 9)
 ./scripts/network.sh deploy
 
-# 3. 동작 확인 (투표 → Nullifier → 이중투표 차단 테스트)
+# 3. 동작 확인
 ./scripts/network.sh test
 
 # 종료
 ./scripts/network.sh down
 ```
 
+```bash
+# API 서버
+cd application && npm install && npm start   # http://localhost:3000
+
+# 벤치마크
+bash scripts/bench_full.sh      # STEP 1~3
+bash scripts/bench_step45.sh    # STEP 4~5
+```
+
 ---
 
-## 7. 기술 스택
+## 8. 기술 스택
 
 | 레이어 | 기술 |
 |-------|------|
 | 블록체인 네트워크 | Hyperledger Fabric 2.5 |
-| 합의 알고리즘 | etcdraft (4-node) |
+| 합의 알고리즘 | etcdraft (4-node, CFT) |
 | 상태 DB | CouchDB 3.4 |
-| 체인코드 언어 | Go 1.21 + fabric-contract-api-go |
+| 체인코드 | Go 1.21 + fabric-contract-api-go |
 | 컨테이너 | Docker / docker-compose |
-| 백엔드 (예정) | Node.js + @hyperledger/fabric-gateway |
+| 백엔드 | Node.js + @hyperledger/fabric-gateway v1.7.1 |
 | 프론트엔드 (예정) | React.js |
+| 암호학 | SHA-256, GF(257) Shamir SSS, Merkle Tree |
 
 ---
 
-> 상세 개발자 인계 문서: [HANDOFF.md](./HANDOFF.md)
+> 진행 현황 상세: [docs/PROGRESS.md](./docs/PROGRESS.md)
+> 성능 평가 종합: [docs/performance/PERF-SUMMARY.md](./docs/performance/PERF-SUMMARY.md)
+> 개발자 인계 문서: [HANDOFF.md](./HANDOFF.md)

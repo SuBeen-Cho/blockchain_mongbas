@@ -230,46 +230,94 @@ cmd_up() {
 }
 
 # ──────────────────────────────────────────────────────────────
-# cmd_deploy: 체인코드 배포 (3개 기관 승인 → 2-of-3 커밋)
+# cmd_deploy: 체인코드 배포 (CCAAS 방식 — macOS Docker Desktop 호환)
+#
+# CCAAS (Chaincode as a Service) 배포 흐름:
+#   1. CCAAS 패키지 생성 (connection.json + metadata.json)
+#   2. 4개 피어에 설치
+#   3. 패키지 ID 조회 → voting-chaincode 컨테이너에 주입
+#   4. 3개 기관 승인 → 커밋 → InitLedger
 # ──────────────────────────────────────────────────────────────
 cmd_deploy() {
   cd "$NETWORK_DIR"
 
-  # ── 패키징 (1회) ────────────────────────────────────────────
-  step "[배포 1/7] 체인코드 패키징..."
-  use_ec0
-  peer lifecycle chaincode package "${CHAINCODE_LABEL}.tar.gz" \
-    --path "${CHAINCODE_PATH}" \
-    --lang golang \
-    --label "${CHAINCODE_LABEL}"
-  info "패키징 완료: ${CHAINCODE_LABEL}.tar.gz"
+  # ── CCAAS 패키지 생성 ─────────────────────────────────────────
+  step "[배포 1/7] CCAAS 패키지 생성..."
+  CCAAS_PKG="/tmp/voting_ccaas_pkg"
+  rm -rf "${CCAAS_PKG}" && mkdir -p "${CCAAS_PKG}"
+
+  # connection.json: 피어가 체인코드 서비스에 연결할 주소
+  cat > "${CCAAS_PKG}/connection.json" << 'EOF'
+{
+  "address": "voting-chaincode:7052",
+  "dial_timeout": "10s",
+  "tls_required": false
+}
+EOF
+
+  # metadata.json: ccaas 외부 빌더 감지용 type 필드
+  # peer 내장 ccaas_builder는 "ccaas" 타입을 감지함
+  cat > "${CCAAS_PKG}/metadata.json" << EOF
+{
+  "type": "ccaas",
+  "label": "${CHAINCODE_LABEL}"
+}
+EOF
+
+  cd "${CCAAS_PKG}"
+  tar czf code.tar.gz connection.json
+  tar czf "${NETWORK_DIR}/${CHAINCODE_LABEL}_ccaas.tar.gz" code.tar.gz metadata.json
+  cd "${NETWORK_DIR}"
+  info "CCAAS 패키지 완료: ${CHAINCODE_LABEL}_ccaas.tar.gz"
 
   # ── 4개 피어 전체 설치 ───────────────────────────────────────
-  step "[배포 2/7] 4개 피어에 체인코드 설치..."
+  step "[배포 2/7] 4개 피어에 CCAAS 패키지 설치..."
 
   info "  설치: peer0.ec (선관위)"
   use_ec0
-  peer lifecycle chaincode install "${CHAINCODE_LABEL}.tar.gz"
+  peer lifecycle chaincode install "${CHAINCODE_LABEL}_ccaas.tar.gz"
 
   info "  설치: peer1.ec (선관위 보조)"
   use_ec1
-  peer lifecycle chaincode install "${CHAINCODE_LABEL}.tar.gz"
+  peer lifecycle chaincode install "${CHAINCODE_LABEL}_ccaas.tar.gz"
 
   info "  설치: peer0.party (참관 정당)"
   use_party
-  peer lifecycle chaincode install "${CHAINCODE_LABEL}.tar.gz"
+  peer lifecycle chaincode install "${CHAINCODE_LABEL}_ccaas.tar.gz"
 
   info "  설치: peer0.civil (시민단체)"
   use_civil
-  peer lifecycle chaincode install "${CHAINCODE_LABEL}.tar.gz"
+  peer lifecycle chaincode install "${CHAINCODE_LABEL}_ccaas.tar.gz"
 
-  # ── 패키지 ID 조회 ───────────────────────────────────────────
-  step "[배포 3/7] 패키지 ID 조회..."
+  # ── 패키지 ID 조회 + voting-chaincode 컨테이너에 주입 ────────
+  step "[배포 3/7] 패키지 ID 조회 및 CCAAS 컨테이너 기동..."
   use_ec0
   PACKAGE_ID=$(peer lifecycle chaincode queryinstalled \
     --output json \
     | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['installed_chaincodes'][0]['package_id'])")
   info "Package ID: ${PACKAGE_ID}"
+
+  # voting-chaincode 컨테이너에 패키지 ID 설정 후 재시작
+  info "  CCAAS 컨테이너에 CHAINCODE_ID 주입..."
+  cd "$NETWORK_DIR"
+  docker rm -f voting-chaincode 2>/dev/null || true
+  docker run -d \
+    --name voting-chaincode \
+    --network voting-net \
+    -e CHAINCODE_SERVER_ADDRESS=0.0.0.0:7052 \
+    -e CHAINCODE_ID="${PACKAGE_ID}" \
+    voting-chaincode:1.0
+  info "  CCAAS 컨테이너 기동 완료 (PackageID: ${PACKAGE_ID:0:40}...)"
+  sleep 3
+
+  # ── 현재 커밋된 시퀀스 조회 → 다음 시퀀스 계산 ─────────────
+  use_ec0
+  CURRENT_SEQ=$(peer lifecycle chaincode querycommitted \
+    --channelID "${CHANNEL_NAME}" --name "${CHAINCODE_NAME}" \
+    --output json 2>/dev/null \
+    | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('sequence',0))" 2>/dev/null || echo "0")
+  NEXT_SEQ=$((CURRENT_SEQ + 1))
+  info "현재 시퀀스: ${CURRENT_SEQ} → 다음 시퀀스: ${NEXT_SEQ}"
 
   # ── 3개 기관 각각 승인 (n-of-m 핵심) ────────────────────────
   step "[배포 4/7] 3개 기관 체인코드 승인 (각 기관이 독립적으로 서명)..."
@@ -279,7 +327,7 @@ cmd_deploy() {
     --name "${CHAINCODE_NAME}"
     --version "${CHAINCODE_VERSION}"
     --package-id "${PACKAGE_ID}"
-    --sequence 1
+    --sequence "${NEXT_SEQ}"
     --collections-config "${CHAINCODE_PATH}/collection_config.json"
     --tls
     --cafile "${ORDERER_CA}"
@@ -305,7 +353,7 @@ cmd_deploy() {
     --channelID "${CHANNEL_NAME}" \
     --name "${CHAINCODE_NAME}" \
     --version "${CHAINCODE_VERSION}" \
-    --sequence 1 \
+    --sequence "${NEXT_SEQ}" \
     --collections-config "${CHAINCODE_PATH}/collection_config.json" \
     --output json
   # 기대값: {"approvals":{"ElectionCommissionMSP":true,"PartyObserverMSP":true,"CivilSocietyMSP":true}}
@@ -317,7 +365,7 @@ cmd_deploy() {
     --channelID "${CHANNEL_NAME}" \
     --name "${CHAINCODE_NAME}" \
     --version "${CHAINCODE_VERSION}" \
-    --sequence 1 \
+    --sequence "${NEXT_SEQ}" \
     --collections-config "${CHAINCODE_PATH}/collection_config.json" \
     --tls \
     --cafile "${ORDERER_CA}" \

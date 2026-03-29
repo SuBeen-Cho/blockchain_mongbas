@@ -1,11 +1,11 @@
 [
   {
     "name": "VotePrivateCollection",
-    "policy": "OR('ElectionCommissionMSP.peer', 'PartyObserverMSP.peer', 'CivilSocietyMSP.peer')",
+    "policy": "OR('ElectionCommissionMSP.member', 'PartyObserverMSP.member', 'CivilSocietyMSP.member')",
     "requiredPeerCount": 2,
     "maxPeerCount": 4,
     "blockToLive": 0,
-    "memberOnlyRead": true,
+    "memberOnlyRead": false,
     "memberOnlyWrite": false
   }
 ]
