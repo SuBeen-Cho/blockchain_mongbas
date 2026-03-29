@@ -21,8 +21,8 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 NETWORK_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 PROJECT_DIR="$(cd "$NETWORK_DIR/.." && pwd)"
 
-# Fabric 바이너리 경로 (fabric-samples 설치 위치)
-FABRIC_BIN="/home/hihi/fabric-capstone/fabric-samples/bin"
+# Fabric 바이너리 경로 (PROJECT_DIR 기준 상대 경로)
+FABRIC_BIN="${PROJECT_DIR}/fabric-samples/bin"
 export PATH="${FABRIC_BIN}:${PATH}"
 
 CHANNEL_NAME="voting-channel"
@@ -31,7 +31,7 @@ CHAINCODE_VERSION="1.0"
 CHAINCODE_PATH="${PROJECT_DIR}/chaincode/voting"
 CHAINCODE_LABEL="${CHAINCODE_NAME}_${CHAINCODE_VERSION}"
 FABRIC_CFG_PATH="${NETWORK_DIR}"
-PEER_CFG_PATH="/home/hihi/fabric-capstone/fabric-samples/config"
+PEER_CFG_PATH="${PROJECT_DIR}/fabric-samples/config"
 
 CRYPTO="${NETWORK_DIR}/crypto-config"
 
