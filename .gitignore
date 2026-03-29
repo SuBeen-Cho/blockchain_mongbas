@@ -1,13 +1,43 @@
+# Hyperledger Fabric 바이너리 및 샘플 (280MB, 별도 설치)
+fabric-samples/
+
 # ── 인증서 / 개인키 (절대 커밋 금지) ──────────────────────────
 network/crypto-config/
 network/channel-artifacts/
+network/organizations/
+**/keystore/
+**/*.pem
+**/*.key
+**/*.priv
 
 # ── 체인코드 패키지 ────────────────────────────────────────────
 network/*.tar.gz
 
+# ── 컴파일된 Go 바이너리 ───────────────────────────────────────
+chaincode/voting/voting
+
 # ── Node.js ────────────────────────────────────────────────────
+node_modules/
 application/node_modules/
 application/.env
+npm-debug.log*
+
+# ── 환경변수 ───────────────────────────────────────────────────
+.env
+*.secret
 
 # ── 로그 ───────────────────────────────────────────────────────
 *.log
+
+# ── Caliper 결과 리포트 (생성된 HTML/PNG) ─────────────────────
+caliper/reports/*.html
+caliper/reports/*.png
+
+# ── 테스트 임시 파일 ──────────────────────────────────────────
+*.csv
+normal_times.txt
+panic_times.txt
+
+# ── OS ─────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
