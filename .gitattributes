@@ -1,0 +1,26 @@
+# 모든 텍스트 파일은 LF로 정규화 (Windows CRLF 방지)
+* text=auto eol=lf
+
+# 셸 스크립트 — 반드시 LF (CRLF이면 WSL/Linux에서 실행 불가)
+*.sh text eol=lf
+
+# Go 소스
+*.go text eol=lf
+
+# JavaScript / JSON
+*.js text eol=lf
+*.json text eol=lf
+
+# YAML
+*.yaml text eol=lf
+*.yml text eol=lf
+
+# 마크다운 / 텍스트
+*.md text eol=lf
+*.txt text eol=lf
+
+# 바이너리 — 변환 금지
+*.tar.gz binary
+*.zip binary
+*.png binary
+*.jpg binary
