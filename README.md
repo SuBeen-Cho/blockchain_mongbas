@@ -200,6 +200,49 @@ share 생성:  share_j[i] = f(j)  for j=1,2,3
 
 ## 7. 실행 방법
 
+### 7-0. 처음 받는 경우 — 전체 세팅 순서
+
+> git에 포함되지 않는 항목들은 아래 단계에서 자동 생성됩니다.
+
+| 항목 | git 포함 여부 | 생성 방법 |
+|------|-------------|----------|
+| `fabric-samples/` (Fabric 바이너리) | ❌ | 아래 1단계 |
+| `network/crypto-config/` (인증서·개인키) | ❌ | `network.sh up` 자동 생성 |
+| `network/channel-artifacts/` (제네시스 블록) | ❌ | `network.sh up` 자동 생성 |
+| `application/node_modules/` | ❌ | `npm install` |
+| `chaincode/voting/vendor/` (Go 의존성) | ✅ | 별도 설치 불필요 |
+
+```bash
+# 1. 저장소 클론
+git clone https://github.com/SuBeen-Cho/blockchain_mongbas.git
+cd blockchain_mongbas
+
+# 2. Fabric 바이너리 설치 (cryptogen, peer, orderer 등 포함, ~280MB)
+curl -sSL https://bit.ly/2ysbOFE | bash -s -- 2.5.0 1.5.7
+# → fabric-samples/ 디렉토리 생성됨
+
+# 3. 네트워크 기동 (crypto-config, channel-artifacts 자동 생성)
+cd network
+./scripts/network.sh up
+# → network/crypto-config/ 자동 생성 (cryptogen)
+# → network/channel-artifacts/ 자동 생성 (configtxgen)
+
+# 4. 체인코드 배포
+./scripts/network.sh deploy
+
+# 5. Node.js 의존성 설치
+cd ../application && npm install
+
+# 6. API 서버 기동
+npm start   # http://localhost:3000
+```
+
+> **crypto-config.zip은 필요 없습니다.** 인증서는 `network.sh up`으로 각자 환경에서 새로 생성합니다.
+
+---
+
+### 7-1. 이미 세팅된 경우 — 일반 실행
+
 ```bash
 cd network/
 
@@ -218,7 +261,7 @@ cd network/
 
 ```bash
 # API 서버
-cd application && npm install && npm start   # http://localhost:3000
+cd application && npm start   # http://localhost:3000
 
 # 벤치마크
 bash scripts/bench_full.sh      # STEP 1~3
