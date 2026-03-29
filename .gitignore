@@ -2,6 +2,7 @@
 fabric-samples/
 
 # ── 인증서 / 개인키 (절대 커밋 금지) ──────────────────────────
+crypto-config.zip
 network/crypto-config/
 network/channel-artifacts/
 network/organizations/
