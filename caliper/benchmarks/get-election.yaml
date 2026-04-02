@@ -1,0 +1,46 @@
+# ============================================================
+# Caliper 벤치마크 설정 — 조회 성능 (Read-only)
+#
+# 측정 항목:
+#   - GetElection: 선거 정보 조회 (evaluate, 원장 읽기)
+#   - GetTally: 개표 결과 조회
+#   - GetMerkleProof: Merkle 포함 증명 조회
+# ============================================================
+
+test:
+  name: BFT 익명 전자투표 — 조회 성능 측정
+  description: Read-only 트랜잭션(evaluateTransaction) 처리 성능.
+
+  workers:
+    number: 4
+
+  rounds:
+    - label: GetElection
+      description: "선거 정보 조회 TPS"
+      txNumber: 200
+      rateControl:
+        type: fixed-rate
+        opts:
+          tps: 20
+      workload:
+        module: workloads/getElection.js
+        arguments:
+          electionID: caliper-bench-read
+
+    - label: GetMerkleProof
+      description: "Merkle 포함 증명 조회 — O(log N) 검증"
+      txNumber: 200
+      rateControl:
+        type: fixed-rate
+        opts:
+          tps: 20
+      workload:
+        module: workloads/getMerkleProof.js
+        arguments:
+          electionID: caliper-bench-read
+
+monitor:
+  type: [docker]
+  docker:
+    name: [peer0.ec.voting.example.com, orderer1.orderer.voting.example.com]
+    interval: 5

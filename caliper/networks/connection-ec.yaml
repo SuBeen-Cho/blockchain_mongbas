@@ -1,0 +1,46 @@
+# Fabric SDK 연결 프로파일 — 선거관리위원회(ElectionCommission) 조직
+name: ec-connection-profile
+version: "1.0"
+client:
+  organization: ElectionCommissionMSP
+  connection:
+    timeout:
+      peer: { endorser: 300 }
+      orderer: 300
+
+organizations:
+  ElectionCommissionMSP:
+    mspid: ElectionCommissionMSP
+    peers: [peer0.ec.voting.example.com, peer1.ec.voting.example.com]
+
+peers:
+  peer0.ec.voting.example.com:
+    url: grpcs://localhost:7051
+    tlsCACerts:
+      path: "../../network/crypto-config/peerOrganizations/ec.voting.example.com/peers/peer0.ec.voting.example.com/tls/ca.crt"
+    grpcOptions:
+      ssl-target-name-override: peer0.ec.voting.example.com
+      hostnameOverride: peer0.ec.voting.example.com
+
+  peer1.ec.voting.example.com:
+    url: grpcs://localhost:7151
+    tlsCACerts:
+      path: "../../network/crypto-config/peerOrganizations/ec.voting.example.com/peers/peer1.ec.voting.example.com/tls/ca.crt"
+    grpcOptions:
+      ssl-target-name-override: peer1.ec.voting.example.com
+      hostnameOverride: peer1.ec.voting.example.com
+
+orderers:
+  orderer1.orderer.voting.example.com:
+    url: grpcs://localhost:7050
+    tlsCACerts:
+      path: "../../network/crypto-config/ordererOrganizations/orderer.voting.example.com/orderers/orderer1.orderer.voting.example.com/tls/ca.crt"
+    grpcOptions:
+      ssl-target-name-override: orderer1.orderer.voting.example.com
+
+channels:
+  voting-channel:
+    orderers: [orderer1.orderer.voting.example.com]
+    peers:
+      peer0.ec.voting.example.com: { endorsingPeer: true, chaincodeQuery: true, ledgerQuery: true, eventSource: true }
+      peer1.ec.voting.example.com: { endorsingPeer: true, chaincodeQuery: true, ledgerQuery: true, eventSource: false }

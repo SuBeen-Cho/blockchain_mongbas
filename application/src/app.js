@@ -19,6 +19,7 @@ const express        = require('express');
 const session        = require('express-session');
 const electionsRouter = require('./routes/elections');
 const voteRouter     = require('./routes/vote');
+const { idemixStatus } = require('./middleware/auth');
 
 const app  = express();
 const PORT = process.env.PORT || 3000;
@@ -44,8 +45,8 @@ app.use('/api/nullifier', voteRouter);
 app.use('/api/vote',      voteRouter);
 
 // ── 헬스 체크 ───────────────────────────────────────────────────
-app.get('/health', (req, res) => {
-  res.json({ status: 'ok', timestamp: new Date().toISOString() });
+app.get('/health', (_req, res) => {
+  res.json({ status: 'ok', timestamp: new Date().toISOString(), idemix: idemixStatus() });
 });
 
 // ── API 목록 (개발 편의) ────────────────────────────────────────

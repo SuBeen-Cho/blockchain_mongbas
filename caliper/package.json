@@ -1,0 +1,16 @@
+{
+  "name": "mongbas-caliper",
+  "version": "1.0.0",
+  "description": "Hyperledger Caliper 성능 평가 — 팀 몽바스 BFT 익명 전자투표",
+  "scripts": {
+    "caliper": "caliper launch manager",
+    "bench:vote":  "caliper launch manager --caliper-workspace . --caliper-networkconfig networks/fabric-network.yaml --caliper-benchconfig benchmarks/cast-vote.yaml --caliper-flow-only-test",
+    "bench:query": "caliper launch manager --caliper-workspace . --caliper-networkconfig networks/fabric-network.yaml --caliper-benchconfig benchmarks/get-election.yaml --caliper-flow-only-test",
+    "bench:all":   "caliper launch manager --caliper-workspace . --caliper-networkconfig networks/fabric-network.yaml --caliper-benchconfig benchmarks/full-bench.yaml --caliper-flow-only-test"
+  },
+  "dependencies": {
+    "@hyperledger/caliper-cli":    "0.6.0",
+    "@hyperledger/caliper-fabric": "0.6.0"
+  },
+  "engines": { "node": ">=18.0.0" }
+}

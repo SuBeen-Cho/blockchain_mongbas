@@ -1,0 +1,80 @@
+# ============================================================
+# Caliper 전체 벤치마크 — 최종 성능 보고서용
+#
+# 실행 순서:
+#   1. CastVote (낮은/중간/높은 부하)
+#   2. GetElection / GetMerkleProof (조회)
+#   3. BFT 장애 내성: 오더러 1개 중단 후 CastVote 재측정
+#
+# 보고서 목표 지표 (3주차 보고서 VII):
+#   - TPS 측정 (노드 수 4개 기준)
+#   - Latency P50/P95/P99
+#   - BFT 장애 내성 (1개 오더러 중단 시 TPS 유지율)
+# ============================================================
+
+test:
+  name: 팀 몽바스 — 최종 성능 평가 (Caliper)
+  description: |
+    BFT 익명 전자투표 시스템 전체 성능 측정.
+    3주차 보고서 VII항 성능 측정 계획 달성 여부 검증.
+
+  workers:
+    number: 4
+
+  rounds:
+    # ─── 투표 성능 ─────────────────────────────────────────
+    - label: "[VOTE] Low_TPS_1"
+      txNumber: 50
+      rateControl: { type: fixed-rate, opts: { tps: 1 } }
+      workload:
+        module: workloads/castVote.js
+        arguments: { electionID: full-bench-vote-1, candidates: [A, B, C] }
+
+    - label: "[VOTE] Mid_TPS_5"
+      txNumber: 100
+      rateControl: { type: fixed-rate, opts: { tps: 5 } }
+      workload:
+        module: workloads/castVote.js
+        arguments: { electionID: full-bench-vote-5, candidates: [A, B, C] }
+
+    - label: "[VOTE] High_TPS_10"
+      txNumber: 200
+      rateControl: { type: fixed-rate, opts: { tps: 10 } }
+      workload:
+        module: workloads/castVote.js
+        arguments: { electionID: full-bench-vote-10, candidates: [A, B, C] }
+
+    # ─── 조회 성능 ─────────────────────────────────────────
+    - label: "[QUERY] GetElection_TPS_20"
+      txNumber: 200
+      rateControl: { type: fixed-rate, opts: { tps: 20 } }
+      workload:
+        module: workloads/getElection.js
+        arguments: { electionID: full-bench-vote-1 }
+
+    - label: "[QUERY] GetMerkleProof_TPS_20"
+      txNumber: 200
+      rateControl: { type: fixed-rate, opts: { tps: 20 } }
+      workload:
+        module: workloads/getMerkleProof.js
+        arguments: { electionID: full-bench-vote-1 }
+
+monitor:
+  type: [docker, process]
+  docker:
+    name:
+      - peer0.ec.voting.example.com
+      - peer0.party.voting.example.com
+      - peer0.civil.voting.example.com
+      - orderer1.orderer.voting.example.com
+      - orderer2.orderer.voting.example.com
+    interval: 5
+  process:
+    - command: node
+      arguments: src/app.js
+      multiOutput: avg
+    interval: 5
+
+observer:
+  type: local
+  interval: 5
