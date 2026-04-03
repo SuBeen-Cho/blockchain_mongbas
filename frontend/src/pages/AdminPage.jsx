@@ -64,13 +64,20 @@ export default function AdminPage() {
   const [res,  setRes]  = useState({});
   const [err,  setErr]  = useState({});
 
-  const run = (key, fn) => async () => {
-    setBusy(b => ({ ...b, [key]: true }));
-    setRes(r => ({ ...r, [key]: null }));
-    setErr(e => ({ ...e, [key]: '' }));
-    try   { setRes(r => ({ ...r, [key]: await fn() })); }
-    catch (e) { setErr(er => ({ ...er, [key]: e.message })); }
-    finally { setBusy(b => ({ ...b, [key]: false })); }
+  const run = (key, fn) => {
+    return async () => {
+      setBusy(b => ({ ...b, [key]: true }));
+      setRes(r => ({ ...r, [key]: null }));
+      setErr(e => ({ ...e, [key]: '' }));
+      try {
+        const data = await fn();
+        setRes(r => ({ ...r, [key]: data }));
+      } catch (e) {
+        setErr(er => ({ ...er, [key]: e.message }));
+      } finally {
+        setBusy(b => ({ ...b, [key]: false }));
+      }
+    };
   };
 
   // ── 선거 생성 ─────────────────────────────────────

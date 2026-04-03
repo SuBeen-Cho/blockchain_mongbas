@@ -84,7 +84,7 @@ monitor:
     - command: node
       arguments: src/app.js
       multiOutput: avg
-    interval: 5
+      interval: 5
 
 observer:
   type: local

@@ -6,7 +6,7 @@
 #   1. cd ../network && ./scripts/network.sh up
 #   2. ./scripts/network.sh deploy
 #   3. cd ../caliper && npm install
-#   4. npx caliper bind --caliper-bind-sut fabric:2.4
+#   4. npx caliper bind --caliper-bind-sut fabric:2.5
 #
 # 실행:
 #   bash run-caliper.sh [vote|query|all]
@@ -68,6 +68,82 @@ run_bench() {
   log "✅ ${label} 완료 → ${report_file}"
 }
 
+# ── HTTP 인증 벤치마크 실행 헬퍼 ──────────────────────────
+_http_bench() {
+  local label="$1"
+  local idemix_enabled="$2"
+  local simulate_ms="$3"
+  local cache_enabled="${4:-false}"
+
+  local app_dir="${WORKSPACE}/../application"
+  local bench_script="${app_dir}/benchmark/http-bench.js"
+  local report_json="${REPORT_DIR}/auth_bench_${label}_${TIMESTAMP}.json"
+
+  sep "HTTP 인증 벤치마크: ${label}"
+  log "IDEMIX_ENABLED=${idemix_enabled}  IDEMIX_SIMULATE_MS=${simulate_ms}  IDEMIX_CACHE_ENABLED=${cache_enabled}"
+
+  if ! curl -sf http://localhost:3000/health >/dev/null 2>&1; then
+    log "⚠️  API 서버 미기동 — 잠시 대기 후 재시도..."
+    sleep 3
+    if ! curl -sf http://localhost:3000/health >/dev/null 2>&1; then
+      log "❌ API 서버 응답 없음. 스킵합니다."
+      return
+    fi
+  fi
+
+  IDEMIX_ENABLED="${idemix_enabled}" \
+  IDEMIX_SIMULATE_MS="${simulate_ms}" \
+  IDEMIX_CACHE_ENABLED="${cache_enabled}" \
+  node "${bench_script}" --duration 15 --concur 20 \
+    2>&1 | tee "${REPORT_DIR}/auth_bench_${label}_${TIMESTAMP}.log"
+
+  # 마지막 JSON 리포트를 지정 이름으로 복사
+  latest_json=$(ls -t "${app_dir}/benchmark-reports"/auth-bench-*.json 2>/dev/null | head -1)
+  if [ -n "${latest_json}" ]; then
+    cp "${latest_json}" "${report_json}"
+    log "✅ JSON 저장: ${report_json}"
+  fi
+}
+
+# ── Idemix 성능 비교 (3단계) ───────────────────────────────
+_run_idemix_compare() {
+  sep "Idemix 성능 비교 — 3단계 측정"
+  log "API 서버(node src/app.js)가 실행 중이어야 합니다."
+  log "  예: cd ../application && node src/app.js &"
+  echo ""
+
+  # 1단계: 기준선 (Idemix 없음)
+  _http_bench "1_baseline"  "false" "0"   "false"
+
+  # 2단계: Idemix 적용 (50ms ZKP 시뮬레이션)
+  _http_bench "2_idemix"    "true"  "50"  "false"
+
+  # 3단계: Idemix + 캐시 최적화
+  _http_bench "3_optimized" "true"  "50"  "true"
+
+  sep "비교 결과 요약"
+  log "JSON 리포트:"
+  ls -lh "${REPORT_DIR}"/auth_bench_*_${TIMESTAMP}.json 2>/dev/null || true
+  echo ""
+
+  # 간단 요약 출력 (jq 있을 경우)
+  if command -v jq &>/dev/null; then
+    printf "\n%-20s %10s %8s %8s %8s\n" "단계" "TPS" "P50(ms)" "P95(ms)" "P99(ms)"
+    printf "%-20s %10s %8s %8s %8s\n" "──────────────────" "──────────" "────────" "────────" "────────"
+    for f in "${REPORT_DIR}"/auth_bench_{1_baseline,2_idemix,3_optimized}_${TIMESTAMP}.json; do
+      [ -f "$f" ] || continue
+      label=$(basename "$f" | sed "s/auth_bench_//;s/_${TIMESTAMP}.json//")
+      tps=$(jq -r '.tps'            "$f")
+      p50=$(jq -r '.latency.p50Ms'  "$f")
+      p95=$(jq -r '.latency.p95Ms'  "$f")
+      p99=$(jq -r '.latency.p99Ms'  "$f")
+      printf "%-20s %10s %8s %8s %8s\n" "${label}" "${tps}" "${p50}" "${p95}" "${p99}"
+    done
+    echo ""
+  fi
+  log "리포트 위치: ${REPORT_DIR}/"
+}
+
 # ── 메인 ──────────────────────────────────────────────────
 main() {
   sep "팀 몽바스 — Caliper 성능 평가 시작"
@@ -85,8 +161,10 @@ main() {
       run_bench get-election.yaml "QueryOnly"
       run_bench full-bench.yaml   "FullBench"
       ;;
+    idemix-compare)
+      _run_idemix_compare ;;
     *)
-      echo "사용법: bash run-caliper.sh [vote|query|all]"
+      echo "사용법: bash run-caliper.sh [vote|query|all|idemix-compare]"
       exit 1 ;;
   esac
 

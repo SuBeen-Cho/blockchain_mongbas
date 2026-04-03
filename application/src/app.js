@@ -19,7 +19,7 @@ const express        = require('express');
 const session        = require('express-session');
 const electionsRouter = require('./routes/elections');
 const voteRouter     = require('./routes/vote');
-const { idemixStatus } = require('./middleware/auth');
+const { requireVoterAuth, measureAuthLatency, idemixStatus } = require('./middleware/auth');
 
 const app  = express();
 const PORT = process.env.PORT || 3000;
@@ -42,7 +42,15 @@ app.use(session({
 // ── 라우터 ──────────────────────────────────────────────────────
 app.use('/api/elections', electionsRouter);
 app.use('/api/nullifier', voteRouter);
-app.use('/api/vote',      voteRouter);
+app.use('/api/vote',      requireVoterAuth, voteRouter);  // Idemix 인증 미들웨어 적용
+
+// ── 벤치마크 전용 엔드포인트 ────────────────────────────────────
+// 인증 레이턴시만 측정하기 위한 엔드포인트 (체인코드 호출 없음)
+// IDEMIX_ENABLED=false/true 전환 후 http-bench.js 로 성능 비교
+app.get('/api/bench/auth', async (req, res) => {
+  const result = await measureAuthLatency(req);
+  res.json(result);
+});
 
 // ── 헬스 체크 ───────────────────────────────────────────────────
 app.get('/health', (_req, res) => {

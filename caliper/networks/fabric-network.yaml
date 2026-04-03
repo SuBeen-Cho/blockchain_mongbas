@@ -1,13 +1,5 @@
-# ============================================================
-# Hyperledger Caliper — Fabric 네트워크 연결 설정
-# 팀 몽바스 BFT 익명 전자투표 시스템
-#
-# 전제: network.sh up && network.sh deploy 완료 상태
-# 경로: 이 파일 기준으로 ../../network/crypto-config/ 참조
-# ============================================================
-
 name: mongbas-voting-network
-version: "2.0"
+version: "2.0.0"
 
 caliper:
   blockchain: fabric
@@ -16,53 +8,25 @@ channels:
   - channelName: voting-channel
     contracts:
       - id: voting
-        language: golang
-        metaPath: ../../chaincode/voting/META-INF
 
 organizations:
   - mspid: ElectionCommissionMSP
     identities:
       certificates:
-        - name: "Admin"
+        - name: User1
           clientSignedCert:
-            path: "../../network/crypto-config/peerOrganizations/ec.voting.example.com/users/Admin@ec.voting.example.com/msp/signcerts/Admin@ec.voting.example.com-cert.pem"
+            path: "../network/crypto-config/peerOrganizations/ec.voting.example.com/users/User1@ec.voting.example.com/msp/signcerts/User1@ec.voting.example.com-cert.pem"
           clientPrivateKey:
-            path: "../../network/crypto-config/peerOrganizations/ec.voting.example.com/users/Admin@ec.voting.example.com/msp/keystore/"
-        - name: "User1"
+            path: "../network/crypto-config/peerOrganizations/ec.voting.example.com/users/User1@ec.voting.example.com/msp/keystore/priv_sk"
+        - name: Admin
           clientSignedCert:
-            path: "../../network/crypto-config/peerOrganizations/ec.voting.example.com/users/User1@ec.voting.example.com/msp/signcerts/User1@ec.voting.example.com-cert.pem"
+            path: "../network/crypto-config/peerOrganizations/ec.voting.example.com/users/Admin@ec.voting.example.com/msp/signcerts/Admin@ec.voting.example.com-cert.pem"
           clientPrivateKey:
-            path: "../../network/crypto-config/peerOrganizations/ec.voting.example.com/users/User1@ec.voting.example.com/msp/keystore/"
-    connectionProfile:
-      path: "./connection-ec.yaml"
-      discover: true
-
-peers:
-  - endpoint: localhost:7051
-    tlsCACerts:
-      path: "../../network/crypto-config/peerOrganizations/ec.voting.example.com/peers/peer0.ec.voting.example.com/tls/ca.crt"
-    grpcOptions:
-      ssl-target-name-override: peer0.ec.voting.example.com
-      grpc.keepalive_time_ms: 120000
-
-  - endpoint: localhost:8051
-    tlsCACerts:
-      path: "../../network/crypto-config/peerOrganizations/party.voting.example.com/peers/peer0.party.voting.example.com/tls/ca.crt"
-    grpcOptions:
-      ssl-target-name-override: peer0.party.voting.example.com
-      grpc.keepalive_time_ms: 120000
-
-  - endpoint: localhost:9051
-    tlsCACerts:
-      path: "../../network/crypto-config/peerOrganizations/civil.voting.example.com/peers/peer0.civil.voting.example.com/tls/ca.crt"
-    grpcOptions:
-      ssl-target-name-override: peer0.civil.voting.example.com
-      grpc.keepalive_time_ms: 120000
-
-orderers:
-  - endpoint: localhost:7050
-    tlsCACerts:
-      path: "../../network/crypto-config/ordererOrganizations/orderer.voting.example.com/orderers/orderer1.orderer.voting.example.com/tls/ca.crt"
-    grpcOptions:
-      ssl-target-name-override: orderer1.orderer.voting.example.com
-      grpc.keepalive_time_ms: 120000
+            path: "../network/crypto-config/peerOrganizations/ec.voting.example.com/users/Admin@ec.voting.example.com/msp/keystore/priv_sk"
+    peers:
+      - endpoint: localhost:7051
+        tlsCACerts:
+          path: "../network/crypto-config/peerOrganizations/ec.voting.example.com/peers/peer0.ec.voting.example.com/tls/ca.crt"
+        grpcOptions:
+          ssl-target-name-override: peer0.ec.voting.example.com
+          grpc.keepalive_time_ms: 120000

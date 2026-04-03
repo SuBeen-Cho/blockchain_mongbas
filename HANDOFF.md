@@ -1,9 +1,9 @@
 # 프로젝트 인수인계 문서 — BFT 기반 익명 전자투표 블록체인
 
-> 최초 작성: 2026-03-27 | **최종 업데이트: 2026-03-30**
+> 최초 작성: 2026-03-27 | **최종 업데이트: 2026-04-03**
 > 대상: 다음 팀원 또는 이 문서를 처음 보는 사람 기준
 >
-> **2026-03-30 업데이트:** STEP 1~5 전체 구현 완료. Nullifier Eviction + Shamir SSS 추가. 체인코드 sequence 9.
+> **2026-04-03 업데이트:** STEP 1~7 전체 구현 완료. React 프론트엔드 + Caliper 성능평가 + Idemix 미들웨어 훅 추가.
 
 ---
 
@@ -44,54 +44,83 @@
 | STEP 4~5 성능 평가 (100·50회 반복) | ✅ | docs/performance/ 참조 |
 | Shamir REST API 엔드포인트 추가 | ✅ | /keysharing, /shares, /decryption |
 
+### 완료 — STEP 6~7 + Idemix 훅 (2026-04-03)
+
+| 항목 | 상태 | 비고 |
+|-----|------|------|
+| React 프론트엔드 (VoterPage) | ✅ | voterSecret 로컬 생성, Panic Password 지원 |
+| React 프론트엔드 (AdminPage) | ✅ | 선거 생성→활성화→종료→Merkle→Shamir 전체 플로우 |
+| React 프론트엔드 (VerifyPage) | ✅ | Merkle 증명, Deniable Verification (Normal/Panic) |
+| 브라우저 암호 유틸 (crypto.js) | ✅ | Web Crypto API SHA-256, nullifier·voteHash 계산 |
+| Caliper 성능평가 (4라운드) | ✅ | Low/Mid/High/Backlog TPS + Latency P50/P95/P99 |
+| Idemix 미들웨어 훅 | ✅ | `middleware/auth.js` — 환경변수 토글, 캐시 최적화 설계 포함 |
+| Idemix 성능 비교 프레임워크 | ✅ | `run-caliper.sh idemix-compare`, `benchmark/http-bench.js` |
+
 ### 남은 것
 
-| 항목 | 우선순위 |
-|-----|---------|
-| STEP 6: React 프론트엔드 (투표 UI, Deniable UI, 관리자 화면) | 높음 |
-| STEP 7: Hyperledger Caliper 종합 성능 평가 (TPS, BatchTimeout 최적화) | 높음 |
-| Idemix ZKP 연동 | 낮음 (선택 사항) |
+| 항목 | 우선순위 | 비고 |
+|-----|---------|------|
+| Idemix ZKP 실 연동 | 낮음 | `middleware/auth.js` 내 TODO 블록 1개만 교체 |
 
 ---
 
 ## 2. 프로젝트 구조
 
 ```
-mongbas/
+blockchain_mongbas/
 ├── network/
 │   ├── crypto-config.yaml        ← 인증서 생성 설정 (cryptogen)
 │   ├── configtx.yaml             ← 채널·제네시스 블록 설정
 │   ├── docker-compose.yaml       ← 컨테이너 정의
-│   ├── channel-artifacts/
-│   │   └── genesis.block
-│   ├── crypto-config/            ← 생성된 인증서 (gitignore 권장)
+│   ├── channel-artifacts/        ← 제네시스 블록 (network.sh up 시 생성)
+│   ├── crypto-config/            ← 인증서·개인키 (network.sh up 시 생성, gitignore)
 │   └── scripts/
-│       └── network.sh            ← 네트워크 전체 관리 스크립트
+│       └── network.sh            ← 네트워크 전체 관리 (up/deploy/test/down/clean)
 ├── chaincode/
 │   └── voting/
-│       ├── voting.go             ← 체인코드 (STEP 1~5 전체, sequence 9)
+│       ├── voting.go             ← 체인코드 (STEP 1~5 전체)
 │       ├── go.mod / go.sum
+│       ├── vendor/               ← Go 의존성 (git 포함)
 │       ├── collection_config.json  ← PDC 설정
 │       └── META-INF/statedb/couchdb/indexes/
 │           └── indexElection.json  ← CouchDB 인덱스
 ├── application/
+│   ├── src/
+│   │   ├── app.js                ← Express 서버 (Idemix 미들웨어 적용)
+│   │   ├── gateway.js            ← Fabric Gateway 연결
+│   │   ├── middleware/
+│   │   │   └── auth.js           ← ★ Idemix 연동 포인트 (환경변수 토글, 캐시)
+│   │   └── routes/
+│   │       ├── elections.js      ← 선거 CRUD + Merkle + Proof + Shamir
+│   │       └── vote.js           ← 투표 + Nullifier + Eviction + Panic
+│   └── benchmark/
+│       └── http-bench.js         ← Idemix 성능 비교 HTTP 벤치마크 스크립트
+├── frontend/
 │   └── src/
-│       ├── app.js                ← Express 서버
-│       ├── gateway.js            ← Fabric Gateway 연결
-│       └── routes/
-│           ├── elections.js      ← 선거 CRUD + Merkle + Proof + Shamir
-│           └── vote.js           ← 투표 + Nullifier + Eviction + Panic
+│       ├── pages/
+│       │   ├── VoterPage.jsx     ← 투표 화면 (voterSecret 로컬 생성, Panic 지원)
+│       │   ├── AdminPage.jsx     ← 관리자 화면 (선거 생성→Shamir 전체 플로우)
+│       │   └── VerifyPage.jsx    ← E2E 검증 (Merkle + Deniable Verification)
+│       └── utils/
+│           └── crypto.js         ← 브라우저 SHA-256, nullifierHash 계산
+├── caliper/
+│   ├── networks/
+│   │   └── fabric-network.yaml   ← Caliper 네트워크 설정
+│   ├── benchmarks/
+│   │   ├── cast-vote.yaml        ← CastVote 4라운드 벤치마크
+│   │   ├── get-election.yaml     ← Query 벤치마크
+│   │   └── full-bench.yaml       ← 전체 통합 벤치마크
+│   ├── workloads/
+│   │   └── castVote.js           ← CastVote 워크로드 (transientMap, Eviction 대응)
+│   ├── reports/                  ← Caliper HTML/JSON 리포트 저장
+│   └── run-caliper.sh            ← 벤치마크 실행 스크립트 (idemix-compare 모드 포함)
 ├── docs/
-│   ├── PROGRESS.md
-│   ├── HANDOFF.md                ← 현재 파일
 │   └── performance/
 │       ├── PERF-SUMMARY.md       ← 전체 성능 평가 종합
-│       ├── PERF-STEP1~5.md       ← 단계별 상세 결과
 │       └── bench_results/        ← 원시 측정값
 ├── scripts/
 │   ├── bench_full.sh             ← STEP 1~3 벤치마크
 │   └── bench_step45.sh           ← STEP 4~5 벤치마크
-├── 20260330_진행사항보고.md
 ├── README.md
 └── HANDOFF.md                    ← 현재 파일
 ```
@@ -447,87 +476,173 @@ POST /api/vote/panic/reset               Panic 세션 해제
 
 ## 11. 다음 팀원 작업 가이드
 
-### STEP 6 — React 프론트엔드
+### STEP 6 — React 프론트엔드 (완료)
 
-**구현 화면 목록:**
+`frontend/src/pages/` 에 3개 화면 구현 완료.
 
-| 화면 | 핵심 구현 포인트 |
-|-----|--------------|
-| 투표 화면 | `nullifierHash = SHA256(voterSecret + electionID)` 브라우저에서 계산. voterSecret은 로컬 저장, 서버 미전송 |
-| E2E 검증 화면 | Deniable UI: Normal/Panic 입력창 완전 동일하게 구성 (강압자가 화면만으로 구분 불가) |
-| 관리자 화면 | 선거 생성→활성화→종료 플로우, BuildMerkleTree, InitKeySharing, share 제출 UI |
-| 결과 화면 | 득표 시각화, Shamir 복원 현황 (submittedCount/threshold 표시) |
+| 화면 | 파일 | 핵심 내용 |
+|-----|------|---------|
+| 투표 화면 | `VoterPage.jsx` | voterSecret 자동생성, nullifierHash 브라우저 계산, Panic Password 지원 |
+| E2E 검증 화면 | `VerifyPage.jsx` | Deniable UI (Normal/Panic 입력창 완전 동일), Merkle 증명 시각화 |
+| 관리자 화면 | `AdminPage.jsx` | 선거 생성→활성화→종료→Merkle→Shamir 전체 플로우 |
 
-**Deniable UI 구현 요령:**
-
-```jsx
-// 비밀번호 입력 하나로 Normal/Panic 분기 — UI는 완전히 동일해야 함
-const handleVerify = async (password) => {
-  const passwordHash = sha256(password);
-  const response = await fetch(`/api/elections/${eid}/proof`, {
-    method: 'POST',
-    body: JSON.stringify({ nullifierHash, passwordHash }),
-  });
-  // 서버가 Normal/Panic 분기 → 프론트는 분기 여부를 알 수 없음
-  const proof = await response.json();
-  setProofResult(proof);  // 어떤 모드든 동일한 UI로 표시
-};
+**프론트엔드 실행:**
+```bash
+cd frontend
+npm install
+npm run dev   # http://localhost:5173
 ```
 
-**nullifierHash 클라이언트 계산:**
-
+**브라우저 SHA-256 (`frontend/src/utils/crypto.js`):**
 ```javascript
-import { createHash } from 'crypto';  // 또는 브라우저용 SubtleCrypto
-
-const nullifierHash = createHash('sha256')
-  .update(voterSecret + electionID)
-  .digest('hex');
-// voterSecret은 절대 API 요청에 포함하지 않음
+// Web Crypto API 사용 — Node.js crypto 모듈 아님
+async function computeNullifier(voterSecret, electionID) {
+  const data = new TextEncoder().encode(voterSecret + electionID);
+  const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+  return Array.from(new Uint8Array(hashBuffer))
+    .map(b => b.toString(16).padStart(2, '0')).join('');
+}
+// voterSecret은 절대 서버로 전송하지 않음
 ```
 
 ---
 
-### STEP 7 — Caliper 종합 성능 평가
+### STEP 7 — Caliper 성능 평가 (완료)
 
-**측정 목표:**
+Caliper 0.6 + peer-gateway 커넥터로 4라운드 벤치마크 완료.
 
-| 측정 항목 | 방법 | 목표 |
-|---------|------|------|
-| TPS (Throughput) | 동시 10명 병렬 투표 | ≥ 10 TPS |
-| Latency (P50/P95/P99) | Caliper 공식 측정 | P95 < 3000ms |
-| Fault Injection | orderer 1개 강제 종료 | 서비스 중단 없음 (CFT 검증) |
-| BatchTimeout 최적화 | 2s → 500ms 변경 비교 | P50 < 1000ms 예상 |
+**측정 결과 (2026-04-03, workers=4, peer-gateway):**
 
-**Fault Injection 방법:**
+| 라운드 | 목표 TPS | 성공 | Avg Latency | Max Latency | 실측 TPS |
+|-------|---------|-----|-------------|-------------|---------|
+| CastVote_Low    | 1 TPS  | 48  | 2.14s | 2.16s | 1.0 TPS |
+| CastVote_Mid    | 5 TPS  | 100 | 1.39s | 2.20s | 4.7 TPS |
+| CastVote_High   | 10 TPS | 148 | 1.34s | 2.22s | 9.6 TPS |
+| CastVote_Backlog | 자동조정 | — | — | — | 미완료 |
+
+> Max Latency ~2.2s는 BatchTimeout=2s에 기인. 단축 시 Avg Latency 대폭 개선 예상.
+> Idemix 성능 비교 벤치마크는 실 연동 후 `run-caliper.sh idemix-compare` 로 재측정 필요.
+
+**실행 방법:**
 
 ```bash
-# orderer 1개 강제 종료
-docker stop orderer1.orderer.voting.example.com
+cd caliper
+npm install
+npx caliper bind --caliper-bind-sut fabric:2.5
 
-# 나머지 3개로 투표 정상 작동 확인
-./scripts/network.sh test
+# 투표 성능 평가 (4라운드: Low/Mid/High/Backlog)
+bash run-caliper.sh vote
 
-# 복구
-docker start orderer1.orderer.voting.example.com
+# Idemix 성능 비교 (기준선 → Idemix → 캐시 최적화)
+# (API 서버 실행 중이어야 함)
+bash run-caliper.sh idemix-compare
 ```
+
+**Caliper 트러블슈팅 (겪었던 문제들):**
+
+| 문제 | 원인 | 해결 |
+|-----|------|------|
+| `semver.satisfies` 오류 | `version: "2.0"` → semver 비호환 | `version: "2.0.0"` 으로 수정 |
+| Multiple bindings 오류 | `fabric-network` 패키지 중복 | `npm uninstall fabric-network` |
+| 필드명 오류 (contract, fcn) | 구버전 필드명 | `contractId`, `contractFunction`, `contractArguments` 사용 |
+| EISDIR (private key 경로) | 디렉토리를 가리킴 | 경로 끝에 `/priv_sk` 파일 명시 |
+| transientData 미전달 | 필드명 오류 | `transientData` → `transientMap` |
+| CLOSED 상태 오류 | 이전 실행의 동일 electionID 재사용 | electionID에 `Date.now()` 타임스탬프 추가 |
 
 > 보고서에 "BFT 검증"이 아닌 **"CFT 검증"** 으로 기술해야 합니다 (현재 etcdraft).
 
-**Caliper 설치:**
+---
 
+### Idemix ZKP 실 연동 방법
+
+`application/src/middleware/auth.js`의 `verifyVoterEligibility()` 함수 내 TODO 블록 1개만 교체하면 됩니다.
+
+```javascript
+// TODO 블록 교체 전 (현재):
+if (IDEMIX_SIMULATE_MS > 0) {
+  await new Promise(r => setTimeout(r, IDEMIX_SIMULATE_MS));
+}
+const result = { eligible: true, anonymous: true, ... };
+
+// 교체 후 (Idemix 실 연동):
+const credential = req.headers['x-idemix-credential'];
+if (!credential) return { eligible: false };
+const verified = await fabricCA.verifyIdemixCredential(credential, {
+  attributeName: 'voterEligible', attributeValue: '1',
+});
+const result = { eligible: verified, anonymous: true, ... };
+```
+
+연동 후 성능 비교:
 ```bash
-npm install -g @hyperledger/caliper-cli
-caliper bind --caliper-bind-sut fabric:2.4
-
-caliper launch manager \
-  --caliper-workspace ./caliper \
-  --caliper-networkconfig network-config.yaml \
-  --caliper-benchconfig benchmark.yaml
+# IDEMIX_ENABLED=false → 기준선
+# IDEMIX_ENABLED=true  → ZKP 오버헤드 측정
+# IDEMIX_CACHE_ENABLED=true → 캐시 최적화 효과 확인
+bash run-caliper.sh idemix-compare
 ```
 
 ---
 
-## 12. 트러블슈팅
+## 12. 보고서 작성 시 참고 사항
+
+### Caliper 성능 수치 해석
+
+- **Throughput vs Send Rate**: Caliper 리포트의 "Send Rate"는 워크로드가 보내려 한 속도, "Throughput"은 실제 체인에 커밋된 TPS. 보고서에는 Throughput 기준으로 기술.
+- **Avg Latency 추이**: Low(2.14s) > Mid(1.39s) > High(1.34s) 순으로 감소. 높은 TPS에서 오더러 배치가 빠르게 채워지기 때문 — BatchTimeout(2s)이 지배적인 Low 구간과 대비해서 설명 가능.
+- **Max Latency ~2.2s**: BatchTimeout=2s 설정에서 배치가 가득 차지 않으면 항상 ~2s 대기가 발생. "BatchTimeout 영향"으로 서술. 단축(예: 500ms) 시 Avg·Max 모두 개선 예상.
+- **Backlog 라운드 미완료**: `fixed-backlog` rate controller가 목표 backlog=5를 달성하지 못해 조기 종료됨. 보고서에 "미측정" 또는 제외.
+
+### Caliper 측정 한계
+
+- Caliper는 peer-gateway로 체인코드를 **직접** 호출 → 애플리케이션 서버(auth 미들웨어)를 **거치지 않음**
+- 따라서 Caliper TPS는 순수 블록체인 레이어 성능 (Idemix 추가 여부와 무관)
+- Idemix ZKP 오버헤드는 `GET /api/bench/auth` 엔드포인트로 별도 측정 필요
+
+### Idemix 성능 비교 — 현재 데이터 주의
+
+2026-04-03 실행된 `idemix-compare` 벤치마크(auth_bench_*.json)는 **유효하지 않습니다.**
+
+| 파일 | TPS | 문제 |
+|------|-----|------|
+| `auth_bench_1_baseline` | 7,797 TPS | ✅ 유효 (bypass 기준선) |
+| `auth_bench_2_idemix`   | 7,119 TPS | ❌ 무효 — 서버 재시작 없이 실행, 실제로는 bypass 상태 |
+| `auth_bench_3_optimized`| 6,699 TPS | ❌ 무효 — 동일 이유 |
+
+**이유**: `run-caliper.sh idemix-compare`는 환경변수를 설정하지만, 이미 실행 중인 `node src/app.js` 프로세스에는 적용되지 않음. 서버를 재시작해야 env var이 반영됨.
+
+**올바른 측정 절차** (Idemix 실 연동 후):
+```bash
+# 1단계: 기준선
+IDEMIX_ENABLED=false node src/app.js &
+node benchmark/http-bench.js  # → 저장
+
+# 2단계: Idemix 적용
+pkill -f "node src/app.js"
+IDEMIX_ENABLED=true node src/app.js &
+node benchmark/http-bench.js  # → 저장
+
+# 3단계: 캐시 최적화
+pkill -f "node src/app.js"
+IDEMIX_ENABLED=true IDEMIX_CACHE_ENABLED=true node src/app.js &
+node benchmark/http-bench.js  # → 저장
+```
+
+### 보고서 기술 포인트 요약
+
+| 항목 | 기술 방법 |
+|-----|---------|
+| 합의 알고리즘 | "etcdraft(CFT)" — "BFT"로 쓰지 말 것 (SmartBFT는 미적용) |
+| 이중투표 방지 | Nullifier Hash로 수학적 보장, 100% 차단 실험 결과 |
+| 익명성 | voterSecret 클라이언트 로컬 보관, 서버는 nullifierHash만 수신 |
+| Panic Password | Normal/Panic 타이밍 차이 13.7ms — UI 완전 동일로 구분 불가 |
+| Shamir SSS | GF(257) 소수체, 2-of-3 threshold, Lagrange 보간으로 masterKey 복원 |
+| Caliper TPS | Low 1.0 / Mid 4.7 / High 9.6 TPS (Throughput 기준) |
+| BatchTimeout | 2s 설정이 Max Latency를 지배 — 최적화 여지 있음 |
+| Idemix | 미들웨어 훅 구현 완료 (auth.js), 실 ZKP 연동은 향후 과제 |
+
+---
+
+## 13. 트러블슈팅
 
 ### `network.sh up` 실패 시
 
@@ -578,13 +693,18 @@ python3 -c "import time; print(int(time.time()*1000))"
 
 ---
 
-## 13. 코드 검토 이력
+## 14. 코드 검토 이력
 
 | 파일 | 이슈 | 상태 |
 |-----|-----|------|
-| `network.sh` | step 번호 불일치 수정, sequence 자동 감지 추가 | ✅ |
+| `network.sh` | step 번호 불일치 수정, sequence 자동 감지, `docker compose` v2 전환 | ✅ |
+| `docker-compose.yaml` | macOS docker.sock 경로 → `/var/run/docker.sock`, core.yaml 마운트 제거 | ✅ |
 | `configtx.yaml` | 헤더 주석 SmartBFT → etcdraft 수정 | ✅ |
 | `collection_config.json` | `memberOnlyRead: false` — 클라이언트 evaluateTransaction 허용 의도적 설정 | ✅ |
 | `voting.go` | getTxTime() 사용으로 다중 피어 RW-set 일치 보장, STEP 4~5 추가 | ✅ |
 | `elections.js` | Shamir 엔드포인트 4개 추가 (`/keysharing`, `/shares`, `/decryption`, `/shares/:idx`) | ✅ |
 | `vote.js` | Eviction 처리 — 409 에러 제거, 200 응답으로 통일 | ✅ |
+| `app.js` | requireVoterAuth를 POST /api/vote에 적용, `/api/bench/auth` 엔드포인트 추가 | ✅ |
+| `middleware/auth.js` | IDEMIX_ENABLED 토글, IDEMIX_SIMULATE_MS, IDEMIX_CACHE_ENABLED 추가 | ✅ |
+| `caliper/workloads/castVote.js` | `transientData` → `transientMap`, electionID에 타임스탬프 추가 | ✅ |
+| `caliper/networks/fabric-network.yaml` | version "2.0.0", 절대경로, priv_sk 파일 명시 | ✅ |

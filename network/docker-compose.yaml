@@ -301,8 +301,7 @@ services:
       couchdb-ec0:
         condition: service_healthy
     volumes:
-      - /Users/subeen/.docker/run/docker.sock:/host/var/run/docker.sock
-      - ../fabric-samples/config/core.yaml:/etc/hyperledger/fabric/core.yaml
+      - /var/run/docker.sock:/host/var/run/docker.sock
       - ./crypto-config/peerOrganizations/ec.voting.example.com/peers/peer0.ec.voting.example.com/msp:/etc/hyperledger/fabric/msp
       - ./crypto-config/peerOrganizations/ec.voting.example.com/peers/peer0.ec.voting.example.com/tls:/etc/hyperledger/fabric/tls
       - peer0.ec.voting.example.com:/var/hyperledger/production
@@ -344,8 +343,7 @@ services:
       couchdb-ec1:
         condition: service_healthy
     volumes:
-      - /Users/subeen/.docker/run/docker.sock:/host/var/run/docker.sock
-      - ../fabric-samples/config/core.yaml:/etc/hyperledger/fabric/core.yaml
+      - /var/run/docker.sock:/host/var/run/docker.sock
       - ./crypto-config/peerOrganizations/ec.voting.example.com/peers/peer1.ec.voting.example.com/msp:/etc/hyperledger/fabric/msp
       - ./crypto-config/peerOrganizations/ec.voting.example.com/peers/peer1.ec.voting.example.com/tls:/etc/hyperledger/fabric/tls
       - peer1.ec.voting.example.com:/var/hyperledger/production
@@ -390,8 +388,7 @@ services:
       couchdb-party:
         condition: service_healthy
     volumes:
-      - /Users/subeen/.docker/run/docker.sock:/host/var/run/docker.sock
-      - ../fabric-samples/config/core.yaml:/etc/hyperledger/fabric/core.yaml
+      - /var/run/docker.sock:/host/var/run/docker.sock
       - ./crypto-config/peerOrganizations/party.voting.example.com/peers/peer0.party.voting.example.com/msp:/etc/hyperledger/fabric/msp
       - ./crypto-config/peerOrganizations/party.voting.example.com/peers/peer0.party.voting.example.com/tls:/etc/hyperledger/fabric/tls
       - peer0.party.voting.example.com:/var/hyperledger/production
@@ -436,8 +433,7 @@ services:
       couchdb-civil:
         condition: service_healthy
     volumes:
-      - /Users/subeen/.docker/run/docker.sock:/host/var/run/docker.sock
-      - ../fabric-samples/config/core.yaml:/etc/hyperledger/fabric/core.yaml
+      - /var/run/docker.sock:/host/var/run/docker.sock
       - ./crypto-config/peerOrganizations/civil.voting.example.com/peers/peer0.civil.voting.example.com/msp:/etc/hyperledger/fabric/msp
       - ./crypto-config/peerOrganizations/civil.voting.example.com/peers/peer0.civil.voting.example.com/tls:/etc/hyperledger/fabric/tls
       - peer0.civil.voting.example.com:/var/hyperledger/production
@@ -472,7 +468,7 @@ services:
     working_dir: /opt/gopath/src/github.com/hyperledger/fabric/peer
     command: /bin/bash
     volumes:
-      - /Users/subeen/.docker/run/docker.sock:/host/var/run/docker.sock
+      - /var/run/docker.sock:/host/var/run/docker.sock
       - ./crypto-config:/crypto
       - ./channel-artifacts:/channel-artifacts
       - ../chaincode:/opt/gopath/src/github.com/chaincode

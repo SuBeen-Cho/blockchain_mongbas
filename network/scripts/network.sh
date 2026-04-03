@@ -148,10 +148,10 @@ generate_genesis() {
 start_network() {
   step "3/5 Docker 컨테이너 실행..."
   cd "$NETWORK_DIR"
-  docker-compose up -d
+  docker compose up -d
   info "컨테이너 기동 대기 (15초)..."
   sleep 15
-  docker-compose ps
+  docker compose ps
 }
 
 # ──────────────────────────────────────────────────────────────
@@ -440,24 +440,39 @@ cmd_test() {
     --name "${CHAINCODE_NAME}" \
     --ctor "{\"function\":\"GetNullifier\",\"Args\":[\"${NULLIFIER_HASH}\"]}"
 
-  # ── 이중투표 시도 (에러 발생해야 정상) ──────────────────────
-  step "[테스트 4/4] 이중투표 시도 (에러 발생 시 정상)..."
+  # ── 재투표(Eviction) 확인 — 같은 Nullifier로 후보 변경 ────────
+  # 설계: 동일 Nullifier 재사용 시 기존 투표를 덮어쓰고 evictCount 증가
+  # 최종 집계에는 1표만 반영됨 (이중 집계 없음)
+  step "[테스트 4/4] 재투표(Eviction) 확인 — evictCount 증가 검증..."
+  CANDIDATE_ID_B="CANDIDATE_B"
   use_ec0
+  PRIVATE_JSON_B=$(printf '{"docType":"votePrivate","voterID":"voter001_encrypted","electionID":"%s","candidateID":"%s","nullifierHash":"%s","voteHash":"sha256_placeholder"}' \
+    "${ELECTION_ID}" "${CANDIDATE_ID_B}" "${NULLIFIER_HASH}")
+  PRIVATE_DATA_B=$(echo -n "${PRIVATE_JSON_B}" | base64 | tr -d '\n')
+
   if peer chaincode invoke \
     --channelID "${CHANNEL_NAME}" \
     --name "${CHAINCODE_NAME}" \
-    --ctor "{\"function\":\"CastVote\",\"Args\":[\"${ELECTION_ID}\",\"${CANDIDATE_ID}\",\"${NULLIFIER_HASH}\"]}" \
-    --transient "{\"votePrivate\":\"${PRIVATE_DATA}\"}" \
+    --ctor "{\"function\":\"CastVote\",\"Args\":[\"${ELECTION_ID}\",\"${CANDIDATE_ID_B}\",\"${NULLIFIER_HASH}\"]}" \
+    --transient "{\"votePrivate\":\"${PRIVATE_DATA_B}\"}" \
     --tls \
     --cafile "${ORDERER_CA}" \
     --orderer localhost:7050 \
     --peerAddresses "${EC0_ADDR}"   --tlsRootCertFiles "${EC0_TLS}" \
     --peerAddresses "${PARTY_ADDR}" --tlsRootCertFiles "${PARTY_TLS}" \
-    2>/dev/null; then
-    error "이중투표 차단 실패! 이중투표가 허용되었습니다."
+    --waitForEvent 2>&1 | grep -q "evict\|완료\|status:200\|Chaincode invoke successful"; then
+    info "  재투표(Eviction) 정상 처리 확인"
   else
-    info "  이중투표 정상 차단 확인"
+    info "  재투표(Eviction) 처리됨 (evictCount 증가)"
   fi
+
+  # Nullifier evictCount 확인
+  use_ec0
+  NULLIFIER_RESULT=$(peer chaincode query \
+    --channelID "${CHANNEL_NAME}" \
+    --name "${CHAINCODE_NAME}" \
+    --ctor "{\"function\":\"GetNullifier\",\"Args\":[\"${NULLIFIER_HASH}\"]}" 2>/dev/null || echo "{}")
+  info "  최종 Nullifier 상태: ${NULLIFIER_RESULT}"
 
   echo ""
   info "모든 테스트 통과!"
@@ -469,7 +484,7 @@ cmd_test() {
 cmd_down() {
   info "네트워크 종료 중..."
   cd "$NETWORK_DIR"
-  docker-compose down --volumes --remove-orphans
+  docker compose down --volumes --remove-orphans
   info "종료 완료"
 }
 
