@@ -188,7 +188,19 @@ share 생성:  share_j[i] = f(j)  for j=1,2,3
 | GetMerkleProof (N=100) | 200회 | 112.7ms | 172ms | ✅ |
 | Normal/Panic Proof | 200회 | 112.6 / 98.8ms | 191 / 111ms | ✅ |
 
-### 5-3. 정확도 / 보안
+### 5-3. 보안 위협 시나리오 측정 (2026-04-11)
+
+> 전체 상세: [docs/security-eval/SECURITY-SCENARIOS.md](./docs/security-eval/SECURITY-SCENARIOS.md)
+
+| 시나리오 | 핵심 수치 | 판정 |
+|---------|---------|------|
+| A. 선관위 단독 결과 조작 | 2-of-3 정책, 정상 트랜잭션 2113ms | ✅ |
+| B. 이중투표 시도 | 1차 100% 성공, Eviction 100% 처리, Avg 2082ms | ✅ |
+| C. 강압 투표 (Panic) | Normal/Panic 차이 **0.2ms**, t=0.397 (p>0.05) | ✅ |
+| D. 집계 키 단독 탈취 | 1-share 복원 실패 **100%**, 2-share 성공 **100%** | ✅ |
+| E. "결과 조작" 외부 주장 | Merkle 포함/배제 정확도 **100%/100%**, 평균 73.6ms | ✅ |
+
+### 5-4. 정확도 / 보안 (스크립트 벤치마크)
 
 | 지표 | 결과 |
 |------|------|

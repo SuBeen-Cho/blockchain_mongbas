@@ -1,0 +1,103 @@
+{
+  "runDate": "2026. 4. 11. 오전 11:39:44",
+  "results": {
+    "A": {
+      "policy": "OutOf(2, ElectionCommission.peer, PartyObserver.peer, CivilSociety.peer)",
+      "txSuccess": true,
+      "txLatencyMs": 2113,
+      "tallyCorrect": true,
+      "note": [
+        "2-of-3 승인 정책 설정으로 단일 기관 단독 트랜잭션 불가",
+        "REST API → Fabric Gateway가 2개 이상의 피어 endorsement를 자동 요구",
+        "선관위(EC) 단독으로 CloseElection / CastVote 호출 시 Endorsement Policy 위반으로 거부"
+      ]
+    },
+    "B": {
+      "rounds": 30,
+      "firstVote": {
+        "ok": 30,
+        "n": 30,
+        "avg": "2082.0",
+        "min": 2065,
+        "max": 2100,
+        "p50": 2084,
+        "p95": 2097,
+        "p99": 2100
+      },
+      "secondVote": {
+        "ok": 30,
+        "n": 30,
+        "avg": "2081.6",
+        "min": 2065,
+        "max": 2095,
+        "p50": 2081,
+        "p95": 2092,
+        "p99": 2095
+      },
+      "note": "Eviction 모드 — 재투표 시 동일 nullifier로 덮어쓰기 허용 (이중집계 불가)"
+    },
+    "C": {
+      "rounds": 100,
+      "normal": {
+        "n": 100,
+        "avg": "24.4",
+        "min": 21,
+        "max": 53,
+        "p50": 24,
+        "p95": 28,
+        "p99": 31
+      },
+      "panic": {
+        "n": 100,
+        "avg": "24.2",
+        "min": 21,
+        "max": 52,
+        "p50": 23,
+        "p95": 28,
+        "p99": 39
+      },
+      "diffMs": "0.2",
+      "tStat": "0.397",
+      "tThreshold": 1.984,
+      "significant": false
+    },
+    "D": {
+      "rounds": 20,
+      "oneShareInsufficient": {
+        "count": 20,
+        "rate": "100%"
+      },
+      "twoShareSufficient": {
+        "count": 20,
+        "rate": "100%"
+      }
+    },
+    "E": {
+      "voteCount": 20,
+      "included": {
+        "correct": 20,
+        "total": 20,
+        "rate": "100%",
+        "n": 20,
+        "avg": "73.6",
+        "min": 69,
+        "max": 82,
+        "p50": 73,
+        "p95": 76,
+        "p99": 82
+      },
+      "excluded": {
+        "correct": 20,
+        "total": 20,
+        "rate": "100%",
+        "n": 20,
+        "avg": "73.6",
+        "min": 70,
+        "max": 82,
+        "p50": 72,
+        "p95": 81,
+        "p99": 82
+      }
+    }
+  }
+}

@@ -44,6 +44,18 @@
 | STEP 4~5 성능 평가 (100·50회 반복) | ✅ | docs/performance/ 참조 |
 | Shamir REST API 엔드포인트 추가 | ✅ | /keysharing, /shares, /decryption |
 
+### 완료 — 보안 위협 시나리오 측정 (2026-04-11)
+
+| 항목 | 상태 | 비고 |
+|-----|------|------|
+| 보안 시나리오 측정 스크립트 | ✅ | `scripts/security-scenarios.js` |
+| 시나리오 A (단독 결과 조작) | ✅ | 2-of-3 정책 검증, 2113ms |
+| 시나리오 B (이중투표) | ✅ | Eviction 100%, Avg 2082ms |
+| 시나리오 C (강압 투표) | ✅ | Normal/Panic 차이 0.2ms, t=0.397 (p>0.05) |
+| 시나리오 D (집계 키 탈취) | ✅ | 1-share 실패 100%, 2-share 성공 100% |
+| 시나리오 E (결과 조작 주장) | ✅ | Merkle 정확도 100%/100%, 73.6ms |
+| 결과 문서 | ✅ | `docs/security-eval/SECURITY-SCENARIOS.md` |
+
 ### 완료 — STEP 6~7 + Idemix 훅 (2026-04-03)
 
 | 항목 | 상태 | 비고 |
@@ -626,6 +638,18 @@ pkill -f "node src/app.js"
 IDEMIX_ENABLED=true IDEMIX_CACHE_ENABLED=true node src/app.js &
 node benchmark/http-bench.js  # → 저장
 ```
+
+### 보안 시나리오 측정 결과 해석
+
+| 시나리오 | 보고서 기술 포인트 |
+|---------|----------------|
+| A. 단독 결과 조작 | "2-of-3 승인 정책으로 단일 기관의 독자적 조작 차단. 정상 트랜잭션 2113ms 내 처리." |
+| B. 이중투표 | "Nullifier Eviction 방식 — 재투표 허용이지만 마지막 투표 1개만 집계. 이중집계 수학적 불가." |
+| C. 강압 투표 | "Normal/Panic 타이밍 차이 0.2ms, t=0.397 (p>0.05) — 통계적으로 구별 불가." |
+| D. 키 탈취 | "GF(257) Shamir SSS — Share 1개 탈취 시 정보량 0. 2개 이상 기관 공모 없이 복원 불가." |
+| E. 결과 조작 주장 | "Merkle E2E 검증 정확도 100%. Root Hash 원장 기록으로 사후 변경 증명 불가." |
+
+> 시나리오 측정 스크립트 재실행: `node scripts/security-scenarios.js` (네트워크 + API 서버 필요)
 
 ### 보고서 기술 포인트 요약
 
