@@ -3,9 +3,12 @@
     "name": "VotePrivateCollection",
     "policy": "OR('ElectionCommissionMSP.member', 'PartyObserverMSP.member', 'CivilSocietyMSP.member')",
     "requiredPeerCount": 2,
-    "maxPeerCount": 4,
+    "maxPeerCount": 3,
     "blockToLive": 0,
-    "memberOnlyRead": false,
-    "memberOnlyWrite": false
+    "memberOnlyRead": true,
+    "memberOnlyWrite": true,
+    "endorsementPolicy": {
+      "signaturePolicy": "OutOf(2, 'ElectionCommissionMSP.peer', 'PartyObserverMSP.peer', 'CivilSocietyMSP.peer')"
+    }
   }
 ]
