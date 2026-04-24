@@ -1229,14 +1229,24 @@ func (c *VotingContract) InitKeySharing(
 		return nil, fmt.Errorf("이미 키 분산이 초기화된 선거입니다: %s", electionID)
 	}
 
-	// 마스터 키 transient에서 수신 (공개 원장 미기록 — 비밀 유지)
-	transient, err := ctx.GetStub().GetTransient()
-	if err != nil {
-		return nil, fmt.Errorf("transient 데이터 읽기 실패: %w", err)
-	}
-	masterKey, ok := transient["masterKey"]
-	if !ok || len(masterKey) != 32 {
-		return nil, fmt.Errorf("transient에 32바이트 masterKey 필요")
+	// [C-4 확장] PDC의 encryptionKey를 masterKey로 사용
+	// 이전: transient에서 외부 masterKey 수신
+	// 현재: CreateElection에서 생성한 encryptionKey를 재사용 → Shamir 분산 후 PDC에서 삭제
+	// 이렇게 하면 Shamir 복원 없이는 집계 불가 (encryptionKey가 PDC에서 사라지므로)
+	var masterKey []byte
+	transient, _ := ctx.GetStub().GetTransient()
+	if mk, ok := transient["masterKey"]; ok && len(mk) == 32 {
+		// 하위 호환: transient에 masterKey가 있으면 그대로 사용
+		masterKey = mk
+		log.Printf("[InitKeySharing] transient masterKey 사용")
+	} else {
+		// C-4: PDC의 encryptionKey를 masterKey로 사용
+		ek, ekErr := getEncryptionKey(ctx, electionID)
+		if ekErr != nil || len(ek) != 32 {
+			return nil, fmt.Errorf("encryptionKey 조회 실패 (transient masterKey도 없음): %v", ekErr)
+		}
+		masterKey = ek
+		log.Printf("[InitKeySharing] PDC encryptionKey를 masterKey로 사용 — election: %s", electionID)
 	}
 
 	// 키 해시 (공개 저장 — 복원 검증용)
@@ -1285,6 +1295,15 @@ func (c *VotingContract) InitKeySharing(
 	}
 	if err := ctx.GetStub().PutState(statusKey, b); err != nil {
 		return nil, fmt.Errorf("키 분산 상태 저장 실패: %w", err)
+	}
+
+	// [C-4 확장] Shamir 분산 완료 후 PDC에서 원본 encryptionKey 삭제
+	// 이후 TallyVotes는 Shamir 복원으로 키를 얻어야만 집계 가능
+	ekKey := "ENCRYPTION_KEY_" + electionID
+	if delErr := ctx.GetStub().DelPrivateData(VotePrivatePDC, ekKey); delErr != nil {
+		log.Printf("[InitKeySharing] encryptionKey 삭제 실패 (무시) — %v", delErr)
+	} else {
+		log.Printf("[InitKeySharing] encryptionKey PDC 삭제 완료 — 이후 Shamir 복원 필수")
 	}
 
 	log.Printf("[InitKeySharing] 완료 — election: %s, keyHash: %s...", electionID, keyHash[:16])
@@ -1451,7 +1470,13 @@ func (c *VotingContract) verifyKeyReconstruction(
 
 	if recHash == status.KeyHash {
 		status.IsDecrypted = true
-		log.Printf("[verifyKeyReconstruction] 복원 성공 — election: %s", electionID)
+		// [C-4 확장] 복원된 encryptionKey를 PDC에 다시 저장 → TallyVotes에서 사용 가능
+		ekKey := "ENCRYPTION_KEY_" + electionID
+		if err := ctx.GetStub().PutPrivateData(VotePrivatePDC, ekKey, []byte(hex.EncodeToString(reconstructed))); err != nil {
+			log.Printf("[verifyKeyReconstruction] 복원 키 PDC 저장 실패 — %v", err)
+		} else {
+			log.Printf("[verifyKeyReconstruction] 복원 성공 + encryptionKey PDC 복원 — election: %s", electionID)
+		}
 	} else {
 		log.Printf("[verifyKeyReconstruction] 복원 실패: 해시 불일치 (got %s, want %s)", recHash[:8], status.KeyHash[:8])
 	}
