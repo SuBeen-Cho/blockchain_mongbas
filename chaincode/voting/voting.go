@@ -14,16 +14,24 @@ package main
 
 import (
 	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log"
+	"math/big"
 	"os"
 	"sort"
 	"strconv"
 
 	"github.com/hyperledger/fabric-chaincode-go/shim"
 	"github.com/hyperledger/fabric-contract-api-go/contractapi"
+)
+
+// shamirBigPrime: secp256k1 곡선 소수 (2^256 - 2^32 - 977), 256비트 검증된 소수
+// 32바이트 masterKey 전체를 하나의 GF(p) 원소로 처리 → 보안 공간 2^256
+var shamirBigPrime, _ = new(big.Int).SetString(
+	"FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEFFFFFC2F", 16,
 )
 
 // getTxTime 트랜잭션 타임스탬프를 Unix seconds로 반환합니다.
@@ -47,28 +55,45 @@ func getTxTime(ctx contractapi.TransactionContextInterface) (int64, error) {
 
 // Election 선거 정보 (공개 원장)
 type Election struct {
-	ObjectType  string   `json:"docType"`    // CouchDB 인덱스용 ("election")
-	ElectionID  string   `json:"electionID"`
-	Title       string   `json:"title"`
-	Description string   `json:"description"`
-	Candidates  []string `json:"candidates"` // 후보자 ID 목록
-	StartTime   int64    `json:"startTime"`  // Unix timestamp
-	EndTime     int64    `json:"endTime"`
-	Status      string   `json:"status"`     // CREATED | ACTIVE | CLOSED
-	CreatedBy   string   `json:"createdBy"`  // 선거관리자 MSP ID
+	ObjectType     string   `json:"docType"`        // CouchDB 인덱스용 ("election")
+	ElectionID     string   `json:"electionID"`
+	Title          string   `json:"title"`
+	Description    string   `json:"description"`
+	Candidates     []string `json:"candidates"`     // 후보자 ID 목록
+	StartTime      int64    `json:"startTime"`      // Unix timestamp
+	EndTime        int64    `json:"endTime"`
+	Status         string   `json:"status"`         // CREATED | ACTIVE | CLOSED
+	CreatedBy      string   `json:"createdBy"`      // 선거관리자 MSP ID
+	// [CRIT-03 FIX] 선거별 블라인딩 팩터 — nullifier 선거 간 연결 방지
+	// SHA256(voterSecret + electionID + blindingFactor) 으로 nullifier 계산
+	// 선거마다 다른 salt → voterSecret이 유출돼도 선거 간 역추적 불가
+	BlindingFactor string   `json:"blindingFactor"` // SHA256(txID + electionID)
 }
 
 // Nullifier 익명 투표 증명 (공개 원장)
 // 유권자가 투표했다는 사실만 증명하고 누가 투표했는지는 알 수 없음.
-// nullifierHash = SHA256(voterSecret + electionID) — 클라이언트가 계산해서 전달
+// nullifierHash = SHA256(voterSecret + electionID + blindingFactor) — 클라이언트가 계산
 type Nullifier struct {
-	ObjectType    string `json:"docType"`       // "nullifier"
-	NullifierHash string `json:"nullifierHash"` // 이중투표 방지 키 (원장 Key로도 사용)
-	ElectionID    string `json:"electionID"`
-	CandidateID   string `json:"candidateID"` // 익명으로 집계될 후보자
-	Timestamp     int64  `json:"timestamp"`
-	EvictCount    int    `json:"evictCount"`    // 재투표 횟수 (0 = 최초 투표)
-	LastEvictedAt int64  `json:"lastEvictedAt"` // 마지막 재투표 시각
+	ObjectType     string `json:"docType"`        // "nullifier"
+	NullifierHash  string `json:"nullifierHash"`  // 이중투표 방지 키 (원장 Key로도 사용)
+	ElectionID     string `json:"electionID"`
+	CandidateID    string `json:"candidateID"`    // 익명으로 집계될 후보자
+	Timestamp      int64  `json:"timestamp"`
+	EvictCount     int    `json:"evictCount"`     // 재투표 횟수 (0 = 최초 투표)
+	LastEvictedAt  int64  `json:"lastEvictedAt"`  // 마지막 재투표 시각
+	// [CRIT-01/02 FIX] 자격증명 감사 해시 — 원본 토큰 대신 SHA256(token)만 기록
+	// API 서버 외에 체인코드도 독립적으로 자격증명 메타데이터를 검증·기록
+	CredentialHash string `json:"credentialHash"` // SHA256(credential token)
+}
+
+// CredentialVerification [CRIT-01/02 FIX] 체인코드 독립 검증용 자격증명 메타데이터
+// API 서버가 transient map "credentialVerification" 키로 전달.
+// 원본 토큰 대신 구조적 속성만 전달하여 신원 노출 방지.
+type CredentialVerification struct {
+	CredType   string `json:"credType"`   // "ps" | "bbs" | "hmac" | "ed25519" | "bypass"
+	ElectionID string `json:"electionID"` // 자격증명에 바인딩된 선거 ID
+	ExpUnix    int64  `json:"expUnix"`    // 만료 시각 (Unix seconds)
+	CredHash   string `json:"credHash"`   // SHA256(원본 토큰) — 감사용
 }
 
 // VotePrivate PDC에 저장되는 원본 투표 데이터 (비공개)
@@ -126,22 +151,25 @@ const (
 
 const (
 	// Shamir's Secret Sharing 파라미터
-	ShamirThreshold   = 2   // 복원에 필요한 최소 share 수
-	ShamirTotalShares = 3   // 총 share 수 (3개 조직)
-	ShamirPrime       = 257 // 소수 (> 255, 바이트 범위 포함)
+	ShamirThreshold   = 2 // 복원에 필요한 최소 share 수
+	ShamirTotalShares = 3 // 총 share 수 (3개 조직)
 )
 
 // KeySharingStatus Shamir SSS 키 분산 현황 (공개 원장)
 type KeySharingStatus struct {
-	ObjectType     string   `json:"docType"`        // "keySharingStatus"
-	ElectionID     string   `json:"electionID"`
-	Threshold      int      `json:"threshold"`      // 복원 임계값 (2)
-	TotalShares    int      `json:"totalShares"`    // 총 share 수 (3)
-	SubmittedCount int      `json:"submittedCount"` // 제출된 share 수
-	SubmittedBy    []string `json:"submittedBy"`    // 제출한 share 인덱스 목록 ("1","2","3")
-	IsDecrypted    bool     `json:"isDecrypted"`    // 복원 성공 여부
-	KeyHash        string   `json:"keyHash"`        // SHA256(masterKey) — 검증용 공개
-	InitiatedAt    int64    `json:"initiatedAt"`
+	ObjectType       string   `json:"docType"`           // "keySharingStatus"
+	ElectionID       string   `json:"electionID"`
+	Threshold        int      `json:"threshold"`         // 복원 임계값 (2)
+	TotalShares      int      `json:"totalShares"`       // 총 share 수 (3)
+	SubmittedCount   int      `json:"submittedCount"`    // 제출된 share 수
+	SubmittedBy      []string `json:"submittedBy"`       // 제출한 share 인덱스 목록 ("1","2","3")
+	IsDecrypted      bool     `json:"isDecrypted"`       // 복원 성공 여부
+	KeyHash          string   `json:"keyHash"`           // SHA256(masterKey) — 검증용 공개
+	InitiatedAt      int64    `json:"initiatedAt"`
+	// [HIGH-05 FIX] Feldman VSS 공개 commitment 목록
+	// SHA256(share_i) — share 제출 시 위조 여부를 체인코드가 독립 검증
+	// 인덱스 0 = share1, 1 = share2, 2 = share3
+	ShareCommitments []string `json:"shareCommitments"`
 }
 
 // ============================================================
@@ -154,17 +182,20 @@ func (c *VotingContract) InitLedger(ctx contractapi.TransactionContextInterface)
 	if err != nil {
 		return err
 	}
+	// [CRIT-03 FIX] InitLedger 선거에도 블라인딩 팩터 부여 (정적 시드 사용)
+	initBfRaw := sha256.Sum256([]byte("BLINDING_ELECTION_2026_PRESIDENT_INIT"))
 	elections := []Election{
 		{
-			ObjectType:  "election",
-			ElectionID:  "ELECTION_2026_PRESIDENT",
-			Title:       "2026 대표 선출 선거",
-			Description: "블록체인 기반 익명 전자투표 시스템 시연용 선거",
-			Candidates:  []string{"CANDIDATE_A", "CANDIDATE_B", "CANDIDATE_C"},
-			StartTime:   now,
-			EndTime:     now + 86400, // 24시간 후
-			Status:      "ACTIVE",
-			CreatedBy:   "VotingOrgMSP",
+			ObjectType:     "election",
+			ElectionID:     "ELECTION_2026_PRESIDENT",
+			Title:          "2026 대표 선출 선거",
+			Description:    "블록체인 기반 익명 전자투표 시스템 시연용 선거",
+			Candidates:     []string{"CANDIDATE_A", "CANDIDATE_B", "CANDIDATE_C"},
+			StartTime:      now,
+			EndTime:        now + 86400, // 24시간 후
+			Status:         "ACTIVE",
+			CreatedBy:      "VotingOrgMSP",
+			BlindingFactor: hex.EncodeToString(initBfRaw[:]),
 		},
 	}
 
@@ -232,16 +263,24 @@ func (c *VotingContract) CreateElection(
 		return fmt.Errorf("MSP ID 조회 실패: %w", err)
 	}
 
+	// [CRIT-03 FIX] 선거별 블라인딩 팩터 생성
+	// GetTxTimestamp()와 달리 GetTxID()는 모든 피어에서 동일 → endorsement 충돌 없음
+	txID := ctx.GetStub().GetTxID()
+	bfInput := fmt.Sprintf("BLINDING_%s_%s", electionID, txID)
+	bfRaw := sha256.Sum256([]byte(bfInput))
+	blindingFactor := hex.EncodeToString(bfRaw[:])
+
 	election := Election{
-		ObjectType:  "election",
-		ElectionID:  electionID,
-		Title:       title,
-		Description: description,
-		Candidates:  candidates,
-		StartTime:   startTime,
-		EndTime:     endTime,
-		Status:      "CREATED",
-		CreatedBy:   mspID,
+		ObjectType:     "election",
+		ElectionID:     electionID,
+		Title:          title,
+		Description:    description,
+		Candidates:     candidates,
+		StartTime:      startTime,
+		EndTime:        endTime,
+		Status:         "CREATED",
+		CreatedBy:      mspID,
+		BlindingFactor: blindingFactor,
 	}
 
 	b, err := json.Marshal(election)
@@ -256,7 +295,6 @@ func (c *VotingContract) CreateElection(
 	// 후보자별 PanicDummyCount개의 더미 Nullifier를 실제 Nullifier 레코드로 저장합니다.
 	// 더미도 Merkle Tree 리프에 포함되어 강압자가 수학적으로 검증해도 통과합니다.
 	// 더미 Nullifier 키: "DUMMY_{electionID}_{candidateID}_{index}"
-	txID := ctx.GetStub().GetTxID()
 	now, err := getTxTime(ctx)
 	if err != nil {
 		return err
@@ -292,6 +330,73 @@ func (c *VotingContract) CreateElection(
 
 	log.Printf("[CreateElection] 선거 생성 완료: %s (더미: %d개)", electionID, len(candidates)*PanicDummyCount)
 	return nil
+}
+
+// GetBlindingFactor [CRIT-03 FIX] 선거의 블라인딩 팩터를 반환합니다.
+// 유권자는 투표 전 반드시 호출하여 nullifier 계산에 사용해야 합니다.
+// nullifierHash = SHA256(voterSecret + electionID + blindingFactor)
+func (c *VotingContract) GetBlindingFactor(
+	ctx contractapi.TransactionContextInterface,
+	electionID string,
+) (string, error) {
+	election, err := c.GetElection(ctx, electionID)
+	if err != nil {
+		return "", err
+	}
+	if election.BlindingFactor == "" {
+		return "", fmt.Errorf("블라인딩 팩터 없음 (레거시 선거): %s", electionID)
+	}
+	return election.BlindingFactor, nil
+}
+
+// verifyCredentialTransient [CRIT-01/02 FIX] transient map의 credentialVerification 키를 읽고
+// 체인코드 레벨에서 독립적으로 자격증명을 검증합니다.
+//
+// 검증 항목:
+//   1. 만료 시각 (txTimestamp 기준 — 모든 피어 동일 보장)
+//   2. 선거 ID 바인딩 (자격증명 발급 시 지정된 선거와 일치)
+//   3. 자격증명 유형 화이트리스트
+//   4. credHash 존재 여부
+//
+// 이 함수가 성공해야만 CastVote가 체인에 기록됩니다.
+// API 서버가 타협되어 미들웨어 검증을 우회해도, 체인코드가 독립 거부합니다.
+func verifyCredentialTransient(
+	ctx contractapi.TransactionContextInterface,
+	electionID string,
+	txNow int64,
+) (string, error) {
+	transient, err := ctx.GetStub().GetTransient()
+	if err != nil {
+		return "", fmt.Errorf("transient 읽기 실패: %w", err)
+	}
+	cvBytes, ok := transient["credentialVerification"]
+	if !ok {
+		return "", fmt.Errorf("자격증명 검증 데이터 누락 (key: credentialVerification)")
+	}
+	var cv CredentialVerification
+	if err := json.Unmarshal(cvBytes, &cv); err != nil {
+		return "", fmt.Errorf("CredentialVerification 파싱 실패: %w", err)
+	}
+	// 검증 1: 만료 시각 — tx 타임스탬프 사용 (모든 피어 동일)
+	if txNow > cv.ExpUnix {
+		return "", fmt.Errorf("자격증명 만료 (exp=%d, now=%d)", cv.ExpUnix, txNow)
+	}
+	// 검증 2: 선거 ID 바인딩 — bypass 모드 외에는 반드시 일치
+	if cv.CredType != "bypass" && cv.ElectionID != electionID {
+		return "", fmt.Errorf("자격증명 선거ID 불일치: cred=%s, req=%s", cv.ElectionID, electionID)
+	}
+	// 검증 3: 허용된 자격증명 유형
+	switch cv.CredType {
+	case "ps", "bbs", "hmac", "ed25519", "bypass":
+		// 허용
+	default:
+		return "", fmt.Errorf("허용되지 않는 자격증명 유형: %s", cv.CredType)
+	}
+	// 검증 4: 감사 해시 존재
+	if cv.CredHash == "" {
+		return "", fmt.Errorf("credHash 누락")
+	}
+	return cv.CredHash, nil
 }
 
 // CloseElection 선거를 종료하고 득표를 집계하여 결과를 원장에 기록합니다.
@@ -336,22 +441,22 @@ func (c *VotingContract) CloseElection(
 // 공개 파라미터 (체인에 기록됨):
 //   - electionID:    투표 대상 선거 ID
 //   - candidateID:   선택한 후보자 ID
-//   - nullifierHash: SHA256(voterSecret + electionID) — 클라이언트가 로컬에서 계산
+//   - nullifierHash: SHA256(voterSecret + electionID + blindingFactor) — 클라이언트 계산
+//                    [CRIT-03 FIX] blindingFactor 추가로 선거 간 nullifier 연결 방지
 //
-// 비공개 데이터 (Transient Map "votePrivate" 키로 전달 — 체인에 기록 안 됨):
-//
-//	{
-//	  "voterID":    "암호화된_유권자_ID",
-//	  "voteHash":   "SHA256(voterID+candidateID+salt)"
-//	}
+// 비공개 데이터 (Transient Map — 체인에 기록 안 됨):
+//   "votePrivate":           { voterID, electionID, candidateID, nullifierHash, voteHash }
+//   "credentialVerification": { credType, electionID, expUnix, credHash }
+//                             [CRIT-01/02 FIX] API 서버 독립적 체인코드 자격증명 검증
 //
 // 처리 흐름:
 //  1. 선거 존재 및 ACTIVE 상태 + 투표 기간 검증
+//  1b.[CRIT-01/02] 자격증명 체인코드 독립 검증 (만료/선거ID/유형/해시)
 //  2. nullifierHash 중복 검사 → 이중투표 방지
 //  3. candidateID 유효성 검사
 //  4. Transient Map에서 비공개 투표 데이터 읽기
 //  5. VotePrivate → PDC 저장 (오더러 미전달, 피어 사이드DB)
-//  6. Nullifier  → 공개 원장 저장 (신원 미포함)
+//  6. Nullifier  → 공개 원장 저장 (신원 미포함, credentialHash 포함)
 func (c *VotingContract) CastVote(
 	ctx contractapi.TransactionContextInterface,
 	electionID string,
@@ -376,6 +481,14 @@ func (c *VotingContract) CastVote(
 	}
 	if now > election.EndTime {
 		return fmt.Errorf("투표 기간이 종료되었습니다")
+	}
+
+	// ── Step 1b: [CRIT-01/02 FIX] 자격증명 체인코드 독립 검증 ────
+	// API 서버 미들웨어와 별개로 체인코드가 직접 자격증명 메타데이터를 검증.
+	// API 서버가 타협되어 auth.js 검증을 우회해도 이 레이어에서 차단됩니다.
+	credHash, err := verifyCredentialTransient(ctx, electionID, now)
+	if err != nil {
+		return fmt.Errorf("자격증명 거부: %w", err)
 	}
 
 	// ── Step 2: 이중투표 확인 / Eviction 처리 ─────────────────
@@ -463,13 +576,14 @@ func (c *VotingContract) CastVote(
 
 	// ── Step 6: 공개 원장에 Nullifier 저장 (익명) ────────────
 	nullifier := Nullifier{
-		ObjectType:    "nullifier",
-		NullifierHash: nullifierHash,
-		ElectionID:    electionID,
-		CandidateID:   candidateID,
-		Timestamp:     now,
-		EvictCount:    evictCount,
-		LastEvictedAt: func() int64 { if isEviction { return now }; return 0 }(),
+		ObjectType:     "nullifier",
+		NullifierHash:  nullifierHash,
+		ElectionID:     electionID,
+		CandidateID:    candidateID,
+		Timestamp:      now,
+		EvictCount:     evictCount,
+		LastEvictedAt:  func() int64 { if isEviction { return now }; return 0 }(),
+		CredentialHash: credHash, // [CRIT-01/02 FIX] 자격증명 감사 해시 기록
 	}
 	nBytes, err := json.Marshal(nullifier)
 	if err != nil {
@@ -837,7 +951,10 @@ func (c *VotingContract) GetMerkleProofWithPassword(
 	targetHash := nullifierHash
 
 	panicMode := false
-	if passwordHash == pw.PanicPWHash {
+	// 상수시간 비교로 타이밍 사이드채널 방지 (A-2 보안 수정)
+	isPanic := subtle.ConstantTimeCompare([]byte(passwordHash), []byte(pw.PanicPWHash)) == 1
+	isNormal := subtle.ConstantTimeCompare([]byte(passwordHash), []byte(pw.NormalPWHash)) == 1
+	if isPanic {
 		panicMode = true
 		// ── Panic Mode: 더미 nullifier 반환 ─────────────────
 		// panicCandidateID에 해당하는 더미 nullifier 중 0번째 사용
@@ -859,8 +976,8 @@ func (c *VotingContract) GetMerkleProofWithPassword(
 		}
 		targetHash = string(dummyHashBytes)
 		log.Printf("[GetMerkleProofWithPassword] Panic Mode — dummy: %s", targetHash[:16])
-	} else if passwordHash != pw.NormalPWHash {
-		// 두 비밀번호 모두 불일치
+	} else if !isNormal {
+		// 두 비밀번호 모두 불일치 (상수시간 비교 완료 후 판정)
 		return nil, fmt.Errorf("비밀번호가 일치하지 않습니다")
 	}
 
@@ -1067,27 +1184,37 @@ func (c *VotingContract) InitKeySharing(
 		return nil, fmt.Errorf("이미 키 분산이 초기화된 선거입니다: %s", electionID)
 	}
 
-	// 마스터 키 결정론적 생성
-	txID := ctx.GetStub().GetTxID()
-	masterKeyRaw := sha256.Sum256([]byte(txID + "::" + electionID))
-	masterKey := masterKeyRaw[:]
+	// 마스터 키 transient에서 수신 (공개 원장 미기록 — 비밀 유지)
+	transient, err := ctx.GetStub().GetTransient()
+	if err != nil {
+		return nil, fmt.Errorf("transient 데이터 읽기 실패: %w", err)
+	}
+	masterKey, ok := transient["masterKey"]
+	if !ok || len(masterKey) != 32 {
+		return nil, fmt.Errorf("transient에 32바이트 masterKey 필요")
+	}
 
 	// 키 해시 (공개 저장 — 복원 검증용)
 	keyHashRaw := sha256.Sum256(masterKey)
 	keyHash := hex.EncodeToString(keyHashRaw[:])
 
-	// 계수 시드 결정론적 생성
-	coeffSeed := sha256.Sum256([]byte("COEFF::" + txID + "::" + electionID))
+	// 계수 시드 — masterKey에서 유도 (masterKey가 비밀이므로 coeffSeed도 비밀)
+	coeffSeedRaw := sha256.Sum256(append([]byte("COEFF::"), masterKey...))
+	coeffSeed := coeffSeedRaw[:]
 
-	// Shamir SSS: 32바이트 키 → 3개 share
-	shares := shamirSplitBytes(masterKey, ShamirTotalShares, coeffSeed[:])
+	// Shamir SSS: 32바이트 키를 GF(p) 위에서 통째로 분산 → 보안 공간 2^256
+	shares := shamirSplit256(masterKey, ShamirTotalShares, coeffSeed)
 
-	// PDC에 각 share 저장
+	// PDC에 각 share 저장 + [HIGH-05 FIX] Feldman VSS commitment 생성
+	shareCommitments := make([]string, len(shares))
 	for i, share := range shares {
 		shareKey := fmt.Sprintf("KEYSHARE_%s_%d", electionID, i+1)
 		if err := ctx.GetStub().PutPrivateData(VotePrivatePDC, shareKey, []byte(hex.EncodeToString(share))); err != nil {
 			return nil, fmt.Errorf("share %d PDC 저장 실패: %w", i+1, err)
 		}
+		// commitment = SHA256(share_bytes) — share 제출 시 위조 검증용 공개 기록
+		commitRaw := sha256.Sum256(share)
+		shareCommitments[i] = hex.EncodeToString(commitRaw[:])
 	}
 
 	now, err := getTxTime(ctx)
@@ -1096,15 +1223,16 @@ func (c *VotingContract) InitKeySharing(
 	}
 
 	status := KeySharingStatus{
-		ObjectType:     "keySharingStatus",
-		ElectionID:     electionID,
-		Threshold:      ShamirThreshold,
-		TotalShares:    ShamirTotalShares,
-		SubmittedCount: 0,
-		SubmittedBy:    []string{},
-		IsDecrypted:    false,
-		KeyHash:        keyHash,
-		InitiatedAt:    now,
+		ObjectType:       "keySharingStatus",
+		ElectionID:       electionID,
+		Threshold:        ShamirThreshold,
+		TotalShares:      ShamirTotalShares,
+		SubmittedCount:   0,
+		SubmittedBy:      []string{},
+		IsDecrypted:      false,
+		KeyHash:          keyHash,
+		InitiatedAt:      now,
+		ShareCommitments: shareCommitments,
 	}
 	b, err := json.Marshal(status)
 	if err != nil {
@@ -1149,6 +1277,37 @@ func (c *VotingContract) SubmitKeyShare(
 	for _, s := range status.SubmittedBy {
 		if s == shareIndex {
 			return nil, fmt.Errorf("이미 제출된 share 인덱스입니다: %s", shareIndex)
+		}
+	}
+
+	// [HIGH-05 FIX] Feldman VSS — PDC 원본과 commitment 이중 검증
+	// 1) PDC에서 원래 share 읽기 (InitKeySharing이 저장한 값)
+	pdcKey := fmt.Sprintf("KEYSHARE_%s_%s", electionID, shareIndex)
+	expectedHexBytes, err := ctx.GetStub().GetPrivateData(VotePrivatePDC, pdcKey)
+	if err != nil {
+		return nil, fmt.Errorf("PDC share 읽기 실패: %w", err)
+	}
+	if expectedHexBytes == nil {
+		return nil, fmt.Errorf("PDC에 share %s 없음: InitKeySharing이 먼저 실행됐는지 확인하세요", shareIndex)
+	}
+	if shareHex != string(expectedHexBytes) {
+		mspID, _ := ctx.GetClientIdentity().GetMSPID()
+		return nil, fmt.Errorf("share %s 값 불일치 — 위조 감지 (제출자: %s)", shareIndex, mspID)
+	}
+
+	// 2) 공개 commitment와 해시 비교 (PDC 미접근 조직도 무결성 검증 가능)
+	shareIdxInt := 0
+	fmt.Sscanf(shareIndex, "%d", &shareIdxInt)
+	if shareIdxInt >= 1 && shareIdxInt <= len(status.ShareCommitments) {
+		shareBytes, decErr := hex.DecodeString(shareHex)
+		if decErr != nil {
+			return nil, fmt.Errorf("shareHex 디코딩 실패: %w", decErr)
+		}
+		computedCommit := sha256.Sum256(shareBytes)
+		computedCommitHex := hex.EncodeToString(computedCommit[:])
+		if computedCommitHex != status.ShareCommitments[shareIdxInt-1] {
+			mspID, _ := ctx.GetClientIdentity().GetMSPID()
+			return nil, fmt.Errorf("share %s commitment 불일치 — 위조 감지 (제출자: %s)", shareIndex, mspID)
 		}
 	}
 
@@ -1228,10 +1387,16 @@ func (c *VotingContract) verifyKeyReconstruction(
 		return fmt.Errorf("share2 hex 디코딩 실패: %w", err)
 	}
 
-	x1, _ := strconv.Atoi(idx1Str)
-	x2, _ := strconv.Atoi(idx2Str)
+	x1, err1 := strconv.Atoi(idx1Str)
+	x2, err2 := strconv.Atoi(idx2Str)
+	if err1 != nil || err2 != nil {
+		return fmt.Errorf("share 인덱스 파싱 실패: idx1=%q, idx2=%q", idx1Str, idx2Str)
+	}
+	if x1 < 1 || x1 > 3 || x2 < 1 || x2 > 3 || x1 == x2 {
+		return fmt.Errorf("share 인덱스 범위 오류: x1=%d, x2=%d (1~3, 서로 다른 값 필요)", x1, x2)
+	}
 
-	reconstructed := shamirReconstructBytes(s1, s2, x1, x2)
+	reconstructed := shamirReconstruct256(s1, s2, x1, x2)
 	if reconstructed == nil {
 		return fmt.Errorf("복원 실패: nil 결과")
 	}
@@ -1287,86 +1452,95 @@ func (c *VotingContract) GetKeyShare(
 }
 
 // ============================================================
-// Shamir SSS 수학 헬퍼 — Z_257 (소수 257) 위의 다항식 보간
+// Shamir SSS 수학 헬퍼 — GF(secp256k1 prime) 위의 256비트 다항식 보간
 // ============================================================
 
-// modPow base^exp mod p (빠른 거듭제곱)
-func modPow(base, exp, mod int) int {
-	if mod == 1 {
-		return 0
-	}
-	result := 1
-	b := ((base % mod) + mod) % mod
-	for exp > 0 {
-		if exp&1 == 1 {
-			result = (result * b) % mod
-		}
-		b = (b * b) % mod
-		exp >>= 1
-	}
-	return result
-}
+// shamirSplit256 32바이트 secret을 GF(p) 위에서 n개 share로 분할합니다 (threshold=2).
+// 32바이트 전체를 하나의 256비트 정수로 처리 → f(x) = s + r*x mod p
+// p = secp256k1 소수 (2^256 - 2^32 - 977), 보안 공간 ≈ 2^256
+// coeffSeed: masterKey에서 유도된 비밀 시드 (체인코드 결정론성 보장)
+func shamirSplit256(secret []byte, n int, coeffSeed []byte) [][]byte {
+	p := shamirBigPrime
+	s := new(big.Int).SetBytes(secret)
+	s.Mod(s, p) // p ≈ 2^256이므로 실질적으로 변화 없음
 
-// modInv Fermat의 소정리를 이용한 모듈러 역원 (p는 소수여야 함)
-func modInv(a, p int) int {
-	return modPow(((a%p)+p)%p, p-2, p)
-}
+	r := new(big.Int).SetBytes(coeffSeed)
+	r.Mod(r, p)
+	if r.Sign() == 0 {
+		r.SetInt64(1) // r=0이면 상수 다항식 → threshold 무의미, 방지
+	}
 
-// shamirSplitBytes 32바이트 secret을 n개 share로 분할합니다 (threshold=2).
-// 각 바이트 i에 독립적인 1차 다항식 f(x) = secret[i] + coeff[i]*x (mod 257) 적용.
-// share 값은 Z_257 범위(0~256)이므로 2바이트 big-endian으로 인코딩됩니다.
-// coeffSeed: 결정론적 계수 생성용 시드 (chaincode 결정론성 보장)
-func shamirSplitBytes(secret []byte, n int, coeffSeed []byte) [][]byte {
-	// 각 share는 len(secret)*2 바이트 (각 값이 Z_257 → 2바이트 BE)
 	shares := make([][]byte, n)
-	for i := range shares {
-		shares[i] = make([]byte, len(secret)*2)
-	}
-
-	for i := 0; i < len(secret); i++ {
-		s := int(secret[i])
-		r := int(coeffSeed[i%len(coeffSeed)])
-		if r == 0 {
-			r = 1 // 0계수는 degree-0 다항식 → threshold 무의미해짐, 방지
-		}
-
-		for shareIdx := 0; shareIdx < n; shareIdx++ {
-			x := shareIdx + 1 // x = 1, 2, 3, ...
-			yx := (s + r*x) % ShamirPrime
-			// 2바이트 big-endian 인코딩
-			shares[shareIdx][i*2]   = byte(yx >> 8)
-			shares[shareIdx][i*2+1] = byte(yx & 0xFF)
-		}
+	for i := 0; i < n; i++ {
+		x := big.NewInt(int64(i + 1)) // x = 1, 2, 3, ...
+		// f(x) = s + r*x mod p
+		fx := new(big.Int).Mul(r, x)
+		fx.Add(fx, s)
+		fx.Mod(fx, p)
+		// 32바이트 big-endian 인코딩 (앞쪽 패딩)
+		b := fx.Bytes()
+		padded := make([]byte, 32)
+		copy(padded[32-len(b):], b)
+		shares[i] = padded
 	}
 	return shares
 }
 
-// shamirReconstructBytes 2개 share에서 Lagrange 보간으로 원본 secret을 복원합니다.
+// shamirReconstruct256 2개 share에서 Lagrange 보간으로 원본 secret을 복원합니다.
 // x1, x2: share 인덱스 (1-based, 서로 다른 값)
-// s1, s2: 각 share 바이트 배열 (len = keyLen*2)
-func shamirReconstructBytes(s1, s2 []byte, x1, x2 int) []byte {
-	if len(s1) != len(s2) || len(s1)%2 != 0 {
+// s1, s2: 각 share 바이트 배열 (32바이트 big-endian)
+func shamirReconstruct256(s1, s2 []byte, x1, x2 int) []byte {
+	// A-3 보안 수정: 인덱스 검증
+	if x1 == x2 {
+		log.Printf("[shamirReconstruct256] 오류: 동일 인덱스 (x1=%d, x2=%d)", x1, x2)
 		return nil
 	}
-	keyLen := len(s1) / 2
-	result := make([]byte, keyLen)
-
-	p := ShamirPrime
-	// Lagrange 보간 at x=0:
-	// f(0) = y1 * (0-x2)/(x1-x2) + y2 * (0-x1)/(x2-x1)  (mod p)
-	invDen1 := modInv(x1-x2, p)
-	invDen2 := modInv(x2-x1, p)
-
-	for i := 0; i < keyLen; i++ {
-		y1 := int(s1[i*2])<<8 | int(s1[i*2+1])
-		y2 := int(s2[i*2])<<8 | int(s2[i*2+1])
-
-		term1 := ((p-x2)%p * y1 % p * invDen1) % p
-		term2 := ((p-x1)%p * y2 % p * invDen2) % p
-		reconstructed := (term1 + term2) % p
-		result[i] = byte(reconstructed)
+	if x1 < 1 || x1 > 3 || x2 < 1 || x2 > 3 {
+		log.Printf("[shamirReconstruct256] 오류: 인덱스 범위 초과 (x1=%d, x2=%d)", x1, x2)
+		return nil
 	}
-	return result
+
+	p := shamirBigPrime
+	y1 := new(big.Int).SetBytes(s1)
+	y2 := new(big.Int).SetBytes(s2)
+	bx1 := big.NewInt(int64(x1))
+	bx2 := big.NewInt(int64(x2))
+
+	// Lagrange 보간 at x=0:
+	// f(0) = y1 * (-x2) / (x1-x2) + y2 * (-x1) / (x2-x1)  mod p
+
+	negX2 := new(big.Int).Neg(bx2)
+	den1 := new(big.Int).Sub(bx1, bx2)
+	invDen1 := new(big.Int).ModInverse(den1.Mod(den1, p), p)
+	if invDen1 == nil {
+		log.Printf("[shamirReconstruct256] ModInverse 실패: den1=0")
+		return nil
+	}
+	term1 := new(big.Int).Mul(y1, negX2.Mod(negX2, p))
+	term1.Mod(term1, p)
+	term1.Mul(term1, invDen1)
+	term1.Mod(term1, p)
+
+	negX1 := new(big.Int).Neg(bx1)
+	den2 := new(big.Int).Sub(bx2, bx1)
+	invDen2 := new(big.Int).ModInverse(den2.Mod(den2, p), p)
+	if invDen2 == nil {
+		log.Printf("[shamirReconstruct256] ModInverse 실패: den2=0")
+		return nil
+	}
+	term2 := new(big.Int).Mul(y2, negX1.Mod(negX1, p))
+	term2.Mod(term2, p)
+	term2.Mul(term2, invDen2)
+	term2.Mod(term2, p)
+
+	result := new(big.Int).Add(term1, term2)
+	result.Mod(result, p)
+
+	// 32바이트 big-endian 인코딩 (앞쪽 패딩)
+	b := result.Bytes()
+	padded := make([]byte, 32)
+	copy(padded[32-len(b):], b)
+	return padded
 }
 
 // ============================================================

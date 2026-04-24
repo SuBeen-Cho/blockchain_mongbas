@@ -17,8 +17,9 @@
 
 const express        = require('express');
 const session        = require('express-session');
-const electionsRouter = require('./routes/elections');
-const voteRouter     = require('./routes/vote');
+const electionsRouter              = require('./routes/elections');
+const voteRouter                   = require('./routes/vote');
+const { router: credentialRouter } = require('./routes/credential');
 const { requireVoterAuth, measureAuthLatency, idemixStatus } = require('./middleware/auth');
 
 const app  = express();
@@ -30,7 +31,10 @@ app.use(express.urlencoded({ extended: true }));
 
 // 세션 (Panic Mode 상태 관리에 사용)
 app.use(session({
-  secret: process.env.SESSION_SECRET || 'mongbas-dev-secret-change-in-prod',
+  secret: process.env.SESSION_SECRET || (() => {
+    console.warn('[WARN] SESSION_SECRET 환경변수 미설정 — 개발용 랜덤 시크릿 사용 중.');
+    return require('crypto').randomBytes(32).toString('hex');
+  })(),
   resave: false,
   saveUninitialized: false,
   cookie: {
@@ -40,9 +44,10 @@ app.use(session({
 }));
 
 // ── 라우터 ──────────────────────────────────────────────────────
-app.use('/api/elections', electionsRouter);
-app.use('/api/nullifier', voteRouter);
-app.use('/api/vote',      requireVoterAuth, voteRouter);  // Idemix 인증 미들웨어 적용
+app.use('/api/elections',  electionsRouter);
+app.use('/api/nullifier',  voteRouter);
+app.use('/api/credential', credentialRouter);                      // Idemix 자격증명 발급
+app.use('/api/vote',       requireVoterAuth, voteRouter);          // Idemix 인증 미들웨어 적용
 
 // ── 벤치마크 전용 엔드포인트 ────────────────────────────────────
 // 인증 레이턴시만 측정하기 위한 엔드포인트 (체인코드 호출 없음)
@@ -54,7 +59,18 @@ app.get('/api/bench/auth', async (req, res) => {
 
 // ── 헬스 체크 ───────────────────────────────────────────────────
 app.get('/health', (_req, res) => {
-  res.json({ status: 'ok', timestamp: new Date().toISOString(), idemix: idemixStatus() });
+  const mem = process.memoryUsage();
+  res.json({
+    status:    'ok',
+    timestamp: new Date().toISOString(),
+    idemix:    idemixStatus(),
+    memory: {
+      heapUsed:  mem.heapUsed,
+      heapTotal: mem.heapTotal,
+      rss:       mem.rss,
+      external:  mem.external,
+    },
+  });
 });
 
 // ── API 목록 (개발 편의) ────────────────────────────────────────
