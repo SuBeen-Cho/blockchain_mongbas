@@ -13,6 +13,8 @@
 package main
 
 import (
+	"crypto/aes"
+	"crypto/cipher"
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/hex"
@@ -77,12 +79,12 @@ type Nullifier struct {
 	ObjectType     string `json:"docType"`        // "nullifier"
 	NullifierHash  string `json:"nullifierHash"`  // 이중투표 방지 키 (원장 Key로도 사용)
 	ElectionID     string `json:"electionID"`
-	CandidateID    string `json:"candidateID"`    // 익명으로 집계될 후보자
-	Timestamp      int64  `json:"timestamp"`
-	EvictCount     int    `json:"evictCount"`     // 재투표 횟수 (0 = 최초 투표)
-	LastEvictedAt  int64  `json:"lastEvictedAt"`  // 마지막 재투표 시각
-	// [CRIT-01/02 FIX] 자격증명 감사 해시 — 원본 토큰 대신 SHA256(token)만 기록
-	// API 서버 외에 체인코드도 독립적으로 자격증명 메타데이터를 검증·기록
+	CandidateID          string `json:"candidateID"`          // 평문 후보자 (B안 비활성 시 사용)
+	EncryptedCandidateID string `json:"encryptedCandidateID"` // [C-4] AES-GCM 암호화된 후보자 ID
+	Timestamp            int64  `json:"timestamp"`
+	EvictCount           int    `json:"evictCount"`           // 재투표 횟수 (0 = 최초 투표)
+	LastEvictedAt        int64  `json:"lastEvictedAt"`        // 마지막 재투표 시각
+	// [CRIT-01/02 FIX] 자격증명 감사 해시
 	CredentialHash string `json:"credentialHash"` // SHA256(credential token)
 }
 
@@ -269,6 +271,19 @@ func (c *VotingContract) CreateElection(
 	bfInput := fmt.Sprintf("BLINDING_%s_%s", electionID, txID)
 	bfRaw := sha256.Sum256([]byte(bfInput))
 	blindingFactor := hex.EncodeToString(bfRaw[:])
+
+	// [C-4] 선거 암호화 키 생성 → PDC에 저장 (Shamir B안)
+	// AES-256-GCM으로 candidateID를 암호화하여 공개 원장에서 후보자 정보를 숨김
+	ekInput := fmt.Sprintf("ENCRYPTION_%s_%s", electionID, txID)
+	ekRaw := sha256.Sum256([]byte(ekInput))
+	ekKey := "ENCRYPTION_KEY_" + electionID
+	ekHexStr := hex.EncodeToString(ekRaw[:])
+	if pdcErr := ctx.GetStub().PutPrivateData(VotePrivatePDC, ekKey, []byte(ekHexStr)); pdcErr != nil {
+		log.Printf("[CreateElection] 암호화 키 PDC 저장 실패 (계속 진행) — %v", pdcErr)
+		// PDC 저장 실패해도 선거 생성은 계속 (평문 폴백)
+	} else {
+		log.Printf("[CreateElection] 암호화 키 생성 완료 — PDC key: %s, hex: %s...", ekKey, ekHexStr[:16])
+	}
 
 	election := Election{
 		ObjectType:     "election",
@@ -575,15 +590,30 @@ func (c *VotingContract) CastVote(
 	}
 
 	// ── Step 6: 공개 원장에 Nullifier 저장 (익명) ────────────
+	// [C-4] candidateID를 AES-GCM으로 암호화하여 공개 원장에 저장
+	encryptedCandID := ""
+	if encKey, ekErr := getEncryptionKey(ctx, electionID); ekErr == nil {
+		enc, encErr := encryptAESGCM(encKey, candidateID)
+		if encErr != nil {
+			log.Printf("[CastVote] AES-GCM 암호화 실패 (폴백: 평문) — %v", encErr)
+		} else {
+			encryptedCandID = enc
+			log.Printf("[CastVote] candidateID 암호화 완료 — encrypted: %s...", encryptedCandID[:16])
+		}
+	} else {
+		log.Printf("[CastVote] 암호화 키 없음 (평문 폴백) — %v", ekErr)
+	}
+
 	nullifier := Nullifier{
-		ObjectType:     "nullifier",
-		NullifierHash:  nullifierHash,
-		ElectionID:     electionID,
-		CandidateID:    candidateID,
-		Timestamp:      now,
-		EvictCount:     evictCount,
-		LastEvictedAt:  func() int64 { if isEviction { return now }; return 0 }(),
-		CredentialHash: credHash, // [CRIT-01/02 FIX] 자격증명 감사 해시 기록
+		ObjectType:           "nullifier",
+		NullifierHash:        nullifierHash,
+		ElectionID:           electionID,
+		CandidateID:          candidateID, // 하위 호환: 평문도 유지 (향후 제거 예정)
+		EncryptedCandidateID: encryptedCandID,
+		Timestamp:            now,
+		EvictCount:           evictCount,
+		LastEvictedAt:        func() int64 { if isEviction { return now }; return 0 }(),
+		CredentialHash:       credHash, // [CRIT-01/02 FIX] 자격증명 감사 해시 기록
 	}
 	nBytes, err := json.Marshal(nullifier)
 	if err != nil {
@@ -632,6 +662,10 @@ func (c *VotingContract) TallyVotes(
 		return nil, err
 	}
 
+	// [C-4] 암호화 키 조회 (B안 — 암호화된 candidateID 복호화용)
+	encKey, ekErr := getEncryptionKey(ctx, electionID)
+	useEncrypted := ekErr == nil && encKey != nil
+
 	// 후보자별 득표 집계
 	results := make(map[string]int)
 	for _, cand := range election.Candidates {
@@ -650,7 +684,18 @@ func (c *VotingContract) TallyVotes(
 			return nil, fmt.Errorf("Nullifier 역직렬화 실패: %w", err)
 		}
 
-		results[nullifier.CandidateID]++
+		// [C-4] 암호화된 candidateID가 있으면 복호화, 없으면 평문 사용 (하위 호환)
+		candID := nullifier.CandidateID
+		if useEncrypted && nullifier.EncryptedCandidateID != "" {
+			decrypted, decErr := decryptAESGCM(encKey, nullifier.EncryptedCandidateID)
+			if decErr == nil {
+				candID = decrypted
+			} else {
+				log.Printf("[TallyVotes] 복호화 실패 (평문 폴백) — %v", decErr)
+			}
+		}
+
+		results[candID]++
 		totalVotes++
 	}
 
@@ -1449,6 +1494,71 @@ func (c *VotingContract) GetKeyShare(
 		return "", fmt.Errorf("share %s를 찾을 수 없습니다. InitKeySharing을 먼저 호출하세요", shareIndex)
 	}
 	return string(shareBytes), nil
+}
+
+// ============================================================
+// AES-GCM 암호화 헬퍼 — [C-4] candidateID 암호화 집계
+// ============================================================
+
+// encryptAESGCM AES-256-GCM으로 평문을 암호화합니다.
+// key: 32바이트, plaintext: 임의 길이 → hex(nonce + ciphertext) 반환
+// nonce는 SHA256(key + plaintext)에서 12바이트 추출 (결정론적 — 피어 간 동일 결과)
+func encryptAESGCM(key []byte, plaintext string) (string, error) {
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return "", fmt.Errorf("AES 블록 생성 실패: %w", err)
+	}
+	aesGCM, err := cipher.NewGCM(block)
+	if err != nil {
+		return "", fmt.Errorf("GCM 생성 실패: %w", err)
+	}
+	// 결정론적 nonce: SHA256(key + plaintext)의 앞 12바이트
+	// 체인코드 결정론성 보장 (모든 피어에서 동일 nonce 생성)
+	nonceInput := append(key, []byte(plaintext)...)
+	nonceHash := sha256.Sum256(nonceInput)
+	nonce := nonceHash[:aesGCM.NonceSize()]
+
+	ciphertext := aesGCM.Seal(nil, nonce, []byte(plaintext), nil)
+	// nonce + ciphertext를 hex 인코딩
+	result := append(nonce, ciphertext...)
+	return hex.EncodeToString(result), nil
+}
+
+// decryptAESGCM AES-256-GCM으로 복호화합니다.
+// key: 32바이트, encryptedHex: hex(nonce + ciphertext) → 평문 반환
+func decryptAESGCM(key []byte, encryptedHex string) (string, error) {
+	data, err := hex.DecodeString(encryptedHex)
+	if err != nil {
+		return "", fmt.Errorf("hex 디코딩 실패: %w", err)
+	}
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return "", fmt.Errorf("AES 블록 생성 실패: %w", err)
+	}
+	aesGCM, err := cipher.NewGCM(block)
+	if err != nil {
+		return "", fmt.Errorf("GCM 생성 실패: %w", err)
+	}
+	nonceSize := aesGCM.NonceSize()
+	if len(data) < nonceSize {
+		return "", fmt.Errorf("암호문이 너무 짧음")
+	}
+	nonce, ciphertext := data[:nonceSize], data[nonceSize:]
+	plaintext, err := aesGCM.Open(nil, nonce, ciphertext, nil)
+	if err != nil {
+		return "", fmt.Errorf("복호화 실패: %w", err)
+	}
+	return string(plaintext), nil
+}
+
+// getEncryptionKey PDC에서 선거 암호화 키를 조회합니다.
+func getEncryptionKey(ctx contractapi.TransactionContextInterface, electionID string) ([]byte, error) {
+	ekKey := "ENCRYPTION_KEY_" + electionID
+	ekHex, err := ctx.GetStub().GetPrivateData(VotePrivatePDC, ekKey)
+	if err != nil || ekHex == nil {
+		return nil, fmt.Errorf("암호화 키 조회 실패 (election: %s)", electionID)
+	}
+	return hex.DecodeString(string(ekHex))
 }
 
 // ============================================================
