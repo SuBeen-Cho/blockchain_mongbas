@@ -14,6 +14,24 @@ const { connectGateway } = require('../gateway');
 
 const router = express.Router();
 
+// ── GET /api/elections/:id/blinding-factor ─────────────────────
+// [CRIT-03 FIX] 선거별 블라인딩 팩터 조회 (누구나)
+// 유권자는 투표 전 반드시 호출하여 nullifier 계산에 사용합니다.
+// nullifierHash = SHA256(voterSecret + electionID + blindingFactor)
+router.get('/:id/blinding-factor', async (req, res) => {
+  const { id } = req.params;
+  const { gateway, contract } = await connectGateway();
+  try {
+    const result = await contract.evaluateTransaction('GetBlindingFactor', id);
+    const blindingFactor = Buffer.from(result).toString('utf8').replace(/^"|"$/g, '');
+    res.json({ electionID: id, blindingFactor });
+  } catch (err) {
+    res.status(404).json({ error: err.message });
+  } finally {
+    gateway.close();
+  }
+});
+
 // ── GET /api/elections/:id ─────────────────────────────────────
 // 선거 정보 조회 (누구나)
 router.get('/:id', async (req, res) => {

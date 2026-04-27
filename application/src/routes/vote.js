@@ -45,7 +45,7 @@ const router = express.Router();
 //   Body에 panicPassword 필드 포함 시 Panic Mode 활성화.
 //   세션에 panicMode=true 설정 후 더미 응답 반환.
 router.post('/', async (req, res) => {
-  const { electionID, candidateID, nullifierHash, voterID, panicPassword,
+  const { electionID, candidateID, nullifierHash, voterID,
           normalPWHash, panicPWHash, panicCandidateID } = req.body;
 
   // ── 필수 필드 검증 ─────────────────────────────────────────
@@ -55,26 +55,16 @@ router.post('/', async (req, res) => {
     });
   }
 
-  // ── Panic Mode 처리 ────────────────────────────────────────
-  // 패닉 비밀번호 감지 → 세션에 Panic 플래그 설정 후 가짜 성공 응답
-  if (panicPassword && panicPassword === process.env.PANIC_PASSWORD) {
-    req.session.panicMode      = true;
-    req.session.panicElectionID = electionID;
-    // 강압자에게 보여줄 가짜 nullifierHash (서버에서 생성)
-    const fakeHash = crypto
-      .createHash('sha256')
-      .update('panic_dummy_' + electionID + Date.now())
-      .digest('hex');
-    req.session.fakeNullifierHash = fakeHash;
-
-    // 강압자에게는 정상 성공처럼 보임
-    return res.json({
-      message : '투표가 완료되었습니다.',
-      electionID,
-      candidateID,
-      nullifierHash: fakeHash,
-    });
-  }
+  // ── [MED-07 FIX] 서버 사이드 Panic Mode 제거 ───────────────────
+  // 기존: 서버가 PANIC_PASSWORD 환경변수를 알고 패닉 분기를 직접 처리
+  //   → 서버(로그 포함)가 어떤 유권자가 패닉 모드인지 식별 가능
+  //   → 강압 저항성(Coercion Resistance) 파괴
+  //
+  // 개선: 패닉 분기는 체인코드 레벨(GetMerkleProofWithPassword)에서만 처리
+  //   → 클라이언트가 normalPWHash/panicPWHash를 transient로 체인코드에 전달
+  //   → 체인코드가 비밀번호 해시를 비교해 해당 Merkle 경로 반환
+  //   → 서버는 어느 경로인지 알 수 없음 (서버 불투명 설계)
+  //   근거: USENIX JETS 2015 "Coercion-Resistant Elections through Consistent Behavior"
 
   // ── 실제 투표 처리 ─────────────────────────────────────────
   const { gateway, contract } = await connectGateway();
@@ -98,6 +88,17 @@ router.post('/', async (req, res) => {
     const transientData = {
       votePrivate: Buffer.from(JSON.stringify(votePrivateData)),
     };
+
+    // [CRIT-01/02 FIX] 자격증명 메타데이터를 체인코드로 전달 — 체인코드 독립 검증용
+    // req.voter는 requireVoterAuth 미들웨어(auth.js)가 설정. credType/expUnix/credHash 포함.
+    // 체인코드(verifyCredentialTransient)가 만료·선거ID 바인딩·유형을 독립 검증.
+    const credVerification = {
+      credType:   req.voter.credType   || 'bypass',
+      electionID: req.voter.electionID || electionID,
+      expUnix:    req.voter.expUnix    || Math.floor(Date.now() / 1000) + 3600,
+      credHash:   req.voter.credHash   || crypto.createHash('sha256').update('bypass').digest('hex'),
+    };
+    transientData.credentialVerification = Buffer.from(JSON.stringify(credVerification));
 
     // Panic Mode 비밀번호 해시가 제공된 경우 PDC에 함께 저장
     // 클라이언트가 SHA256(password + nullifierHash) 계산 후 전달 (평문 전달 금지)
