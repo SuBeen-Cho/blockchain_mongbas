@@ -27,8 +27,12 @@ export default function VerifyPage() {
       let hash = nullifierHash;
 
       // voterSecret이 있으면 직접 계산
+      // [CRIT-03 FIX] 블라인딩 팩터 포함하여 계산
       if (!hash && voterSecret && electionID) {
-        hash = await computeNullifier(voterSecret, electionID);
+        const bfRes = await fetch(`${API}/elections/${electionID}/blinding-factor`);
+        if (!bfRes.ok) throw new Error('블라인딩 팩터 조회 실패');
+        const { blindingFactor } = await bfRes.json();
+        hash = await computeNullifier(voterSecret, electionID, blindingFactor);
         setNullifierHash(hash);
       }
       if (!hash) throw new Error('nullifierHash 또는 (voterSecret + electionID)가 필요합니다.');

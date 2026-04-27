@@ -34,8 +34,89 @@ volumes:
   couchdb-ec1:
   couchdb-party:
   couchdb-civil:
+  ca.ec.voting.example.com:
+  ca.party.voting.example.com:
+  ca.civil.voting.example.com:
 
 services:
+
+  ##############################################################################
+  # Fabric CA — Idemix 자격증명 발급 서비스 (3개 조직)
+  #
+  # Hyperledger Fabric Idemix의 실제 인프라:
+  #   - fabric-ca-server가 BN256 Idemix 발급자 키 쌍을 자동 생성
+  #   - /api/v1/idemix/credential 엔드포인트로 CL 서명 자격증명 발급
+  #   - application/src/lib/ps-idemix.js (B단계) 와 동일한 수학적 기반
+  #
+  # 시작: docker compose up ca.ec.voting.example.com
+  # 등록: ../fabric-samples/bin/fabric-ca-client enroll \
+  #          -u http://admin:adminpw@localhost:7054
+  # Idemix 발급: fabric-ca-client enroll \
+  #          --enrollment.type idemix \
+  #          -u http://voter1:voter1pw@localhost:7054
+  ##############################################################################
+  ca.ec.voting.example.com:
+    container_name: ca.ec.voting.example.com
+    image: hyperledger/fabric-ca:1.5
+    environment:
+      - FABRIC_CA_HOME=/etc/hyperledger/fabric-ca-server
+      - FABRIC_CA_SERVER_CA_NAME=ca.ec.voting.example.com
+      - FABRIC_CA_SERVER_TLS_ENABLED=false
+      - FABRIC_CA_SERVER_PORT=7054
+      # cryptogen 생성 CA 인증서/키 재사용 (네트워크와 동일 CA)
+      - FABRIC_CA_SERVER_CA_CERTFILE=/etc/hyperledger/fabric-ca-server/ca-cert.pem
+      - FABRIC_CA_SERVER_CA_KEYFILE=/etc/hyperledger/fabric-ca-server/priv_sk
+      # Idemix 발급자 설정
+      - FABRIC_CA_SERVER_IDEMIX_RHPOOLSIZE=1000
+      - FABRIC_CA_SERVER_IDEMIX_NONCEEXPIRATION=15s
+    command: sh -c 'fabric-ca-server start -b admin:adminpw 2>&1'
+    volumes:
+      - ./crypto-config/peerOrganizations/ec.voting.example.com/ca:/etc/hyperledger/fabric-ca-server
+      - ca.ec.voting.example.com:/etc/hyperledger/fabric-ca-server/data
+    ports:
+      - "7054:7054"
+    networks:
+      - voting-net
+
+  ca.party.voting.example.com:
+    container_name: ca.party.voting.example.com
+    image: hyperledger/fabric-ca:1.5
+    environment:
+      - FABRIC_CA_HOME=/etc/hyperledger/fabric-ca-server
+      - FABRIC_CA_SERVER_CA_NAME=ca.party.voting.example.com
+      - FABRIC_CA_SERVER_TLS_ENABLED=false
+      - FABRIC_CA_SERVER_PORT=8054
+      - FABRIC_CA_SERVER_CA_CERTFILE=/etc/hyperledger/fabric-ca-server/ca-cert.pem
+      - FABRIC_CA_SERVER_CA_KEYFILE=/etc/hyperledger/fabric-ca-server/priv_sk
+      - FABRIC_CA_SERVER_IDEMIX_RHPOOLSIZE=1000
+    command: sh -c 'fabric-ca-server start -b admin:adminpw 2>&1'
+    volumes:
+      - ./crypto-config/peerOrganizations/party.voting.example.com/ca:/etc/hyperledger/fabric-ca-server
+      - ca.party.voting.example.com:/etc/hyperledger/fabric-ca-server/data
+    ports:
+      - "8054:8054"
+    networks:
+      - voting-net
+
+  ca.civil.voting.example.com:
+    container_name: ca.civil.voting.example.com
+    image: hyperledger/fabric-ca:1.5
+    environment:
+      - FABRIC_CA_HOME=/etc/hyperledger/fabric-ca-server
+      - FABRIC_CA_SERVER_CA_NAME=ca.civil.voting.example.com
+      - FABRIC_CA_SERVER_TLS_ENABLED=false
+      - FABRIC_CA_SERVER_PORT=9054
+      - FABRIC_CA_SERVER_CA_CERTFILE=/etc/hyperledger/fabric-ca-server/ca-cert.pem
+      - FABRIC_CA_SERVER_CA_KEYFILE=/etc/hyperledger/fabric-ca-server/priv_sk
+      - FABRIC_CA_SERVER_IDEMIX_RHPOOLSIZE=1000
+    command: sh -c 'fabric-ca-server start -b admin:adminpw 2>&1'
+    volumes:
+      - ./crypto-config/peerOrganizations/civil.voting.example.com/ca:/etc/hyperledger/fabric-ca-server
+      - ca.civil.voting.example.com:/etc/hyperledger/fabric-ca-server/data
+    ports:
+      - "9054:9054"
+    networks:
+      - voting-net
 
   ##############################################################################
   # 오더러 노드 1~4 (SmartBFT BFT 합의)
@@ -302,6 +383,7 @@ services:
         condition: service_healthy
     volumes:
       - /var/run/docker.sock:/host/var/run/docker.sock
+      - ../fabric-samples/config/core.yaml:/etc/hyperledger/fabric/core.yaml
       - ./crypto-config/peerOrganizations/ec.voting.example.com/peers/peer0.ec.voting.example.com/msp:/etc/hyperledger/fabric/msp
       - ./crypto-config/peerOrganizations/ec.voting.example.com/peers/peer0.ec.voting.example.com/tls:/etc/hyperledger/fabric/tls
       - peer0.ec.voting.example.com:/var/hyperledger/production
@@ -344,6 +426,7 @@ services:
         condition: service_healthy
     volumes:
       - /var/run/docker.sock:/host/var/run/docker.sock
+      - ../fabric-samples/config/core.yaml:/etc/hyperledger/fabric/core.yaml
       - ./crypto-config/peerOrganizations/ec.voting.example.com/peers/peer1.ec.voting.example.com/msp:/etc/hyperledger/fabric/msp
       - ./crypto-config/peerOrganizations/ec.voting.example.com/peers/peer1.ec.voting.example.com/tls:/etc/hyperledger/fabric/tls
       - peer1.ec.voting.example.com:/var/hyperledger/production
@@ -389,6 +472,7 @@ services:
         condition: service_healthy
     volumes:
       - /var/run/docker.sock:/host/var/run/docker.sock
+      - ../fabric-samples/config/core.yaml:/etc/hyperledger/fabric/core.yaml
       - ./crypto-config/peerOrganizations/party.voting.example.com/peers/peer0.party.voting.example.com/msp:/etc/hyperledger/fabric/msp
       - ./crypto-config/peerOrganizations/party.voting.example.com/peers/peer0.party.voting.example.com/tls:/etc/hyperledger/fabric/tls
       - peer0.party.voting.example.com:/var/hyperledger/production
@@ -434,6 +518,7 @@ services:
         condition: service_healthy
     volumes:
       - /var/run/docker.sock:/host/var/run/docker.sock
+      - ../fabric-samples/config/core.yaml:/etc/hyperledger/fabric/core.yaml
       - ./crypto-config/peerOrganizations/civil.voting.example.com/peers/peer0.civil.voting.example.com/msp:/etc/hyperledger/fabric/msp
       - ./crypto-config/peerOrganizations/civil.voting.example.com/peers/peer0.civil.voting.example.com/tls:/etc/hyperledger/fabric/tls
       - peer0.civil.voting.example.com:/var/hyperledger/production

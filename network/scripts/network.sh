@@ -149,8 +149,8 @@ start_network() {
   step "3/5 Docker 컨테이너 실행..."
   cd "$NETWORK_DIR"
   docker compose up -d
-  info "컨테이너 기동 대기 (15초)..."
-  sleep 15
+  info "컨테이너 기동 대기 (35초)..."
+  sleep 35
   docker compose ps
 }
 

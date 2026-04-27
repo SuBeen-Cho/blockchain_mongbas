@@ -20,17 +20,26 @@ export async function sha256(text) {
 
 /**
  * Nullifier 해시를 계산합니다.
- * nullifierHash = SHA256(voterSecret + electionID)
  *
- * voterSecret은 유권자가 직접 입력하거나 로컬에서 생성합니다.
- * 서버로 전송되지 않으며, 이 값을 잃어버리면 E2E 검증 불가.
+ * [CRIT-03 FIX] 결정론적 nullifier 취약점 수정:
+ * - 변경 전: nullifierHash = SHA256(voterSecret + electionID)
+ *   → 같은 유권자는 모든 선거에서 동일 패턴 → voterSecret 유출 시 전체 투표 이력 역추적 가능
+ * - 변경 후: nullifierHash = SHA256(voterSecret + electionID + blindingFactor)
+ *   → blindingFactor는 선거별로 다름 (체인코드가 txID 기반으로 생성)
+ *   → voterSecret이 유출되어도 각 선거의 blindingFactor 없이는 nullifier 연결 불가
  *
- * @param {string} voterSecret - 유권자 비밀값 (로컬 보관)
- * @param {string} electionID  - 선거 ID
+ * blindingFactor는 GET /api/elections/:id/blinding-factor 로 조회합니다.
+ *
+ * @param {string} voterSecret    - 유권자 비밀값 (로컬 보관, 서버 미전송)
+ * @param {string} electionID     - 선거 ID
+ * @param {string} blindingFactor - 선거별 블라인딩 팩터 (서버에서 조회)
  * @returns {Promise<string>} nullifierHash (hex)
  */
-export async function computeNullifier(voterSecret, electionID) {
-  return sha256(voterSecret + electionID);
+export async function computeNullifier(voterSecret, electionID, blindingFactor) {
+  if (!blindingFactor) {
+    throw new Error('blindingFactor 필요 — GET /api/elections/:id/blinding-factor 로 조회하세요.');
+  }
+  return sha256(voterSecret + electionID + blindingFactor);
 }
 
 /**
