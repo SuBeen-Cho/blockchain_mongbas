@@ -1,0 +1,252 @@
+{
+  "runDate": "2026. 4. 12. PM 10:29:04",
+  "results": {
+    "B2": {
+      "count": 100000,
+      "collisions": 0,
+      "collisionRate": "0.000000%",
+      "elapsedMs": 103,
+      "throughputPerSec": 970874
+    },
+    "A2": {
+      "rounds": 100,
+      "policyEnforced": 100,
+      "enforcementRate": "100.0%",
+      "invalidTxStats": {
+        "n": 100,
+        "avg": "13.2",
+        "stddev": "10.6",
+        "min": 7,
+        "max": 89,
+        "p50": 10,
+        "p95": 26,
+        "p99": 68
+      },
+      "normalTxLatencyMs": 653,
+      "normalTxStatus": 200,
+      "note": "Fabric Gateway는 모든 트랜잭션에 2-of-3 endorsement 자동 적용. 단독 조작 불가."
+    },
+    "A3": {
+      "peerStopped": true,
+      "beforePeer": {
+        "n": 10,
+        "avg": "607.8",
+        "stddev": "18.1",
+        "min": 585,
+        "max": 648,
+        "p50": 601,
+        "p95": 648,
+        "p99": 648
+      },
+      "afterPeer": {
+        "rounds": 30,
+        "success": 30,
+        "successRate": "100.0%",
+        "n": 30,
+        "avg": "612.3",
+        "stddev": "55.1",
+        "min": 569,
+        "max": 842,
+        "p50": 590,
+        "p95": 726,
+        "p99": 842
+      },
+      "note": "peer0.party 중단 상태에서 EC + Civil 2개 endorsement로 트랜잭션 처리"
+    },
+    "B3": {
+      "rounds": 50,
+      "normal": {
+        "n": 50,
+        "avg": "615.5",
+        "stddev": "35.9",
+        "min": 580,
+        "max": 758,
+        "p50": 606,
+        "p95": 703,
+        "p99": 758
+      },
+      "eviction": {
+        "n": 50,
+        "avg": "620.5",
+        "stddev": "51.6",
+        "min": 573,
+        "max": 904,
+        "p50": 603,
+        "p95": 682,
+        "p99": 904
+      },
+      "overheadMs": "5.0",
+      "tStat": "0.559",
+      "tThreshold": 2.01,
+      "significant": false,
+      "note": "정상 CastVote vs Eviction CastVote 레이턴시 차이 (오버헤드)"
+    },
+    "C1": {
+      "rounds": 200,
+      "normal": {
+        "n": 200,
+        "avg": "74.0",
+        "stddev": "28.7",
+        "min": 49,
+        "max": 333,
+        "p50": 67,
+        "p95": 122,
+        "p99": 169
+      },
+      "panic": {
+        "n": 200,
+        "avg": "75.4",
+        "stddev": "30.1",
+        "min": 51,
+        "max": 304,
+        "p50": 68,
+        "p95": 106,
+        "p99": 249
+      },
+      "diffMs": "1.5",
+      "tStat": "0.503",
+      "tThreshold": 1.972,
+      "significant": false,
+      "note": "기존 100회에서 200회로 확대 측정"
+    },
+    "C3": {
+      "rounds": 50,
+      "fieldStructureIdentical": {
+        "count": 50,
+        "rate": "100.0%"
+      },
+      "responseLengthDiff": {
+        "n": 50,
+        "avg": "0.0",
+        "stddev": "0.0",
+        "min": 0,
+        "max": 0,
+        "p50": 0,
+        "p95": 0,
+        "p99": 0,
+        "zeroCount": 50,
+        "zeroRate": "100.0%"
+      },
+      "structMismatchCount": 0,
+      "note": "JSON 필드 구조 및 응답 바이트 길이 동일성 자동 검증"
+    },
+    "D3": {
+      "rounds": 50,
+      "failScenario": {
+        "n": 50,
+        "avg": "2.1",
+        "stddev": "6.8",
+        "min": 0,
+        "max": 49,
+        "p50": 1,
+        "p95": 4,
+        "p99": 49
+      },
+      "successScenario": {
+        "n": 50,
+        "avg": "2.4",
+        "stddev": "2.0",
+        "min": 0,
+        "max": 10,
+        "p50": 2,
+        "p95": 6,
+        "p99": 10
+      },
+      "diffMs": "0.3",
+      "tStat": "0.338",
+      "tThreshold": 2.01,
+      "significant": false,
+      "note": "1-share 실패 vs 2-share 성공 시나리오 응답 시간 분포 비교"
+    },
+    "E1": {
+      "sizes": [
+        10,
+        50,
+        100,
+        500
+      ],
+      "repeatsPerSize": 20,
+      "results": {
+        "10": {
+          "n": 20,
+          "avg": "214.9",
+          "stddev": "37.7",
+          "min": 194,
+          "max": 369,
+          "p50": 202,
+          "p95": 253,
+          "p99": 369
+        },
+        "50": {
+          "n": 20,
+          "avg": "214.2",
+          "stddev": "55.6",
+          "min": 169,
+          "max": 448,
+          "p50": 201,
+          "p95": 233,
+          "p99": 448
+        },
+        "100": {
+          "n": 20,
+          "avg": "254.5",
+          "stddev": "65.6",
+          "min": 199,
+          "max": 418,
+          "p50": 224,
+          "p95": 393,
+          "p99": 418
+        },
+        "500": {
+          "n": 20,
+          "avg": "267.4",
+          "stddev": "22.8",
+          "min": 243,
+          "max": 333,
+          "p50": 263,
+          "p95": 331,
+          "p99": 333
+        }
+      },
+      "logNVerification": [
+        {
+          "from": 10,
+          "to": 50,
+          "logRatio": "1.70",
+          "timeRatio": "1.00"
+        },
+        {
+          "from": 50,
+          "to": 100,
+          "logRatio": "1.18",
+          "timeRatio": "1.19"
+        },
+        {
+          "from": 100,
+          "to": 500,
+          "logRatio": "1.35",
+          "timeRatio": "1.05"
+        }
+      ]
+    },
+    "E3": {
+      "rounds": 30,
+      "rootHashBefore": "N/A",
+      "rootHashAfter": "N/A",
+      "rootHashUnchanged": true,
+      "rejectedCount": 30,
+      "rejectionRate": "100.0%",
+      "rejectionStats": {
+        "n": 30,
+        "avg": "11.9",
+        "stddev": "5.3",
+        "min": 7,
+        "max": 33,
+        "p50": 11,
+        "p95": 25,
+        "p99": 33
+      },
+      "note": "CLOSED 선거에 추가 투표 시도 → Root Hash 변경 불가 검증"
+    }
+  }
+}

@@ -1,0 +1,101 @@
+{
+  "batchTimeout": "5s",
+  "runDate": "2026. 4. 13. AM 12:32:00",
+  "rounds": [
+    {
+      "targetTps": 1,
+      "txCount": 30,
+      "success": 30,
+      "fail": 0,
+      "failRate": "0.0%",
+      "actualTps": "0.19",
+      "totalElapsedSec": "157.2",
+      "latency": {
+        "n": 30,
+        "avg": "5240.3",
+        "stddev": "87.7",
+        "min": 5176,
+        "max": 5674,
+        "p50": 5217,
+        "p95": 5338,
+        "p99": 5674
+      }
+    },
+    {
+      "targetTps": 3,
+      "txCount": 60,
+      "success": 60,
+      "fail": 0,
+      "failRate": "0.0%",
+      "actualTps": "0.19",
+      "totalElapsedSec": "314.5",
+      "latency": {
+        "n": 60,
+        "avg": "5241.6",
+        "stddev": "120.2",
+        "min": 5173,
+        "max": 6109,
+        "p50": 5212,
+        "p95": 5321,
+        "p99": 6109
+      }
+    },
+    {
+      "targetTps": 5,
+      "txCount": 100,
+      "success": 100,
+      "fail": 0,
+      "failRate": "0.0%",
+      "actualTps": "0.19",
+      "totalElapsedSec": "523.3",
+      "latency": {
+        "n": 100,
+        "avg": "5232.5",
+        "stddev": "67.6",
+        "min": 5113,
+        "max": 5523,
+        "p50": 5213,
+        "p95": 5368,
+        "p99": 5468
+      }
+    },
+    {
+      "targetTps": 10,
+      "txCount": 150,
+      "success": 150,
+      "fail": 0,
+      "failRate": "0.0%",
+      "actualTps": "0.19",
+      "totalElapsedSec": "780.9",
+      "latency": {
+        "n": 150,
+        "avg": "5205.3",
+        "stddev": "63.0",
+        "min": 5129,
+        "max": 5745,
+        "p50": 5191,
+        "p95": 5276,
+        "p99": 5504
+      }
+    },
+    {
+      "targetTps": 20,
+      "txCount": 200,
+      "success": 200,
+      "fail": 0,
+      "failRate": "0.0%",
+      "actualTps": "0.19",
+      "totalElapsedSec": "1039.0",
+      "latency": {
+        "n": 200,
+        "avg": "5194.6",
+        "stddev": "42.3",
+        "min": 5126,
+        "max": 5520,
+        "p50": 5186,
+        "p95": 5266,
+        "p99": 5367
+      }
+    }
+  ]
+}

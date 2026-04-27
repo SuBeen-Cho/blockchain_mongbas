@@ -1,0 +1,128 @@
+{
+  "measuredAt": "2026-04-13T12:59:35.007Z",
+  "electionID": "bench-concurrent-1776084981",
+  "scenario": "concurrent-vote-bottleneck",
+  "batches": 5,
+  "results": [
+    {
+      "concurrency": 1,
+      "total": 5,
+      "ok": 5,
+      "fail": 0,
+      "failRate": 0,
+      "tps": 0.41,
+      "totalBatchMs": 12227,
+      "latency": {
+        "n": 5,
+        "avg": 2447,
+        "stddev": 171.1,
+        "min": 2234,
+        "max": 2632,
+        "p50": 2514,
+        "p95": 2632,
+        "p99": 2632
+      },
+      "errTypes": {}
+    },
+    {
+      "concurrency": 5,
+      "total": 25,
+      "ok": 25,
+      "fail": 0,
+      "failRate": 0,
+      "tps": 2.11,
+      "totalBatchMs": 11875,
+      "latency": {
+        "n": 25,
+        "avg": 2374.3,
+        "stddev": 37.1,
+        "min": 2335,
+        "max": 2446,
+        "p50": 2367,
+        "p95": 2445,
+        "p99": 2446
+      },
+      "errTypes": {}
+    },
+    {
+      "concurrency": 10,
+      "total": 50,
+      "ok": 50,
+      "fail": 0,
+      "failRate": 0,
+      "tps": 4.1,
+      "totalBatchMs": 12200,
+      "latency": {
+        "n": 50,
+        "avg": 2438.7,
+        "stddev": 33,
+        "min": 2387,
+        "max": 2485,
+        "p50": 2432,
+        "p95": 2484,
+        "p99": 2485
+      },
+      "errTypes": {}
+    },
+    {
+      "concurrency": 20,
+      "total": 100,
+      "ok": 100,
+      "fail": 0,
+      "failRate": 0,
+      "tps": 7.66,
+      "totalBatchMs": 13061,
+      "latency": {
+        "n": 100,
+        "avg": 2611.2,
+        "stddev": 73.1,
+        "min": 2512,
+        "max": 2734,
+        "p50": 2587,
+        "p95": 2731,
+        "p99": 2734
+      },
+      "errTypes": {}
+    },
+    {
+      "concurrency": 50,
+      "total": 250,
+      "ok": 250,
+      "fail": 0,
+      "failRate": 0,
+      "tps": 14.41,
+      "totalBatchMs": 17347,
+      "latency": {
+        "n": 250,
+        "avg": 3459.1,
+        "stddev": 445.8,
+        "min": 2761,
+        "max": 4092,
+        "p50": 3443,
+        "p95": 4086,
+        "p99": 4092
+      },
+      "errTypes": {}
+    },
+    {
+      "concurrency": 100,
+      "total": 500,
+      "ok": 500,
+      "fail": 0,
+      "failRate": 0,
+      "tps": 21,
+      "totalBatchMs": 23804,
+      "latency": {
+        "n": 500,
+        "avg": 4743.2,
+        "stddev": 866.1,
+        "min": 3623,
+        "max": 6328,
+        "p50": 4639,
+        "p95": 6320,
+        "p99": 6327
+      },
+      "errTypes": {}
+    }
+  ]
+}

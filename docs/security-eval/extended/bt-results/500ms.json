@@ -1,0 +1,101 @@
+{
+  "batchTimeout": "500ms",
+  "runDate": "2026. 4. 12. PM 11:11:54",
+  "rounds": [
+    {
+      "targetTps": 1,
+      "txCount": 30,
+      "success": 30,
+      "fail": 0,
+      "failRate": "0.0%",
+      "actualTps": "1.00",
+      "totalElapsedSec": "30.1",
+      "latency": {
+        "n": 30,
+        "avg": "729.4",
+        "stddev": "70.6",
+        "min": 642,
+        "max": 988,
+        "p50": 704,
+        "p95": 849,
+        "p99": 988
+      }
+    },
+    {
+      "targetTps": 3,
+      "txCount": 60,
+      "success": 60,
+      "fail": 0,
+      "failRate": "0.0%",
+      "actualTps": "1.54",
+      "totalElapsedSec": "39.0",
+      "latency": {
+        "n": 60,
+        "avg": "649.1",
+        "stddev": "38.2",
+        "min": 596,
+        "max": 787,
+        "p50": 645,
+        "p95": 749,
+        "p99": 787
+      }
+    },
+    {
+      "targetTps": 5,
+      "txCount": 100,
+      "success": 100,
+      "fail": 0,
+      "failRate": "0.0%",
+      "actualTps": "1.56",
+      "totalElapsedSec": "63.9",
+      "latency": {
+        "n": 100,
+        "avg": "638.8",
+        "stddev": "88.5",
+        "min": 584,
+        "max": 1194,
+        "p50": 609,
+        "p95": 760,
+        "p99": 1061
+      }
+    },
+    {
+      "targetTps": 10,
+      "txCount": 150,
+      "success": 150,
+      "fail": 0,
+      "failRate": "0.0%",
+      "actualTps": "1.56",
+      "totalElapsedSec": "96.2",
+      "latency": {
+        "n": 150,
+        "avg": "640.9",
+        "stddev": "56.5",
+        "min": 588,
+        "max": 909,
+        "p50": 620,
+        "p95": 775,
+        "p99": 891
+      }
+    },
+    {
+      "targetTps": 20,
+      "txCount": 200,
+      "success": 200,
+      "fail": 0,
+      "failRate": "0.0%",
+      "actualTps": "1.48",
+      "totalElapsedSec": "134.7",
+      "latency": {
+        "n": 200,
+        "avg": "673.3",
+        "stddev": "78.9",
+        "min": 585,
+        "max": 1083,
+        "p50": 646,
+        "p95": 828,
+        "p99": 1013
+      }
+    }
+  ]
+}
