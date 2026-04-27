@@ -149,11 +149,12 @@ GET  /health                           서버 상태 + Idemix 설정 확인
 ### 4-3. Shamir SSS 수학적 근거
 
 ```
-소수체: GF(257)  (p=257 > 255, 모든 바이트값 수용)
-다항식: f(x) = masterKey[i] + coeff[i]·x  mod 257  (degree-1, threshold=2)
+소수체: GF(p), p = secp256k1 prime (2^256 - 2^32 - 977)
+  → 32바이트 masterKey 전체를 하나의 256비트 정수로 처리 (보안 공간 ≈ 2^256)
+다항식: f(x) = masterKey + coeff·x  mod p  (degree-1, threshold=2)
 
-share 생성:  share_j[i] = f(j)  for j=1,2,3
-복원 (x=0):  f(0) = 2·y₁ + 256·y₂  mod 257  (Lagrange 보간)
+share 생성:  share_j = f(j)  for j=1,2,3  (각 32바이트 big-endian)
+복원 (x=0):  Lagrange 보간  f(0) = L1·y1 + L2·y2  mod p
 검증:        SHA256(복원된 masterKey) == 원장의 keyHash
 ```
 
@@ -311,7 +312,7 @@ bash scripts/bench_step45.sh    # STEP 4~5
 | 백엔드 | Node.js + @hyperledger/fabric-gateway v1.7.1 |
 | 프론트엔드 | React + Vite + Tailwind CSS |
 | 성능 측정 | Hyperledger Caliper 0.6 (peer-gateway 커넥터) |
-| 암호학 | SHA-256, GF(257) Shamir SSS, Merkle Tree |
+| 암호학 | SHA-256, GF(secp256k1) Shamir SSS, Merkle Tree |
 | 인증 (예정) | Idemix ZKP — 훅 구현 완료, 실 연동 예정 |
 
 ---

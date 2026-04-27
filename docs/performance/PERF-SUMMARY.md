@@ -177,10 +177,10 @@ Eviction은 기존 Nullifier 레코드 Read + Unmarshal 후 덮어쓰기.
 
 > 상세: [PERF-STEP5-SHAMIR.md](./PERF-STEP5-SHAMIR.md)
 
-**구현 방식:** GF(257) 위 1차 다항식 Shamir SSS (threshold=2, shares=3)
-- masterKey = SHA256(txID ∥ electionID) — 결정론적 생성
-- share_i = masterKey[byte] + coeff[byte] × i  mod 257
-- 복원: Lagrange at x=0 → f(0) = 2·y₁ + 256·y₂  mod 257
+**구현 방식:** GF(p) 위 1차 다항식 Shamir SSS (p = secp256k1 prime, 2²⁵⁶ − 2³² − 977; threshold=2, shares=3)
+- masterKey = SHA256(txID ∥ electionID) — 결정론적 생성 (256-bit 정수)
+- share_i = masterKey + coeff × i  mod p  (256-bit whole-integer 연산)
+- 복원: Lagrange at x=0 (mod p)
 
 ### 6-1. InitKeySharing Latency — 50회
 

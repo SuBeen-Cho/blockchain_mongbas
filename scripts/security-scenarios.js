@@ -469,8 +469,8 @@ ${C.significant
 
 ### 방어 메커니즘
 \`\`\`
-Shamir SSS: GF(257) 소수체, n=2/m=3 threshold
-f(x) = masterKey + coeff·x  mod 257
+Shamir SSS: GF(p) 소수체 (p = secp256k1 prime, 2^256 - 2^32 - 977), n=2/m=3 threshold
+f(x) = masterKey + coeff·x  mod p  (256-bit whole-integer)
 → Share 1개만으로는 수학적으로 masterKey 복원 불가 (정보량 = 0)
 → Share 위조 시 SHA256(복원값) ≠ keyHash 검증으로 차단
 \`\`\`

@@ -24,15 +24,15 @@
 1. masterKey = SHA256(txID + "::" + electionID)  ← 결정론적 생성
 2. coeffSeed = SHA256("COEFF::" + txID + "::" + electionID)
 3. Shamir SSS: masterKey(32 bytes) → 3개 share
-   수식: f(x) = masterKey[i] + coeffSeed[i] * x  mod 257  (GF, prime=257)
-   share_j = [f(j) for j in 1..3]  (각 2 byte Big-Endian)
+   수식: f(x) = masterKey + coeff * x  mod p  (p = secp256k1 prime, 2^256 - 2^32 - 977)
+   share_j = f(j) for j in 1..3  (각 32 byte Big-Endian, 256비트 정수 통째 연산)
 4. share_1, share_2, share_3 → PDC(VotePrivateCollection) 저장
 5. keyHash = SHA256(masterKey) → 공개 원장에 저장 (복원 검증용)
 
 [집계 시 — SubmitKeyShare]
 6. 조직이 share_index와 shareHex 제출
 7. n=2 이상 수집 시 Lagrange 보간으로 masterKey 복원
-   f(0) = y1 * (-x2)/(x1-x2) + y2 * (-x1)/(x2-x1)  mod 257
+   f(0) = y1 * (-x2)/(x1-x2) + y2 * (-x1)/(x2-x1)  mod p
 8. SHA256(복원된 masterKey) == keyHash 검증 → isDecrypted=true
 ```
 
@@ -48,15 +48,16 @@
 ### 수학적 근거
 
 ```
-GF 소수: p = 257  (> 255, 모든 바이트값 수용)
-다항식:  f(x) = s + r*x  mod 257  (threshold=2 → degree-1 다항식)
-share_i: f(i) = (s + r*i) mod 257  (i=1,2,3)
+GF 소수: p = secp256k1 prime (2^256 - 2^32 - 977), 보안 공간 ≈ 2^256
+  → 32바이트 masterKey 전체를 하나의 256비트 정수로 처리 (math/big.Int)
+다항식:  f(x) = s + r*x  mod p  (threshold=2 → degree-1 다항식)
+share_i: f(i) = (s + r*i) mod p  (i=1,2,3, 각 32바이트 big-endian)
 
 복원 (Lagrange 보간, x=0):
-  f(0) = y1 * L1(0) + y2 * L2(0)  mod 257
-  L1(0) = (-x2) / (x1 - x2) = (-2) / (1 - 2) = 2  mod 257
-  L2(0) = (-x1) / (x2 - x1) = (-1) / (2 - 1) = 256  mod 257
-  → f(0) = 2*y1 + 256*y2  mod 257
+  f(0) = y1 * L1(0) + y2 * L2(0)  mod p
+  L1(0) = (-x2) / (x1 - x2)  mod p
+  L2(0) = (-x1) / (x2 - x1)  mod p
+  → f(0) = L1*y1 + L2*y2  mod p  (big.Int.ModInverse로 나눗셈)
 ```
 
 ### 추가된 REST API

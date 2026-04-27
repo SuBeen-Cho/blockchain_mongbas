@@ -40,7 +40,7 @@
 | 항목 | 상태 | 비고 |
 |-----|------|------|
 | Nullifier Eviction (재투표 지원) | ✅ | CastVote 덮어쓰기, EvictCount 추적 |
-| Shamir's Secret Sharing (n=2/m=3) | ✅ | GF(257), Lagrange 복원, threshold 검증 |
+| Shamir's Secret Sharing (n=2/m=3) | ✅ | GF(p), p = secp256k1 prime (2²⁵⁶ − 2³² − 977), Lagrange 복원, threshold 검증 |
 | STEP 4~5 성능 평가 (100·50회 반복) | ✅ | docs/performance/ 참조 |
 | Shamir REST API 엔드포인트 추가 | ✅ | /keysharing, /shares, /decryption |
 
@@ -646,7 +646,7 @@ node benchmark/http-bench.js  # → 저장
 | A. 단독 결과 조작 | "2-of-3 승인 정책으로 단일 기관의 독자적 조작 차단. 정상 트랜잭션 2113ms 내 처리." |
 | B. 이중투표 | "Nullifier Eviction 방식 — 재투표 허용이지만 마지막 투표 1개만 집계. 이중집계 수학적 불가." |
 | C. 강압 투표 | "Normal/Panic 타이밍 차이 0.2ms, t=0.397 (p>0.05) — 통계적으로 구별 불가." |
-| D. 키 탈취 | "GF(257) Shamir SSS — Share 1개 탈취 시 정보량 0. 2개 이상 기관 공모 없이 복원 불가." |
+| D. 키 탈취 | "GF(p) Shamir SSS (p = secp256k1 prime) — Share 1개 탈취 시 정보량 0. 2개 이상 기관 공모 없이 복원 불가." |
 | E. 결과 조작 주장 | "Merkle E2E 검증 정확도 100%. Root Hash 원장 기록으로 사후 변경 증명 불가." |
 
 > 시나리오 측정 스크립트 재실행: `node scripts/security-scenarios.js` (네트워크 + API 서버 필요)
@@ -659,7 +659,7 @@ node benchmark/http-bench.js  # → 저장
 | 이중투표 방지 | Nullifier Hash로 수학적 보장, 100% 차단 실험 결과 |
 | 익명성 | voterSecret 클라이언트 로컬 보관, 서버는 nullifierHash만 수신 |
 | Panic Password | Normal/Panic 타이밍 차이 13.7ms — UI 완전 동일로 구분 불가 |
-| Shamir SSS | GF(257) 소수체, 2-of-3 threshold, Lagrange 보간으로 masterKey 복원 |
+| Shamir SSS | GF(p) 소수체 (p = secp256k1 prime, 2²⁵⁶ − 2³² − 977), 2-of-3 threshold, Lagrange 보간으로 masterKey 복원 |
 | Caliper TPS | Low 1.0 / Mid 4.7 / High 9.6 TPS (Throughput 기준) |
 | BatchTimeout | 2s 설정이 Max Latency를 지배 — 최적화 여지 있음 |
 | Idemix | 미들웨어 훅 구현 완료 (auth.js), 실 ZKP 연동은 향후 과제 |
