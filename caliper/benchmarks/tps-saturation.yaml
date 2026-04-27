@@ -1,0 +1,68 @@
+# ============================================================
+# Caliper — TPS 포화 한계 탐색
+# 목표: 시스템이 실패하거나 지연이 폭발하는 TPS 구간 탐색
+# 워커: 16명 고정
+# ============================================================
+test:
+  name: TPS 포화 한계 탐색
+  workers:
+    number: 16
+
+  rounds:
+    - label: TPS_20
+      txNumber: 300
+      rateControl:
+        type: fixed-rate
+        opts: { tps: 20 }
+      workload:
+        module: workloads/castVote.js
+        arguments: { electionID: sat-20, candidates: [A, B, C] }
+
+    - label: TPS_25
+      txNumber: 300
+      rateControl:
+        type: fixed-rate
+        opts: { tps: 25 }
+      workload:
+        module: workloads/castVote.js
+        arguments: { electionID: sat-25, candidates: [A, B, C] }
+
+    - label: TPS_30
+      txNumber: 300
+      rateControl:
+        type: fixed-rate
+        opts: { tps: 30 }
+      workload:
+        module: workloads/castVote.js
+        arguments: { electionID: sat-30, candidates: [A, B, C] }
+
+    - label: TPS_35
+      txNumber: 300
+      rateControl:
+        type: fixed-rate
+        opts: { tps: 35 }
+      workload:
+        module: workloads/castVote.js
+        arguments: { electionID: sat-35, candidates: [A, B, C] }
+
+    - label: TPS_40
+      txNumber: 300
+      rateControl:
+        type: fixed-rate
+        opts: { tps: 40 }
+      workload:
+        module: workloads/castVote.js
+        arguments: { electionID: sat-40, candidates: [A, B, C] }
+
+    - label: TPS_50
+      txNumber: 300
+      rateControl:
+        type: fixed-rate
+        opts: { tps: 50 }
+      workload:
+        module: workloads/castVote.js
+        arguments: { electionID: sat-50, candidates: [A, B, C] }
+
+observer:
+  type: local
+  interval: 5

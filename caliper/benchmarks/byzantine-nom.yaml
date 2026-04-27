@@ -1,0 +1,43 @@
+# ============================================================
+# Caliper — n-of-m 보증 정책 성능 측정
+# 정책 변경 후 이 파일로 각각 측정
+# ============================================================
+test:
+  name: n-of-m 비잔틴 보증 정책 성능 측정
+  workers:
+    number: 16
+
+  rounds:
+    - label: Policy_NofM_TPS5
+      description: "현재 정책 기준 5 TPS"
+      txNumber: 150
+      rateControl:
+        type: fixed-rate
+        opts: { tps: 5 }
+      workload:
+        module: workloads/castVote.js
+        arguments: { electionID: nom-5, candidates: [A, B, C] }
+
+    - label: Policy_NofM_TPS10
+      description: "현재 정책 기준 10 TPS"
+      txNumber: 200
+      rateControl:
+        type: fixed-rate
+        opts: { tps: 10 }
+      workload:
+        module: workloads/castVote.js
+        arguments: { electionID: nom-10, candidates: [A, B, C] }
+
+    - label: Policy_NofM_TPS20
+      description: "현재 정책 기준 20 TPS"
+      txNumber: 300
+      rateControl:
+        type: fixed-rate
+        opts: { tps: 20 }
+      workload:
+        module: workloads/castVote.js
+        arguments: { electionID: nom-20, candidates: [A, B, C] }
+
+observer:
+  type: local
+  interval: 5

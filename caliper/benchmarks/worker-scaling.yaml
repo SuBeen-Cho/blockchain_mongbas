@@ -1,0 +1,49 @@
+# ============================================================
+# Caliper — 동시 투표자 수 확장 테스트 (32 / 64 / 128명)
+# TPS: 10 고정
+# ============================================================
+test:
+  name: 동시 투표자 수 확장 테스트
+  workers:
+    number: 128
+
+  rounds:
+    - label: Workers_32_TPS10
+      txNumber: 400
+      rateControl:
+        type: fixed-rate
+        opts: { tps: 10 }
+      workload:
+        module: workloads/castVote.js
+        arguments: { electionID: ws-32, candidates: [A, B, C] }
+
+    - label: Workers_64_TPS10
+      txNumber: 600
+      rateControl:
+        type: fixed-rate
+        opts: { tps: 10 }
+      workload:
+        module: workloads/castVote.js
+        arguments: { electionID: ws-64, candidates: [A, B, C] }
+
+    - label: Workers_128_TPS10
+      txNumber: 800
+      rateControl:
+        type: fixed-rate
+        opts: { tps: 10 }
+      workload:
+        module: workloads/castVote.js
+        arguments: { electionID: ws-128, candidates: [A, B, C] }
+
+    - label: Workers_128_TPS20
+      txNumber: 800
+      rateControl:
+        type: fixed-rate
+        opts: { tps: 20 }
+      workload:
+        module: workloads/castVote.js
+        arguments: { electionID: ws-128-20, candidates: [A, B, C] }
+
+observer:
+  type: local
+  interval: 5

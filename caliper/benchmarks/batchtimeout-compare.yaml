@@ -1,0 +1,40 @@
+# ============================================================
+# Caliper — BatchTimeout 비교 테스트
+# 기존 2s 결과와 비교 목적: 1 / 5 / 10 TPS (4 workers 고정)
+# ============================================================
+test:
+  name: BatchTimeout 비교 테스트
+  workers:
+    number: 4
+
+  rounds:
+    - label: BT_Low_1TPS
+      txNumber: 48
+      rateControl:
+        type: fixed-rate
+        opts: { tps: 1 }
+      workload:
+        module: workloads/castVote.js
+        arguments: { electionID: bt-low, candidates: [A, B, C] }
+
+    - label: BT_Mid_5TPS
+      txNumber: 100
+      rateControl:
+        type: fixed-rate
+        opts: { tps: 5 }
+      workload:
+        module: workloads/castVote.js
+        arguments: { electionID: bt-mid, candidates: [A, B, C] }
+
+    - label: BT_High_10TPS
+      txNumber: 150
+      rateControl:
+        type: fixed-rate
+        opts: { tps: 10 }
+      workload:
+        module: workloads/castVote.js
+        arguments: { electionID: bt-high, candidates: [A, B, C] }
+
+observer:
+  type: local
+  interval: 5

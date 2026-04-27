@@ -1,0 +1,83 @@
+# ============================================================
+# Caliper 벤치마크 — 동시 투표자 수(Workers) 확장 테스트
+#
+# 목적: workers 수를 4 → 8 → 16으로 늘렸을 때 성능 변화 측정
+# 고정 TPS: 10 (High 구간 기준)
+# ============================================================
+
+test:
+  name: BFT 익명 전자투표 — 동시 투표자 수 확장 성능 측정
+  description: |
+    동일한 목표 TPS(10)에서 동시 투표자 수(workers)를 늘려가며
+    처리량·지연·안정성 변화를 측정.
+
+  workers:
+    number: 16
+
+  rounds:
+    # ── 4 workers @ 10 TPS ─────────────────────────────────
+    - label: Workers_4_TPS10
+      description: "동시 투표자 4명, 10 TPS"
+      txNumber: 100
+      rateControl:
+        type: fixed-rate
+        opts:
+          tps: 10
+      workload:
+        module: workloads/castVote.js
+        arguments:
+          electionID: bench-w4
+          candidates: [A, B, C]
+
+    # ── 8 workers @ 10 TPS ─────────────────────────────────
+    - label: Workers_8_TPS10
+      description: "동시 투표자 8명, 10 TPS"
+      txNumber: 200
+      rateControl:
+        type: fixed-rate
+        opts:
+          tps: 10
+      workload:
+        module: workloads/castVote.js
+        arguments:
+          electionID: bench-w8
+          candidates: [A, B, C]
+
+    # ── 16 workers @ 10 TPS ────────────────────────────────
+    - label: Workers_16_TPS10
+      description: "동시 투표자 16명, 10 TPS"
+      txNumber: 300
+      rateControl:
+        type: fixed-rate
+        opts:
+          tps: 10
+      workload:
+        module: workloads/castVote.js
+        arguments:
+          electionID: bench-w16
+          candidates: [A, B, C]
+
+    # ── 16 workers @ 20 TPS (포화 탐색) ───────────────────
+    - label: Workers_16_TPS20
+      description: "동시 투표자 16명, 20 TPS — 포화 한계 탐색"
+      txNumber: 300
+      rateControl:
+        type: fixed-rate
+        opts:
+          tps: 20
+      workload:
+        module: workloads/castVote.js
+        arguments:
+          electionID: bench-w16-20
+          candidates: [A, B, C]
+
+monitor:
+  type: [docker]
+  docker:
+    name: [peer0.ec.voting.example.com, peer0.party.voting.example.com,
+           peer0.civil.voting.example.com, orderer1.orderer.voting.example.com]
+    interval: 5
+
+observer:
+  type: local
+  interval: 5
