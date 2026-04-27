@@ -1,0 +1,211 @@
+[
+  {
+    "phase": "C단계 (Ed25519)",
+    "note": "Ed25519-asymmetric (C단계)",
+    "idemixInfo": {
+      "enabled": true,
+      "mode": "idemix",
+      "impl": "Ed25519-asymmetric (C단계)",
+      "asymEnabled": true,
+      "cacheEnabled": false,
+      "cacheTtlSec": 30,
+      "cacheSize": 0
+    },
+    "timestamp": "2026-04-17T05:38:11.423Z",
+    "coldStart": {
+      "n": 20,
+      "latency": {
+        "n": 20,
+        "avg": 2.69,
+        "stddev": 3.89,
+        "min": 0.672208,
+        "p50": 1.992041,
+        "p90": 2.961417,
+        "p95": 3.080833,
+        "p99": 19.419667,
+        "p999": 19.419667,
+        "max": 19.419667
+      }
+    },
+    "credIssuance": {
+      "n": 100,
+      "successRate": 100,
+      "latency": {
+        "n": 100,
+        "avg": 0.63,
+        "stddev": 2.08,
+        "min": 0.295291,
+        "p50": 0.379416,
+        "p90": 0.58775,
+        "p95": 0.68575,
+        "p99": 1.099375,
+        "p999": 21.326833,
+        "max": 21.326833
+      },
+      "credType": "Ed25519-asym",
+      "credSizeBytes": 230,
+      "payloadFields": [
+        "voterEligible",
+        "electionID",
+        "nonce",
+        "exp"
+      ]
+    },
+    "concurrencyTPS": [
+      {
+        "label": "C단계 (Ed25519)-c1",
+        "concurrency": 1,
+        "durationSec": 12,
+        "tps": 5414.1,
+        "errorCount": 0,
+        "errorRate": 0,
+        "latency": {
+          "n": 64969,
+          "avg": 0.18,
+          "stddev": 0.19,
+          "min": 0.147417,
+          "p50": 0.172625,
+          "p90": 0.189291,
+          "p95": 0.197417,
+          "p99": 0.247292,
+          "p999": 1.207834,
+          "max": 24.602584
+        }
+      },
+      {
+        "label": "C단계 (Ed25519)-c5",
+        "concurrency": 5,
+        "durationSec": 12,
+        "tps": 6971.8,
+        "errorCount": 0,
+        "errorRate": 0,
+        "latency": {
+          "n": 83662,
+          "avg": 0.71,
+          "stddev": 0.49,
+          "min": 0.230292,
+          "p50": 0.561292,
+          "p90": 1.119292,
+          "p95": 1.136125,
+          "p99": 1.201125,
+          "p999": 6.2915,
+          "max": 31.698
+        }
+      },
+      {
+        "label": "C단계 (Ed25519)-c10",
+        "concurrency": 10,
+        "durationSec": 12,
+        "tps": 6904.4,
+        "errorCount": 0,
+        "errorRate": 0,
+        "latency": {
+          "n": 82860,
+          "avg": 1.45,
+          "stddev": 0.92,
+          "min": 0.352333,
+          "p50": 1.252459,
+          "p90": 2.431459,
+          "p95": 2.516,
+          "p99": 2.77825,
+          "p999": 10.151916,
+          "max": 48.904959
+        }
+      },
+      {
+        "label": "C단계 (Ed25519)-c20",
+        "concurrency": 20,
+        "durationSec": 12,
+        "tps": 6953.9,
+        "errorCount": 0,
+        "errorRate": 0,
+        "latency": {
+          "n": 83475,
+          "avg": 2.87,
+          "stddev": 1.36,
+          "min": 0.2255,
+          "p50": 2.631375,
+          "p90": 2.846125,
+          "p95": 5.186208,
+          "p99": 7.689417,
+          "p999": 22.606375,
+          "max": 63.408833
+        }
+      },
+      {
+        "label": "C단계 (Ed25519)-c50",
+        "concurrency": 50,
+        "durationSec": 12.01,
+        "tps": 6709.6,
+        "errorCount": 0,
+        "errorRate": 0,
+        "latency": {
+          "n": 80569,
+          "avg": 7.45,
+          "stddev": 3.73,
+          "min": 2.3575,
+          "p50": 6.822833,
+          "p90": 7.60025,
+          "p95": 11.865583,
+          "p99": 15.554625,
+          "p999": 60.737625,
+          "max": 161.31025
+        }
+      }
+    ],
+    "cacheComparison": {
+      "differentCredentials": {
+        "n": 500,
+        "avg": 0.2,
+        "stddev": 0.29,
+        "min": 0.152333,
+        "p50": 0.179875,
+        "p90": 0.205625,
+        "p95": 0.215916,
+        "p99": 0.339709,
+        "p999": 6.269042,
+        "max": 6.269042
+      },
+      "sameCredential": {
+        "n": 500,
+        "avg": 0.17,
+        "stddev": 0.01,
+        "min": 0.157792,
+        "p50": 0.171125,
+        "p90": 0.187,
+        "p95": 0.195959,
+        "p99": 0.214,
+        "p999": 0.271625,
+        "max": 0.271625
+      },
+      "cacheSpeedupMs": 0.03,
+      "cacheSpeedupPct": 15
+    },
+    "stressTest": {
+      "label": "C단계 (Ed25519)-stress",
+      "concurrency": 50,
+      "durationSec": 20.02,
+      "tps": 6222,
+      "errorCount": 0,
+      "errorRate": 0,
+      "latency": {
+        "n": 124534,
+        "avg": 8.03,
+        "stddev": 4.27,
+        "min": 0.260584,
+        "p50": 6.89075,
+        "p90": 10.232916,
+        "p95": 13.635708,
+        "p99": 23.398542,
+        "p999": 67.252209,
+        "max": 105.010208
+      }
+    },
+    "memory": {
+      "heapUsed": 32599432,
+      "heapTotal": 143949824,
+      "rss": 151502848,
+      "external": 2754518
+    }
+  }
+]

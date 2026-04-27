@@ -1,0 +1,148 @@
+{
+  "phase": "B",
+  "note": "PS-BN254 Idemix (Hyperledger Fabric Idemix와 동일 수학)",
+  "idemixInfo": {
+    "enabled": true,
+    "mode": "idemix-ps",
+    "impl": "PS-BN254 (B단계: 진짜 Idemix CL)",
+    "idemixImpl": "ps",
+    "asymEnabled": false,
+    "cacheEnabled": false,
+    "cacheTtlSec": 30,
+    "cacheSize": 0
+  },
+  "timestamp": "2026-04-17T06:26:12.666Z",
+  "issuance": {
+    "n": 50,
+    "latency": {
+      "n": 50,
+      "avg": 7.82,
+      "stddev": 27.08,
+      "min": 3.43,
+      "p50": 3.8,
+      "p90": 4.44,
+      "p95": 5.31,
+      "p99": 197.36,
+      "max": 197.36
+    },
+    "credType": "PS-BN254",
+    "credSizeBytes": 359
+  },
+  "authLatency": {
+    "n": 50,
+    "latency": {
+      "n": 50,
+      "avg": 56.69,
+      "stddev": 1.28,
+      "min": 54.46,
+      "p50": 56.41,
+      "p90": 58.02,
+      "p95": 59.77,
+      "p99": 61.24,
+      "max": 61.24
+    }
+  },
+  "concurrencyTPS": [
+    {
+      "label": "B-c1",
+      "concurrency": 1,
+      "durationSec": 8.02,
+      "tps": 17.5,
+      "errorCount": 0,
+      "errorRate": 0,
+      "latency": {
+        "n": 140,
+        "avg": 57.25,
+        "stddev": 3.23,
+        "min": 54.45,
+        "p50": 56.76,
+        "p90": 58,
+        "p95": 58.57,
+        "p99": 78.2,
+        "max": 84.65
+      }
+    },
+    {
+      "label": "B-c5",
+      "concurrency": 5,
+      "durationSec": 8.31,
+      "tps": 17.5,
+      "errorCount": 0,
+      "errorRate": 0,
+      "latency": {
+        "n": 145,
+        "avg": 282.07,
+        "stddev": 104.34,
+        "min": 58.99,
+        "p50": 228.75,
+        "p90": 450.98,
+        "p95": 496.8,
+        "p99": 527.35,
+        "max": 624.24
+      }
+    },
+    {
+      "label": "B-c10",
+      "concurrency": 10,
+      "durationSec": 8.54,
+      "tps": 17.9,
+      "errorCount": 0,
+      "errorRate": 0,
+      "latency": {
+        "n": 153,
+        "avg": 542.1,
+        "stddev": 254.94,
+        "min": 55.79,
+        "p50": 497.45,
+        "p90": 888.25,
+        "p95": 1002.21,
+        "p99": 1774.77,
+        "max": 2272.45
+      }
+    },
+    {
+      "label": "B-c20",
+      "concurrency": 20,
+      "durationSec": 9.06,
+      "tps": 18.2,
+      "errorCount": 0,
+      "errorRate": 0,
+      "latency": {
+        "n": 165,
+        "avg": 1034.91,
+        "stddev": 1085.79,
+        "min": 57.33,
+        "p50": 816.87,
+        "p90": 1311.6,
+        "p95": 1993.01,
+        "p99": 7472.52,
+        "max": 8510.37
+      }
+    }
+  ],
+  "stressTest": {
+    "label": "B-stress",
+    "concurrency": 20,
+    "durationSec": 16.05,
+    "tps": 18.2,
+    "errorCount": 0,
+    "errorRate": 0,
+    "latency": {
+      "n": 292,
+      "avg": 1063.71,
+      "stddev": 260.16,
+      "min": 56.21,
+      "p50": 1042.5,
+      "p90": 1096.44,
+      "p95": 1100.21,
+      "p99": 2107.92,
+      "max": 2134.76
+    }
+  },
+  "memoryAfter": {
+    "heapUsed": 37989272,
+    "heapTotal": 164282368,
+    "rss": 213614592,
+    "external": 2762192
+  }
+}

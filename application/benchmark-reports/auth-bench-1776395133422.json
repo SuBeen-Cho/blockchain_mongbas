@@ -1,0 +1,16 @@
+{
+  "timestamp": "2026-04-17T03:05:33.420Z",
+  "target": "http://localhost:3000/api/bench/auth",
+  "concurrency": 20,
+  "durationSec": 10.003,
+  "totalReqs": 277775,
+  "failedReqs": 0,
+  "tps": 27769.2,
+  "latency": {
+    "avgMs": 0.7,
+    "p50Ms": 1,
+    "p95Ms": 1,
+    "p99Ms": 3,
+    "maxMs": 35
+  }
+}

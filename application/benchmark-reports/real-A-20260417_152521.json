@@ -1,0 +1,133 @@
+{
+  "phase": "A",
+  "note": "bypass (인증 없음 — 성능 기준선)",
+  "idemixInfo": {
+    "enabled": false,
+    "mode": "bypass",
+    "impl": "HMAC-SHA256",
+    "idemixImpl": "hmac",
+    "asymEnabled": false,
+    "cacheEnabled": false,
+    "cacheTtlSec": 30,
+    "cacheSize": 0
+  },
+  "timestamp": "2026-04-17T06:25:23.520Z",
+  "issuance": null,
+  "authLatency": {
+    "n": 50,
+    "latency": {
+      "n": 50,
+      "avg": 0.29,
+      "stddev": 0.12,
+      "min": 0.18,
+      "p50": 0.25,
+      "p90": 0.47,
+      "p95": 0.51,
+      "p99": 0.87,
+      "max": 0.87
+    }
+  },
+  "concurrencyTPS": [
+    {
+      "label": "A-c1",
+      "concurrency": 1,
+      "durationSec": 8,
+      "tps": 12394.8,
+      "errorCount": 0,
+      "errorRate": 0,
+      "latency": {
+        "n": 99146,
+        "avg": 0.08,
+        "stddev": 0.13,
+        "min": 0.05,
+        "p50": 0.07,
+        "p90": 0.08,
+        "p95": 0.09,
+        "p99": 0.13,
+        "max": 18.46
+      }
+    },
+    {
+      "label": "A-c5",
+      "concurrency": 5,
+      "durationSec": 8,
+      "tps": 28960.4,
+      "errorCount": 0,
+      "errorRate": 0,
+      "latency": {
+        "n": 231712,
+        "avg": 0.17,
+        "stddev": 0.17,
+        "min": 0.05,
+        "p50": 0.14,
+        "p90": 0.24,
+        "p95": 0.27,
+        "p99": 0.35,
+        "max": 10.46
+      }
+    },
+    {
+      "label": "A-c10",
+      "concurrency": 10,
+      "durationSec": 8,
+      "tps": 28752.4,
+      "errorCount": 0,
+      "errorRate": 0,
+      "latency": {
+        "n": 230019,
+        "avg": 0.34,
+        "stddev": 0.48,
+        "min": 0.06,
+        "p50": 0.29,
+        "p90": 0.55,
+        "p95": 0.59,
+        "p99": 0.77,
+        "max": 44.12
+      }
+    },
+    {
+      "label": "A-c20",
+      "concurrency": 20,
+      "durationSec": 8,
+      "tps": 29118,
+      "errorCount": 0,
+      "errorRate": 0,
+      "latency": {
+        "n": 232944,
+        "avg": 0.68,
+        "stddev": 0.56,
+        "min": 0.11,
+        "p50": 0.61,
+        "p90": 0.78,
+        "p95": 1.2,
+        "p99": 1.64,
+        "max": 44.1
+      }
+    }
+  ],
+  "stressTest": {
+    "label": "A-stress",
+    "concurrency": 20,
+    "durationSec": 15,
+    "tps": 29441,
+    "errorCount": 0,
+    "errorRate": 0,
+    "latency": {
+      "n": 441615,
+      "avg": 0.68,
+      "stddev": 0.43,
+      "min": 0.13,
+      "p50": 0.61,
+      "p90": 0.74,
+      "p95": 1.2,
+      "p99": 1.45,
+      "max": 32.93
+    }
+  },
+  "memoryAfter": {
+    "heapUsed": 85579176,
+    "heapTotal": 159416320,
+    "rss": 178585600,
+    "external": 2967858
+  }
+}

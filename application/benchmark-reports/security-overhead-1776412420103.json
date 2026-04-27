@@ -1,0 +1,112 @@
+{
+  "meta": {
+    "nodeVersion": "v25.7.0",
+    "platform": "darwin",
+    "cpu": "Apple M2",
+    "iterations": 100000,
+    "timestamp": "2026-04-17T07:53:40.103Z"
+  },
+  "results": {
+    "crit03": {
+      "before": {
+        "label": "BEFORE: SHA256(secret+electionID)",
+        "iter": 100000,
+        "totalMs": 68.738,
+        "avgUs": 0.687,
+        "perSecK": 1454.8
+      },
+      "after": {
+        "label": "AFTER:  SHA256(secret+electionID+blind)",
+        "iter": 100000,
+        "totalMs": 66.341,
+        "avgUs": 0.663,
+        "perSecK": 1507.4
+      }
+    },
+    "crit0102": {
+      "before": {
+        "label": "BEFORE: 기본 votePrivate transient 직렬화",
+        "iter": 100000,
+        "totalMs": 162.524,
+        "avgUs": 1.625,
+        "perSecK": 615.3
+      },
+      "after": {
+        "label": "AFTER:  +credentialVerification transient 추가",
+        "iter": 100000,
+        "totalMs": 295.758,
+        "avgUs": 2.958,
+        "perSecK": 338.1
+      }
+    },
+    "med06": {
+      "before": {
+        "label": "BEFORE: TTL=30s, ts 비교만",
+        "iter": 100000,
+        "totalMs": 4.719,
+        "avgUs": 0.047,
+        "perSecK": 21192.6
+      },
+      "after": {
+        "label": "AFTER:  TTL=5s, ts+expUnix 이중 체크",
+        "iter": 100000,
+        "totalMs": 8.969,
+        "avgUs": 0.09,
+        "perSecK": 11149.6
+      }
+    },
+    "high05": {
+      "initBefore": {
+        "label": "BEFORE: InitKeySharing (PDC 저장만)",
+        "iter": 100000,
+        "totalMs": 28.023,
+        "avgUs": 0.28,
+        "perSecK": 3568.6
+      },
+      "initAfter": {
+        "label": "AFTER:  +SHA256 commitment × 3 (Feldman VSS)",
+        "iter": 100000,
+        "totalMs": 562.126,
+        "avgUs": 5.621,
+        "perSecK": 177.9
+      },
+      "submitBefore": {
+        "label": "BEFORE: SubmitKeyShare (중복 체크만)",
+        "iter": 100000,
+        "totalMs": 3.023,
+        "avgUs": 0.03,
+        "perSecK": 33074.7
+      },
+      "submitAfter": {
+        "label": "AFTER:  +PDC 검증 + commitment SHA256 (SubmitKeyShare)",
+        "iter": 100000,
+        "totalMs": 200.472,
+        "avgUs": 2.005,
+        "perSecK": 498.8
+      }
+    },
+    "auth": {
+      "bypass": {
+        "label": "A단계 bypass (인증 없음)",
+        "iter": 100000,
+        "totalMs": 1.017,
+        "avgUs": 0.01,
+        "perSecK": 98332.5
+      },
+      "hmac": {
+        "label": "B단계 HMAC-SHA256 검증",
+        "iter": 100000,
+        "totalMs": 235.487,
+        "avgUs": 2.355,
+        "perSecK": 424.7
+      },
+      "ed25519": {
+        "label": "C단계 Ed25519 검증",
+        "iter": 20000,
+        "totalMs": 2684.925,
+        "avgUs": 134.246,
+        "perSecK": 7.4
+      }
+    }
+  }
+}

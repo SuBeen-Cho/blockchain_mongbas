@@ -1,0 +1,53 @@
+{
+  "results": [
+    {
+      "name": "STEP 1 — bypass (Idemix 비활성)",
+      "desc": "IDEMIX_ENABLED=false 상태에서의 기준선",
+      "tps": 27758.4,
+      "totalReqs": 277612,
+      "failedReqs": 0,
+      "avgMs": 0.7,
+      "p50Ms": 1,
+      "p95Ms": 1,
+      "p99Ms": 2,
+      "maxMs": 23
+    },
+    {
+      "name": "STEP 2 — Idemix (캐시 없음, credential 없음)",
+      "desc": "IDEMIX_ENABLED=true, credential 헤더 없어 403 예상 (레이턴시 측정)",
+      "tps": 28299.5,
+      "totalReqs": 282995,
+      "failedReqs": 0,
+      "avgMs": 0.7,
+      "p50Ms": 1,
+      "p95Ms": 1,
+      "p99Ms": 2,
+      "maxMs": 24
+    },
+    {
+      "name": "STEP 3 — Idemix (valid credential)",
+      "desc": "IDEMIX_ENABLED=true, 유효한 credential 포함",
+      "tps": 23988.8,
+      "totalReqs": 239912,
+      "failedReqs": 0,
+      "avgMs": 0.8,
+      "p50Ms": 1,
+      "p95Ms": 1,
+      "p99Ms": 2,
+      "maxMs": 52
+    },
+    {
+      "name": "STEP 4 — Idemix + 캐시 (valid credential)",
+      "desc": "IDEMIX_ENABLED=true, IDEMIX_CACHE_ENABLED=true",
+      "tps": 24301.8,
+      "totalReqs": 243042,
+      "failedReqs": 0,
+      "avgMs": 0.8,
+      "p50Ms": 1,
+      "p95Ms": 1,
+      "p99Ms": 2,
+      "maxMs": 25
+    }
+  ],
+  "timestamp": "2026-04-17T03:07:45.412Z"
+}

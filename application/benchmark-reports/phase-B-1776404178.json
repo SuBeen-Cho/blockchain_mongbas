@@ -1,0 +1,212 @@
+[
+  {
+    "phase": "B단계 (HMAC)",
+    "note": "HMAC-SHA256 (B단계)",
+    "idemixInfo": {
+      "enabled": true,
+      "mode": "idemix",
+      "impl": "HMAC-SHA256 (B단계)",
+      "asymEnabled": false,
+      "cacheEnabled": false,
+      "cacheTtlSec": 30,
+      "cacheSize": 0
+    },
+    "timestamp": "2026-04-17T05:36:18.459Z",
+    "coldStart": {
+      "n": 20,
+      "latency": {
+        "n": 20,
+        "avg": 1.4,
+        "stddev": 0.71,
+        "min": 0.800708,
+        "p50": 1.214125,
+        "p90": 2.133667,
+        "p95": 2.216417,
+        "p99": 4.02125,
+        "p999": 4.02125,
+        "max": 4.02125
+      }
+    },
+    "credIssuance": {
+      "n": 100,
+      "successRate": 100,
+      "latency": {
+        "n": 100,
+        "avg": 0.45,
+        "stddev": 1.5,
+        "min": 0.1925,
+        "p50": 0.279,
+        "p90": 0.424875,
+        "p95": 0.497333,
+        "p99": 0.744958,
+        "p999": 15.368292,
+        "max": 15.368292
+      },
+      "credType": "HMAC-SHA256",
+      "credSizeBytes": 192,
+      "payloadFields": [
+        "voterEligible",
+        "electionID",
+        "nonce",
+        "iat",
+        "exp"
+      ]
+    },
+    "concurrencyTPS": [
+      {
+        "label": "B단계 (HMAC)-c1",
+        "concurrency": 1,
+        "durationSec": 12,
+        "tps": 11665,
+        "errorCount": 0,
+        "errorRate": 0,
+        "latency": {
+          "n": 139968,
+          "avg": 0.08,
+          "stddev": 0.14,
+          "min": 0.051917,
+          "p50": 0.075708,
+          "p90": 0.089,
+          "p95": 0.097417,
+          "p99": 0.145458,
+          "p999": 0.564834,
+          "max": 25.119542
+        }
+      },
+      {
+        "label": "B단계 (HMAC)-c5",
+        "concurrency": 5,
+        "durationSec": 12,
+        "tps": 22653.3,
+        "errorCount": 0,
+        "errorRate": 0,
+        "latency": {
+          "n": 271840,
+          "avg": 0.22,
+          "stddev": 0.3,
+          "min": 0.054334,
+          "p50": 0.160666,
+          "p90": 0.322792,
+          "p95": 0.3375,
+          "p99": 0.609292,
+          "p999": 4.316291,
+          "max": 19.86225
+        }
+      },
+      {
+        "label": "B단계 (HMAC)-c10",
+        "concurrency": 10,
+        "durationSec": 12,
+        "tps": 23152.3,
+        "errorCount": 0,
+        "errorRate": 0,
+        "latency": {
+          "n": 277828,
+          "avg": 0.43,
+          "stddev": 0.51,
+          "min": 0.061167,
+          "p50": 0.354667,
+          "p90": 0.670333,
+          "p95": 0.729792,
+          "p99": 1.408791,
+          "p999": 5.347584,
+          "max": 48.000333
+        }
+      },
+      {
+        "label": "B단계 (HMAC)-c20",
+        "concurrency": 20,
+        "durationSec": 12,
+        "tps": 21894.9,
+        "errorCount": 0,
+        "errorRate": 0,
+        "latency": {
+          "n": 262783,
+          "avg": 0.91,
+          "stddev": 1.06,
+          "min": 0.074541,
+          "p50": 0.754,
+          "p90": 1.258458,
+          "p95": 1.545167,
+          "p99": 4.636625,
+          "p999": 15.239917,
+          "max": 54.839042
+        }
+      },
+      {
+        "label": "B단계 (HMAC)-c50",
+        "concurrency": 50,
+        "durationSec": 12.01,
+        "tps": 22007.4,
+        "errorCount": 0,
+        "errorRate": 0,
+        "latency": {
+          "n": 264221,
+          "avg": 2.27,
+          "stddev": 1.75,
+          "min": 0.324833,
+          "p50": 1.952708,
+          "p90": 2.768042,
+          "p95": 3.994125,
+          "p99": 7.7715,
+          "p999": 24.523917,
+          "max": 64.305833
+        }
+      }
+    ],
+    "cacheComparison": {
+      "differentCredentials": {
+        "n": 500,
+        "avg": 0.12,
+        "stddev": 0.29,
+        "min": 0.055167,
+        "p50": 0.065,
+        "p90": 0.149208,
+        "p95": 0.250875,
+        "p99": 0.934333,
+        "p999": 5.556,
+        "max": 5.556
+      },
+      "sameCredential": {
+        "n": 500,
+        "avg": 0.08,
+        "stddev": 0.04,
+        "min": 0.056291,
+        "p50": 0.071,
+        "p90": 0.119958,
+        "p95": 0.164334,
+        "p99": 0.289833,
+        "p999": 0.402625,
+        "max": 0.402625
+      },
+      "cacheSpeedupMs": 0.04,
+      "cacheSpeedupPct": 33.3
+    },
+    "stressTest": {
+      "label": "B단계 (HMAC)-stress",
+      "concurrency": 50,
+      "durationSec": 20,
+      "tps": 19514.5,
+      "errorCount": 0,
+      "errorRate": 0,
+      "latency": {
+        "n": 390330,
+        "avg": 2.56,
+        "stddev": 3.3,
+        "min": 0.256667,
+        "p50": 1.962583,
+        "p90": 3.768375,
+        "p95": 5.691709,
+        "p99": 10.7125,
+        "p999": 50.170625,
+        "max": 163.269041
+      }
+    },
+    "memory": {
+      "heapUsed": 80603232,
+      "heapTotal": 170950656,
+      "rss": 152911872,
+      "external": 3163690
+    }
+  }
+]
