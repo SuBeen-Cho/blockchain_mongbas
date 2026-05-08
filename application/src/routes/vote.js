@@ -2,7 +2,7 @@
  * routes/vote.js — 투표 및 Nullifier 확인 API
  *
  * POST /api/vote                  투표 제출
- * GET  /api/nullifier/:hash       투표 여부 확인 (이중투표 방지 검증)
+ * GET  /api/nullifier/:hash       투표 여부 확인 (최종 1표만 유효 — 재투표 허용)
  *
  * ══ 핵심 프라이버시 설계 ══════════════════════════════════════════
  *
@@ -28,7 +28,7 @@
 
 const express = require('express');
 const crypto  = require('crypto');
-const { connectGateway, connectGatewayAsVoter } = require('../gateway');
+const { connectGateway } = require('../gateway');
 
 const router = express.Router();
 
@@ -45,7 +45,7 @@ const router = express.Router();
 //   Body에 panicPassword 필드 포함 시 Panic Mode 활성화.
 //   세션에 panicMode=true 설정 후 더미 응답 반환.
 router.post('/', async (req, res) => {
-  const { electionID, candidateID, nullifierHash, voterID,
+  const { electionID, candidateID, nullifierHash,
           normalPWHash, panicPWHash, panicCandidateID } = req.body;
 
   // ── 필수 필드 검증 ─────────────────────────────────────────
@@ -72,13 +72,11 @@ router.post('/', async (req, res) => {
     // PDC에 저장될 비공개 데이터 (오더러 미전달)
     const votePrivateData = {
       docType:      'votePrivate',
-      voterID:      voterID || 'anonymous',
       electionID,
-      candidateID,
       nullifierHash,
       voteHash: crypto
         .createHash('sha256')
-        .update(`${voterID || ''}|${candidateID}|${Date.now()}`)
+        .update(`${electionID}|${nullifierHash}|${Date.now()}`)
         .digest('hex'),
     };
 
@@ -93,12 +91,20 @@ router.post('/', async (req, res) => {
     // req.voter는 requireVoterAuth 미들웨어(auth.js)가 설정. credType/expUnix/credHash 포함.
     // 체인코드(verifyCredentialTransient)가 만료·선거ID 바인딩·유형을 독립 검증.
     const credVerification = {
-      credType:   req.voter.credType   || 'bypass',
+      credType:   req.voter.credType,
       electionID: req.voter.electionID || electionID,
-      expUnix:    req.voter.expUnix    || Math.floor(Date.now() / 1000) + 3600,
-      credHash:   req.voter.credHash   || crypto.createHash('sha256').update('bypass').digest('hex'),
+      expUnix:    req.voter.expUnix,
+      credHash:   req.voter.credHash,
     };
+    if (!credVerification.credType || !credVerification.expUnix || !credVerification.credHash) {
+      return res.status(403).json({ error: '유효한 자격증명 메타데이터가 없습니다.' });
+    }
     transientData.credentialVerification = Buffer.from(JSON.stringify(credVerification));
+    if (credVerification.credType === 'ed25519') {
+      const credHeader = req.headers['x-idemix-credential'] || '';
+      if (!credHeader) return res.status(403).json({ error: 'Ed25519 credential 원문이 필요합니다.' });
+      transientData.credentialToken = Buffer.from(credHeader);
+    }
 
     // Panic Mode 비밀번호 해시가 제공된 경우 PDC에 함께 저장
     // 클라이언트가 SHA256(password + nullifierHash) 계산 후 전달 (평문 전달 금지)
@@ -129,18 +135,19 @@ router.post('/', async (req, res) => {
       nullifierHash,
     });
   } catch (err) {
-    // 이중투표 시 체인코드가 에러 반환
+    // 재투표 불가 시 체인코드가 에러 반환
     if (err.message && err.message.includes('이미 투표')) {
       return res.status(409).json({ error: '이미 투표한 선거입니다.', nullifierHash });
     }
-    res.status(500).json({ error: err.message });
+    console.error('[vote] CastVote error:', err.message);
+    res.status(500).json({ error: '투표 처리 중 오류가 발생했습니다.' });
   } finally {
     gateway.close();
   }
 });
 
 // ── GET /api/nullifier/:hash ───────────────────────────────────
-// 투표 여부 확인 (이중투표 방지 검증)
+// 투표 여부 확인 (최종 1표만 유효 — 재투표 허용)
 //
 // Panic Mode 중: 실제 Nullifier 대신 가짜 Nullifier 반환
 // 정상 모드  : 체인코드 GetNullifier 호출

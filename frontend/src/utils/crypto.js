@@ -57,6 +57,32 @@ export async function computePasswordHash(password, nullifierHash) {
 }
 
 /**
+ * Merkle proof path로 root hash를 재계산합니다.
+ * 체인코드와 동일하게 각 내부 노드는 SHA256(leftHash + rightHash)입니다.
+ *
+ * @param {string} leafHash - Merkle leaf hash
+ * @param {{hash: string, position: 'left'|'right'}[]} proof - sibling path
+ * @returns {Promise<string>} recomputed root hash
+ */
+export async function computeMerkleRootFromProof(leafHash, proof = []) {
+  if (!leafHash) throw new Error('leafHash가 필요합니다.');
+  let current = leafHash;
+  for (const node of proof) {
+    if (!node?.hash || !node?.position) {
+      throw new Error('Merkle proof node 형식이 올바르지 않습니다.');
+    }
+    if (node.position === 'left') {
+      current = await sha256(node.hash + current);
+    } else if (node.position === 'right') {
+      current = await sha256(current + node.hash);
+    } else {
+      throw new Error(`알 수 없는 Merkle proof position: ${node.position}`);
+    }
+  }
+  return current;
+}
+
+/**
  * 랜덤 voterSecret을 생성합니다 (32바이트, hex).
  * 처음 투표 시 생성하여 안전한 곳에 보관하세요.
  * @returns {string}

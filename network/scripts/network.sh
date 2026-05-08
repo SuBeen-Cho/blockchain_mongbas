@@ -299,6 +299,10 @@ EOF
 
   # voting-chaincode 컨테이너에 패키지 ID 설정 후 재시작
   info "  CCAAS 컨테이너에 CHAINCODE_ID 주입..."
+  if [ -z "${ED25519_PUBLIC_KEY_DER_B64:-}" ]; then
+    warn "  ED25519_PUBLIC_KEY_DER_B64 미설정: ed25519 credential의 체인코드 직접 검증은 실패합니다."
+    warn "  application 디렉터리에서 'npm run keys:ed25519'로 키를 생성한 뒤 공개키를 export 하세요."
+  fi
   cd "$NETWORK_DIR"
   docker rm -f voting-chaincode 2>/dev/null || true
   docker run -d \
@@ -306,6 +310,8 @@ EOF
     --network voting-net \
     -e CHAINCODE_SERVER_ADDRESS=0.0.0.0:7052 \
     -e CHAINCODE_ID="${PACKAGE_ID}" \
+    -e ED25519_PUBLIC_KEY_DER_B64="${ED25519_PUBLIC_KEY_DER_B64:-}" \
+    -e ALLOW_BYPASS_CREDENTIAL="${ALLOW_BYPASS_CREDENTIAL:-false}" \
     voting-chaincode:1.0
   info "  CCAAS 컨테이너 기동 완료 (PackageID: ${PACKAGE_ID:0:40}...)"
   sleep 3

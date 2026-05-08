@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-BFT-based anonymous e-voting system built on Hyperledger Fabric 2.5. Core privacy mechanisms: Nullifier-based anonymous voting, Private Data Collections (PDC), Shamir Secret Sharing (2-of-3 threshold decryption), and deniable Merkle proofs with Panic Password support.
+Multi-org consensus (etcdraft CFT) anonymous e-voting system built on Hyperledger Fabric 2.5. Core privacy mechanisms: Nullifier-based anonymous voting, Private Data Collections (PDC), Shamir Secret Sharing (2-of-3 threshold decryption), and deniable Merkle proofs with Panic Password support.
 
 **Endorsement Policy:** 2-of-3 multi-org (ElectionCommission, PartyObserver, CivilSociety) — no single org can manipulate results.
 

@@ -28,7 +28,7 @@ sep()  { echo ""; echo "══════════════════�
 check_prereqs() {
   log "전제 조건 확인..."
 
-  if ! docker ps | grep -q "peer0.ec.voting.example.com"; then
+  if ! docker ps --format '{{.Names}}' | grep -qx "peer0.ec.voting.example.com"; then
     echo "❌ Fabric 네트워크가 기동되지 않았습니다."
     echo "   → cd ../network && ./scripts/network.sh up && ./scripts/network.sh deploy"
     exit 1

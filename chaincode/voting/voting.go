@@ -2,7 +2,7 @@
 // for Hyperledger Fabric using Anonymous Nullifiers and Private Data Collections (PDC).
 //
 // 핵심 프라이버시 설계:
-//   - Nullifier: hash(voterSecret || electionID) → 이중투표 방지, 익명성 보장
+//   - Nullifier: hash(voterSecret || electionID) → 최종 1표만 유효 (재투표 허용, 이중집계 방지), 익명성 보장
 //   - PDC (Private Data Collection): 투표 원본은 피어 비공개 사이드DB에만 저장
 //   - 공개 원장: nullifierHash + candidateID만 기록 (신원 미노출)
 //
@@ -15,8 +15,11 @@ package main
 import (
 	"crypto/aes"
 	"crypto/cipher"
+	"crypto/ed25519"
 	"crypto/sha256"
 	"crypto/subtle"
+	"crypto/x509"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -25,6 +28,7 @@ import (
 	"os"
 	"sort"
 	"strconv"
+	"strings"
 
 	"github.com/hyperledger/fabric-chaincode-go/shim"
 	"github.com/hyperledger/fabric-contract-api-go/contractapi"
@@ -57,33 +61,34 @@ func getTxTime(ctx contractapi.TransactionContextInterface) (int64, error) {
 
 // Election 선거 정보 (공개 원장)
 type Election struct {
-	ObjectType     string   `json:"docType"`        // CouchDB 인덱스용 ("election")
-	ElectionID     string   `json:"electionID"`
-	Title          string   `json:"title"`
-	Description    string   `json:"description"`
-	Candidates     []string `json:"candidates"`     // 후보자 ID 목록
-	StartTime      int64    `json:"startTime"`      // Unix timestamp
-	EndTime        int64    `json:"endTime"`
-	Status         string   `json:"status"`         // CREATED | ACTIVE | CLOSED
-	CreatedBy      string   `json:"createdBy"`      // 선거관리자 MSP ID
+	ObjectType  string   `json:"docType"` // CouchDB 인덱스용 ("election")
+	ElectionID  string   `json:"electionID"`
+	Title       string   `json:"title"`
+	Description string   `json:"description"`
+	Candidates  []string `json:"candidates"` // 후보자 ID 목록
+	StartTime   int64    `json:"startTime"`  // Unix timestamp
+	EndTime     int64    `json:"endTime"`
+	Status      string   `json:"status"`    // CREATED | ACTIVE | CLOSED
+	CreatedBy   string   `json:"createdBy"` // 선거관리자 MSP ID
 	// [CRIT-03 FIX] 선거별 블라인딩 팩터 — nullifier 선거 간 연결 방지
 	// SHA256(voterSecret + electionID + blindingFactor) 으로 nullifier 계산
 	// 선거마다 다른 salt → voterSecret이 유출돼도 선거 간 역추적 불가
-	BlindingFactor string   `json:"blindingFactor"` // SHA256(txID + electionID)
+	BlindingFactor string `json:"blindingFactor"` // SHA256(txID + electionID)
 }
 
 // Nullifier 익명 투표 증명 (공개 원장)
 // 유권자가 투표했다는 사실만 증명하고 누가 투표했는지는 알 수 없음.
 // nullifierHash = SHA256(voterSecret + electionID + blindingFactor) — 클라이언트가 계산
 type Nullifier struct {
-	ObjectType     string `json:"docType"`        // "nullifier"
-	NullifierHash  string `json:"nullifierHash"`  // 이중투표 방지 키 (원장 Key로도 사용)
-	ElectionID     string `json:"electionID"`
-	CandidateID          string `json:"candidateID"`          // 평문 후보자 (B안 비활성 시 사용)
-	EncryptedCandidateID string `json:"encryptedCandidateID"` // [C-4] AES-GCM 암호화된 후보자 ID
+	ObjectType           string `json:"docType"`       // "nullifier"
+	NullifierHash        string `json:"nullifierHash"` // 최종 1표만 유효 키 (재투표 시 덮어쓰기, 원장 Key로도 사용)
+	ElectionID           string `json:"electionID"`
+	CandidateID          string `json:"candidateID" metadata:",optional"` // 레거시 호환 전용. 신규 투표에서는 평문 후보자를 저장하지 않음.
+	CandidateCommitment  string `json:"candidateCommitment"`   // SHA256(electionID|nullifierHash|encryptedCandidateID)
+	EncryptedCandidateID string `json:"encryptedCandidateID"`  // [C-4] AES-GCM 암호화된 후보자 ID
 	Timestamp            int64  `json:"timestamp"`
-	EvictCount           int    `json:"evictCount"`           // 재투표 횟수 (0 = 최초 투표)
-	LastEvictedAt        int64  `json:"lastEvictedAt"`        // 마지막 재투표 시각
+	EvictCount           int    `json:"evictCount"`    // 재투표 횟수 (0 = 최초 투표)
+	LastEvictedAt        int64  `json:"lastEvictedAt"` // 마지막 재투표 시각
 	// [CRIT-01/02 FIX] 자격증명 감사 해시
 	CredentialHash string `json:"credentialHash"` // SHA256(credential token)
 }
@@ -98,24 +103,35 @@ type CredentialVerification struct {
 	CredHash   string `json:"credHash"`   // SHA256(원본 토큰) — 감사용
 }
 
+type Ed25519CredentialHeader struct {
+	Alg string `json:"alg"`
+}
+
+type Ed25519CredentialPayload struct {
+	VoterEligible string  `json:"voterEligible"`
+	ElectionID    string  `json:"electionID"`
+	Nonce         string  `json:"nonce"`
+	Exp           float64 `json:"exp"`
+}
+
 // VotePrivate PDC에 저장되는 원본 투표 데이터 (비공개)
 // 오더러에게 전달되지 않고 피어의 사이드 DB에만 저장됨.
 // 클라이언트는 이 구조체를 JSON으로 직렬화하여 트랜잭션 Transient Map에 넣어서 전달.
 type VotePrivate struct {
-	ObjectType    string `json:"docType"`       // "votePrivate"
-	VoterID       string `json:"voterID"`       // 암호화된 유권자 식별자
-	ElectionID    string `json:"electionID"`
-	CandidateID   string `json:"candidateID"`
-	NullifierHash string `json:"nullifierHash"` // 공개 Nullifier와 연결 고리
-	VoteHash      string `json:"voteHash"`      // SHA256(voterID + candidateID + salt) — 무결성 검증
-	Timestamp     int64  `json:"timestamp"`
+	ObjectType           string `json:"docType"`              // "votePrivate"
+	ElectionID           string `json:"electionID"`           // 선거 ID
+	NullifierHash        string `json:"nullifierHash"`        // 공개 Nullifier와 연결 고리
+	EncryptedCandidateID string `json:"encryptedCandidateID"` // 후보자 암호문
+	CandidateCommitment  string `json:"candidateCommitment"`  // 공개 원장 commitment와 일치해야 함
+	VoteHash             string `json:"voteHash"`             // 암호화 투표 레코드 무결성 확인용
+	Timestamp            int64  `json:"timestamp"`
 }
 
 // VoteTally 선거 집계 결과 (공개 원장, CloseElection 호출 시 기록)
 type VoteTally struct {
-	ObjectType string         `json:"docType"`    // "tally"
+	ObjectType string         `json:"docType"` // "tally"
 	ElectionID string         `json:"electionID"`
-	Results    map[string]int `json:"results"`    // candidateID → 득표수
+	Results    map[string]int `json:"results"` // candidateID → 득표수
 	TotalVotes int            `json:"totalVotes"`
 	ClosedAt   int64          `json:"closedAt"`
 }
@@ -127,8 +143,8 @@ type VoteTally struct {
 // panicPWHash   : SHA256(panicPassword   + nullifierHash) — 강압 대응용 (더미 증명 반환)
 // panicCandidateID : Panic Mode에서 보여줄 가짜 후보자 ID
 type VoterPWPrivate struct {
-	NormalPWHash    string `json:"normalPWHash"`
-	PanicPWHash     string `json:"panicPWHash"`
+	NormalPWHash     string `json:"normalPWHash"`
+	PanicPWHash      string `json:"panicPWHash"`
 	PanicCandidateID string `json:"panicCandidateID"` // 강압자에게 보여줄 가짜 후보
 }
 
@@ -157,17 +173,171 @@ const (
 	ShamirTotalShares = 3 // 총 share 수 (3개 조직)
 )
 
+var shareIndexMSP = map[string]string{
+	"1": "ElectionCommissionMSP",
+	"2": "PartyObserverMSP",
+	"3": "CivilSocietyMSP",
+}
+
+func requireElectionAdmin(ctx contractapi.TransactionContextInterface) error {
+	mspID, err := ctx.GetClientIdentity().GetMSPID()
+	if err != nil {
+		return fmt.Errorf("MSP ID 조회 실패: %w", err)
+	}
+	if mspID != "ElectionCommissionMSP" {
+		return fmt.Errorf("관리자 권한 없음: ElectionCommissionMSP 필요 (현재: %s)", mspID)
+	}
+	return nil
+}
+
+func requireShareOwner(ctx contractapi.TransactionContextInterface, shareIndex string) error {
+	expectedMSP, ok := shareIndexMSP[shareIndex]
+	if !ok {
+		return fmt.Errorf("shareIndex는 1, 2, 3 중 하나여야 합니다: %s", shareIndex)
+	}
+	mspID, err := ctx.GetClientIdentity().GetMSPID()
+	if err != nil {
+		return fmt.Errorf("MSP ID 조회 실패: %w", err)
+	}
+	if mspID != expectedMSP {
+		return fmt.Errorf("share %s 접근 권한 없음: %s 필요 (현재: %s)", shareIndex, expectedMSP, mspID)
+	}
+	return nil
+}
+
+// validateElectionID는 electionID에 CouchDB 쿼리 인젝션을 유발할 수 있는 문자가 없는지 확인한다.
+// 허용: 영문 대소문자, 숫자, 하이픈, 밑줄, 마침표
+func validateElectionID(id string) error {
+	if len(id) == 0 || len(id) > 256 {
+		return fmt.Errorf("electionID 길이는 1~256자여야 합니다 (현재: %d)", len(id))
+	}
+	for _, c := range id {
+		if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '-' || c == '_' || c == '.') {
+			return fmt.Errorf("electionID에 허용되지 않는 문자 포함: %c", c)
+		}
+	}
+	return nil
+}
+
+// hashWithLengthPrefix는 가변 길이 필드를 길이 접두어 방식으로 해싱하여
+// 구분자 기반 문자열 연결에서 발생할 수 있는 해시 충돌을 방지한다.
+func hashWithLengthPrefix(fields ...string) string {
+	h := sha256.New()
+	for _, f := range fields {
+		lenBuf := []byte(fmt.Sprintf("%08x", len(f)))
+		h.Write(lenBuf)
+		h.Write([]byte(f))
+	}
+	return hex.EncodeToString(h.Sum(nil))
+}
+
+func computeCandidateCommitment(electionID, nullifierHash, encryptedCandidateID string) string {
+	raw := sha256.Sum256([]byte(electionID + "|" + nullifierHash + "|" + encryptedCandidateID))
+	return hex.EncodeToString(raw[:])
+}
+
+func decodeBase64Flexible(s string) ([]byte, error) {
+	if b, err := base64.StdEncoding.DecodeString(s); err == nil {
+		return b, nil
+	}
+	if b, err := base64.RawStdEncoding.DecodeString(s); err == nil {
+		return b, nil
+	}
+	if b, err := base64.URLEncoding.DecodeString(s); err == nil {
+		return b, nil
+	}
+	return base64.RawURLEncoding.DecodeString(s)
+}
+
+func verifyEd25519CredentialToken(ctx contractapi.TransactionContextInterface, cv CredentialVerification, electionID string, txNow int64) error {
+	pubKeyB64 := os.Getenv("ED25519_PUBLIC_KEY_DER_B64")
+	if pubKeyB64 == "" {
+		return fmt.Errorf("ED25519_PUBLIC_KEY_DER_B64 환경변수가 설정되지 않았습니다")
+	}
+	pubDer, err := decodeBase64Flexible(pubKeyB64)
+	if err != nil {
+		return fmt.Errorf("Ed25519 공개키 base64 디코딩 실패: %w", err)
+	}
+	pubAny, err := x509.ParsePKIXPublicKey(pubDer)
+	if err != nil {
+		return fmt.Errorf("Ed25519 공개키 DER 파싱 실패: %w", err)
+	}
+	pubKey, ok := pubAny.(ed25519.PublicKey)
+	if !ok {
+		return fmt.Errorf("Ed25519 공개키 타입이 아닙니다")
+	}
+
+	transient, err := ctx.GetStub().GetTransient()
+	if err != nil {
+		return fmt.Errorf("transient 읽기 실패: %w", err)
+	}
+	tokenBytes, ok := transient["credentialToken"]
+	if !ok || len(tokenBytes) == 0 {
+		return fmt.Errorf("Ed25519 credentialToken 누락")
+	}
+	token := string(tokenBytes)
+	parts := strings.Split(token, ".")
+	if len(parts) != 3 {
+		return fmt.Errorf("Ed25519 credential 형식 오류")
+	}
+
+	headerBytes, err := decodeBase64Flexible(parts[0])
+	if err != nil {
+		return fmt.Errorf("Ed25519 credential header 디코딩 실패: %w", err)
+	}
+	var header Ed25519CredentialHeader
+	if err := json.Unmarshal(headerBytes, &header); err != nil {
+		return fmt.Errorf("Ed25519 credential header 파싱 실패: %w", err)
+	}
+	if header.Alg != "EdDSA" {
+		return fmt.Errorf("Ed25519 credential alg 불일치: %s", header.Alg)
+	}
+
+	payloadBytes, err := decodeBase64Flexible(parts[1])
+	if err != nil {
+		return fmt.Errorf("Ed25519 credential payload 디코딩 실패: %w", err)
+	}
+	var payload Ed25519CredentialPayload
+	if err := json.Unmarshal(payloadBytes, &payload); err != nil {
+		return fmt.Errorf("Ed25519 credential payload 파싱 실패: %w", err)
+	}
+	if payload.VoterEligible != "1" {
+		return fmt.Errorf("투표 자격 속성 없음")
+	}
+	if payload.ElectionID != electionID || payload.ElectionID != cv.ElectionID {
+		return fmt.Errorf("Ed25519 credential 선거ID 불일치: payload=%s, cred=%s, req=%s", payload.ElectionID, cv.ElectionID, electionID)
+	}
+	expUnix := int64(payload.Exp / 1000)
+	if txNow > expUnix || expUnix != cv.ExpUnix {
+		return fmt.Errorf("Ed25519 credential 만료 또는 exp 불일치")
+	}
+
+	sig, err := decodeBase64Flexible(parts[2])
+	if err != nil {
+		return fmt.Errorf("Ed25519 signature 디코딩 실패: %w", err)
+	}
+	message := []byte(parts[0] + "." + parts[1])
+	if !ed25519.Verify(pubKey, message, sig) {
+		return fmt.Errorf("Ed25519 credential 서명 검증 실패")
+	}
+	hashRaw := sha256.Sum256([]byte(token))
+	if hex.EncodeToString(hashRaw[:]) != cv.CredHash {
+		return fmt.Errorf("Ed25519 credential hash 불일치")
+	}
+	return nil
+}
+
 // KeySharingStatus Shamir SSS 키 분산 현황 (공개 원장)
 type KeySharingStatus struct {
-	ObjectType       string   `json:"docType"`           // "keySharingStatus"
-	ElectionID       string   `json:"electionID"`
-	Threshold        int      `json:"threshold"`         // 복원 임계값 (2)
-	TotalShares      int      `json:"totalShares"`       // 총 share 수 (3)
-	SubmittedCount   int      `json:"submittedCount"`    // 제출된 share 수
-	SubmittedBy      []string `json:"submittedBy"`       // 제출한 share 인덱스 목록 ("1","2","3")
-	IsDecrypted      bool     `json:"isDecrypted"`       // 복원 성공 여부
-	KeyHash          string   `json:"keyHash"`           // SHA256(masterKey) — 검증용 공개
-	InitiatedAt      int64    `json:"initiatedAt"`
+	ObjectType     string   `json:"docType"` // "keySharingStatus"
+	ElectionID     string   `json:"electionID"`
+	Threshold      int      `json:"threshold"`      // 복원 임계값 (2)
+	TotalShares    int      `json:"totalShares"`    // 총 share 수 (3)
+	SubmittedCount int      `json:"submittedCount"` // 제출된 share 수
+	SubmittedBy    []string `json:"submittedBy"`    // 제출한 share 인덱스 목록 ("1","2","3")
+	IsDecrypted    bool     `json:"isDecrypted"`    // 복원 성공 여부
+	KeyHash        string   `json:"keyHash"`        // SHA256(masterKey) — 검증용 공개
+	InitiatedAt    int64    `json:"initiatedAt"`
 	// [HIGH-05 FIX] Feldman VSS 공개 commitment 목록
 	// SHA256(share_i) — share 제출 시 위조 여부를 체인코드가 독립 검증
 	// 인덱스 0 = share1, 1 = share2, 2 = share3
@@ -236,6 +406,15 @@ func (c *VotingContract) CreateElection(
 	startTime int64,
 	endTime int64,
 ) error {
+	if err := requireElectionAdmin(ctx); err != nil {
+		return err
+	}
+
+	// electionID 형식 검증 (CouchDB 인젝션 방지)
+	if err := validateElectionID(electionID); err != nil {
+		return err
+	}
+
 	// 중복 선거 확인
 	existing, err := ctx.GetStub().GetState(electionID)
 	if err != nil {
@@ -279,8 +458,7 @@ func (c *VotingContract) CreateElection(
 	ekKey := "ENCRYPTION_KEY_" + electionID
 	ekHexStr := hex.EncodeToString(ekRaw[:])
 	if pdcErr := ctx.GetStub().PutPrivateData(VotePrivatePDC, ekKey, []byte(ekHexStr)); pdcErr != nil {
-		log.Printf("[CreateElection] 암호화 키 PDC 저장 실패 (계속 진행) — %v", pdcErr)
-		// PDC 저장 실패해도 선거 생성은 계속 (평문 폴백)
+		return fmt.Errorf("암호화 키 PDC 저장 실패: %w", pdcErr)
 	} else {
 		log.Printf("[CreateElection] 암호화 키 생성 완료 — PDC key: %s, hex: %s...", ekKey, ekHexStr[:16])
 	}
@@ -319,13 +497,19 @@ func (c *VotingContract) CreateElection(
 			rawKey := fmt.Sprintf("DUMMY_%s_%s_%d_%s", electionID, cand, i, txID)
 			h := sha256.Sum256([]byte(rawKey))
 			dummyHash := fmt.Sprintf("%x", h)
+			encDummyCandID, encErr := encryptAESGCM(ekRaw[:], cand)
+			if encErr != nil {
+				return fmt.Errorf("더미 후보자 암호화 실패: %w", encErr)
+			}
+			dummyCommitment := computeCandidateCommitment(electionID, dummyHash, encDummyCandID)
 
 			dummy := Nullifier{
-				ObjectType:    "nullifier",
-				NullifierHash: dummyHash,
-				ElectionID:    electionID,
-				CandidateID:   cand,
-				Timestamp:     now,
+				ObjectType:           "nullifier",
+				NullifierHash:        dummyHash,
+				ElectionID:           electionID,
+				CandidateCommitment:  dummyCommitment,
+				EncryptedCandidateID: encDummyCandID,
+				Timestamp:            now,
 			}
 			db, err := json.Marshal(dummy)
 			if err != nil {
@@ -368,10 +552,10 @@ func (c *VotingContract) GetBlindingFactor(
 // 체인코드 레벨에서 독립적으로 자격증명을 검증합니다.
 //
 // 검증 항목:
-//   1. 만료 시각 (txTimestamp 기준 — 모든 피어 동일 보장)
-//   2. 선거 ID 바인딩 (자격증명 발급 시 지정된 선거와 일치)
-//   3. 자격증명 유형 화이트리스트
-//   4. credHash 존재 여부
+//  1. 만료 시각 (txTimestamp 기준 — 모든 피어 동일 보장)
+//  2. 선거 ID 바인딩 (자격증명 발급 시 지정된 선거와 일치)
+//  3. 자격증명 유형 화이트리스트
+//  4. credHash 존재 여부
 //
 // 이 함수가 성공해야만 CastVote가 체인에 기록됩니다.
 // API 서버가 타협되어 미들웨어 검증을 우회해도, 체인코드가 독립 거부합니다.
@@ -397,6 +581,9 @@ func verifyCredentialTransient(
 		return "", fmt.Errorf("자격증명 만료 (exp=%d, now=%d)", cv.ExpUnix, txNow)
 	}
 	// 검증 2: 선거 ID 바인딩 — bypass 모드 외에는 반드시 일치
+	if cv.CredType == "bypass" && os.Getenv("ALLOW_BYPASS_CREDENTIAL") != "true" {
+		return "", fmt.Errorf("bypass 자격증명은 체인코드 운영 기본값에서 허용되지 않습니다")
+	}
 	if cv.CredType != "bypass" && cv.ElectionID != electionID {
 		return "", fmt.Errorf("자격증명 선거ID 불일치: cred=%s, req=%s", cv.ElectionID, electionID)
 	}
@@ -411,6 +598,11 @@ func verifyCredentialTransient(
 	if cv.CredHash == "" {
 		return "", fmt.Errorf("credHash 누락")
 	}
+	if cv.CredType == "ed25519" {
+		if err := verifyEd25519CredentialToken(ctx, cv, electionID, txNow); err != nil {
+			return "", err
+		}
+	}
 	return cv.CredHash, nil
 }
 
@@ -420,6 +612,10 @@ func (c *VotingContract) CloseElection(
 	ctx contractapi.TransactionContextInterface,
 	electionID string,
 ) (*VoteTally, error) {
+	if err := requireElectionAdmin(ctx); err != nil {
+		return nil, err
+	}
+
 	election, err := c.GetElection(ctx, electionID)
 	if err != nil {
 		return nil, err
@@ -457,17 +653,18 @@ func (c *VotingContract) CloseElection(
 //   - electionID:    투표 대상 선거 ID
 //   - candidateID:   선택한 후보자 ID
 //   - nullifierHash: SHA256(voterSecret + electionID + blindingFactor) — 클라이언트 계산
-//                    [CRIT-03 FIX] blindingFactor 추가로 선거 간 nullifier 연결 방지
+//     [CRIT-03 FIX] blindingFactor 추가로 선거 간 nullifier 연결 방지
 //
 // 비공개 데이터 (Transient Map — 체인에 기록 안 됨):
-//   "votePrivate":           { voterID, electionID, candidateID, nullifierHash, voteHash }
-//   "credentialVerification": { credType, electionID, expUnix, credHash }
-//                             [CRIT-01/02 FIX] API 서버 독립적 체인코드 자격증명 검증
+//
+//	"votePrivate":           { voterID, electionID, candidateID, nullifierHash, voteHash }
+//	"credentialVerification": { credType, electionID, expUnix, credHash }
+//	                          [CRIT-01/02 FIX] API 서버 독립적 체인코드 자격증명 검증
 //
 // 처리 흐름:
 //  1. 선거 존재 및 ACTIVE 상태 + 투표 기간 검증
-//  1b.[CRIT-01/02] 자격증명 체인코드 독립 검증 (만료/선거ID/유형/해시)
-//  2. nullifierHash 중복 검사 → 이중투표 방지
+//     1b.[CRIT-01/02] 자격증명 체인코드 독립 검증 (만료/선거ID/유형/해시)
+//  2. nullifierHash 중복 검사 → 재투표 시 Eviction(덮어쓰기), 최종 1표만 집계
 //  3. candidateID 유효성 검사
 //  4. Transient Map에서 비공개 투표 데이터 읽기
 //  5. VotePrivate → PDC 저장 (오더러 미전달, 피어 사이드DB)
@@ -478,6 +675,11 @@ func (c *VotingContract) CastVote(
 	candidateID string,
 	nullifierHash string,
 ) error {
+
+	// ── Step 0: 입력 형식 검증 (CouchDB 인젝션 방지) ──────────
+	if err := validateElectionID(electionID); err != nil {
+		return err
+	}
 
 	// ── Step 1: 선거 유효성 검사 ──────────────────────────────
 	election, err := c.GetElection(ctx, electionID)
@@ -506,7 +708,7 @@ func (c *VotingContract) CastVote(
 		return fmt.Errorf("자격증명 거부: %w", err)
 	}
 
-	// ── Step 2: 이중투표 확인 / Eviction 처리 ─────────────────
+	// ── Step 2: 재투표 확인 / Eviction 처리 (최종 1표만 유효) ──
 	existing, err := ctx.GetStub().GetState(nullifierHash)
 	if err != nil {
 		return fmt.Errorf("Nullifier 조회 실패: %w", err)
@@ -545,7 +747,7 @@ func (c *VotingContract) CastVote(
 	}
 
 	// 비공개 데이터 무결성 검사: electionID, candidateID, nullifierHash 일치 확인
-	if vp.ElectionID != electionID || vp.CandidateID != candidateID || vp.NullifierHash != nullifierHash {
+	if vp.ElectionID != electionID || vp.NullifierHash != nullifierHash {
 		return fmt.Errorf("비공개 투표 데이터와 공개 파라미터가 일치하지 않습니다")
 	}
 
@@ -555,6 +757,18 @@ func (c *VotingContract) CastVote(
 	// ObjectType 강제 설정 (클라이언트 제공값 덮어쓰기)
 	vp.ObjectType = "votePrivate"
 	vp.Timestamp = now
+
+	encKey, ekErr := getEncryptionKey(ctx, electionID)
+	if ekErr != nil {
+		return fmt.Errorf("후보자 암호화 키 조회 실패: %w", ekErr)
+	}
+	encryptedCandID, encErr := encryptAESGCM(encKey, candidateID)
+	if encErr != nil {
+		return fmt.Errorf("candidateID 암호화 실패: %w", encErr)
+	}
+	candidateCommitment := computeCandidateCommitment(electionID, nullifierHash, encryptedCandID)
+	vp.EncryptedCandidateID = encryptedCandID
+	vp.CandidateCommitment = candidateCommitment
 
 	vpBytes, err := json.Marshal(vp)
 	if err != nil {
@@ -591,29 +805,22 @@ func (c *VotingContract) CastVote(
 
 	// ── Step 6: 공개 원장에 Nullifier 저장 (익명) ────────────
 	// [C-4] candidateID를 AES-GCM으로 암호화하여 공개 원장에 저장
-	encryptedCandID := ""
-	if encKey, ekErr := getEncryptionKey(ctx, electionID); ekErr == nil {
-		enc, encErr := encryptAESGCM(encKey, candidateID)
-		if encErr != nil {
-			log.Printf("[CastVote] AES-GCM 암호화 실패 (폴백: 평문) — %v", encErr)
-		} else {
-			encryptedCandID = enc
-			log.Printf("[CastVote] candidateID 암호화 완료 — encrypted: %s...", encryptedCandID[:16])
-		}
-	} else {
-		log.Printf("[CastVote] 암호화 키 없음 (평문 폴백) — %v", ekErr)
-	}
 
 	nullifier := Nullifier{
 		ObjectType:           "nullifier",
 		NullifierHash:        nullifierHash,
 		ElectionID:           electionID,
-		CandidateID:          candidateID, // 하위 호환: 평문도 유지 (향후 제거 예정)
+		CandidateCommitment:  candidateCommitment,
 		EncryptedCandidateID: encryptedCandID,
 		Timestamp:            now,
 		EvictCount:           evictCount,
-		LastEvictedAt:        func() int64 { if isEviction { return now }; return 0 }(),
-		CredentialHash:       credHash, // [CRIT-01/02 FIX] 자격증명 감사 해시 기록
+		LastEvictedAt: func() int64 {
+			if isEviction {
+				return now
+			}
+			return 0
+		}(),
+		CredentialHash: credHash, // [CRIT-01/02 FIX] 자격증명 감사 해시 기록
 	}
 	nBytes, err := json.Marshal(nullifier)
 	if err != nil {
@@ -639,6 +846,10 @@ func (c *VotingContract) TallyVotes(
 	ctx contractapi.TransactionContextInterface,
 	electionID string,
 ) (*VoteTally, error) {
+	if err := requireElectionAdmin(ctx); err != nil {
+		return nil, err
+	}
+
 	// 선거 존재 확인
 	election, err := c.GetElection(ctx, electionID)
 	if err != nil {
@@ -764,7 +975,7 @@ func (c *VotingContract) GetElection(
 	return &election, nil
 }
 
-// GetNullifier Nullifier 존재 여부를 조회합니다 (이중투표 확인 또는 감사용).
+// GetNullifier Nullifier 존재 여부를 조회합니다 (투표 여부 확인 또는 감사용).
 // nil 반환 시 아직 투표하지 않은 유권자입니다.
 func (c *VotingContract) GetNullifier(
 	ctx contractapi.TransactionContextInterface,
@@ -784,6 +995,20 @@ func (c *VotingContract) GetNullifier(
 	return &n, nil
 }
 
+func resolveCandidateID(ctx contractapi.TransactionContextInterface, electionID string, n *Nullifier) string {
+	if n == nil {
+		return ""
+	}
+	if n.EncryptedCandidateID != "" {
+		if encKey, err := getEncryptionKey(ctx, electionID); err == nil {
+			if candID, decErr := decryptAESGCM(encKey, n.EncryptedCandidateID); decErr == nil {
+				return candID
+			}
+		}
+	}
+	return n.CandidateID
+}
+
 // ============================================================
 // Merkle Tree 데이터 구조체
 // ============================================================
@@ -797,17 +1022,25 @@ type MerkleNode struct {
 // MerkleProofResult GetMerkleProofWithPassword 반환 구조체
 // Normal Mode와 Panic Mode 모두 동일한 구조를 반환합니다 (강압자 구분 불가).
 type MerkleProofResult struct {
-	NullifierHash string       `json:"nullifierHash"` // 증명 대상 nullifier (Panic Mode에서는 더미)
-	CandidateID   string       `json:"candidateID"`   // 해당 nullifier의 후보자 ID
-	Proof         []MerkleNode `json:"proof"`         // Merkle 포함 증명 경로
+	NullifierHash        string       `json:"nullifierHash"`        // 증명 대상 nullifier (Panic Mode에서는 더미)
+	CandidateID          string       `json:"candidateID"`          // 해당 nullifier의 후보자 ID (Normal/Panic 표시용)
+	CandidateCommitment  string       `json:"candidateCommitment"`  // 암호화 투표 레코드 commitment
+	EncryptedCandidateID string       `json:"encryptedCandidateID"` // 후보자 암호문
+	LeafHash             string       `json:"leafHash"`             // Merkle leaf = H(election|nullifier|commitment|ciphertext)
+	Proof                []MerkleNode `json:"proof"`                // Merkle 포함 증명 경로
+}
+
+type MerkleLeaf struct {
+	NullifierHash string
+	LeafHash      string
 }
 
 // MerkleRoot 선거별 Merkle Root 정보 (공개 원장, 키: "MERKLE_ROOT_<electionID>")
 type MerkleRoot struct {
-	ObjectType string `json:"docType"`    // "merkleRoot"
+	ObjectType string `json:"docType"` // "merkleRoot"
 	ElectionID string `json:"electionID"`
 	RootHash   string `json:"rootHash"`
-	LeafCount  int    `json:"leafCount"`  // 집계된 투표 수 (= Merkle 리프 수)
+	LeafCount  int    `json:"leafCount"` // 집계된 투표 수 (= Merkle 리프 수)
 	CreatedAt  int64  `json:"createdAt"`
 }
 
@@ -815,19 +1048,23 @@ type MerkleRoot struct {
 // STEP 2: Merkle Tree — 투표 무결성 E2E 검증 지원
 // ============================================================
 
-// BuildMerkleTree 선거의 모든 Nullifier Hash로 Merkle Tree를 구축하고
+// BuildMerkleTree 선거의 모든 암호화 투표 레코드 commitment로 Merkle Tree를 구축하고
 // Root Hash를 원장에 기록합니다. CloseElection 이후에 호출해야 합니다.
 //
 // 원장 키: "MERKLE_ROOT_{electionID}"
 //
 // 결정론적 구성:
-//   - 리프를 nullifierHash 알파벳 순으로 정렬
+//   - 리프를 leafHash 알파벳 순으로 정렬
 //   - 홀수 리프일 경우 마지막 리프를 복제하여 짝수로 맞춤
 //   - 각 내부 노드: SHA256(leftHash + rightHash)
 func (c *VotingContract) BuildMerkleTree(
 	ctx contractapi.TransactionContextInterface,
 	electionID string,
 ) (*MerkleRoot, error) {
+	if err := requireElectionAdmin(ctx); err != nil {
+		return nil, err
+	}
+
 	// 선거 존재 + 종료 상태 확인
 	election, err := c.GetElection(ctx, electionID)
 	if err != nil {
@@ -837,17 +1074,23 @@ func (c *VotingContract) BuildMerkleTree(
 		return nil, fmt.Errorf("Merkle Tree는 선거 종료(CLOSED) 후에만 구축할 수 있습니다 (현재 상태: %s)", election.Status)
 	}
 
-	// 해당 선거의 모든 Nullifier Hash 수집
-	leaves, err := collectNullifierHashes(ctx, electionID)
+	// 해당 선거의 모든 암호화 투표 레코드 leaf 수집
+	leafRecords, err := collectMerkleLeaves(ctx, electionID)
 	if err != nil {
 		return nil, err
 	}
-	if len(leaves) == 0 {
+	if len(leafRecords) == 0 {
 		return nil, fmt.Errorf("투표 기록이 없어 Merkle Tree를 구축할 수 없습니다: %s", electionID)
 	}
 
 	// 결정론적 정렬
-	sort.Strings(leaves)
+	sort.Slice(leafRecords, func(i, j int) bool {
+		return leafRecords[i].LeafHash < leafRecords[j].LeafHash
+	})
+	leaves := make([]string, len(leafRecords))
+	for i, leaf := range leafRecords {
+		leaves[i] = leaf.LeafHash
+	}
 
 	// Merkle Root 계산
 	rootHash := computeMerkleRoot(leaves)
@@ -896,17 +1139,23 @@ func (c *VotingContract) GetMerkleProof(
 		return nil, fmt.Errorf("Merkle Tree가 아직 구축되지 않았습니다. BuildMerkleTree를 먼저 호출하세요: %s", electionID)
 	}
 
-	// 해당 선거의 모든 Nullifier Hash 수집 후 정렬
-	leaves, err := collectNullifierHashes(ctx, electionID)
+	// 해당 선거의 모든 Merkle leaf 수집 후 정렬
+	leafRecords, err := collectMerkleLeaves(ctx, electionID)
 	if err != nil {
 		return nil, err
 	}
-	sort.Strings(leaves)
+	sort.Slice(leafRecords, func(i, j int) bool {
+		return leafRecords[i].LeafHash < leafRecords[j].LeafHash
+	})
+	leaves := make([]string, len(leafRecords))
+	for i, leaf := range leafRecords {
+		leaves[i] = leaf.LeafHash
+	}
 
-	// 요청한 nullifierHash가 리프에 있는지 확인
+	// 요청한 nullifierHash에 대응하는 leaf가 있는지 확인
 	leafIdx := -1
-	for i, h := range leaves {
-		if h == nullifierHash {
+	for i, leaf := range leafRecords {
+		if leaf.NullifierHash == nullifierHash {
 			leafIdx = i
 			break
 		}
@@ -942,10 +1191,10 @@ func (c *VotingContract) GetMerkleRoot(
 
 // GetMerkleProofWithPassword Panic Mode를 지원하는 Deniable Verification 함수입니다.
 //
-// - normalPassword와 panicPassword는 클라이언트가 SHA256(password + nullifierHash)로 계산해서 전달합니다.
-// - normalPWHash 일치 → 실제 nullifierHash의 Merkle 포함 증명 반환 (Normal Mode)
-// - panicPWHash  일치 → 더미 nullifierHash의 포함 증명 반환 (Panic Mode)
-//   더미도 Merkle Tree의 실제 리프이므로, 강압자가 검증해도 수학적으로 통과합니다.
+//   - normalPassword와 panicPassword는 클라이언트가 SHA256(password + nullifierHash)로 계산해서 전달합니다.
+//   - normalPWHash 일치 → 실제 nullifierHash의 Merkle 포함 증명 반환 (Normal Mode)
+//   - panicPWHash  일치 → 더미 nullifierHash의 포함 증명 반환 (Panic Mode)
+//     더미도 Merkle Tree의 실제 리프이므로, 강압자가 검증해도 수학적으로 통과합니다.
 //
 // 보안 속성:
 //   - Normal Mode와 Panic Mode의 응답 구조가 동일 → 강압자가 구분 불가능
@@ -983,7 +1232,15 @@ func (c *VotingContract) GetMerkleProofWithPassword(
 		if err != nil || n == nil {
 			return nil, fmt.Errorf("Nullifier 조회 실패")
 		}
-		return &MerkleProofResult{NullifierHash: nullifierHash, CandidateID: n.CandidateID, Proof: proof}, nil
+		leafHash := computeMerkleLeafHash(n)
+		return &MerkleProofResult{
+			NullifierHash:        nullifierHash,
+			CandidateID:          resolveCandidateID(ctx, electionID, n),
+			CandidateCommitment:  n.CandidateCommitment,
+			EncryptedCandidateID: n.EncryptedCandidateID,
+			LeafHash:             leafHash,
+			Proof:                proof,
+		}, nil
 	}
 
 	var pw VoterPWPrivate
@@ -1040,9 +1297,12 @@ func (c *VotingContract) GetMerkleProofWithPassword(
 
 	_ = panicMode // 로그 목적으로만 사용 (응답에서 모드 노출 금지)
 	return &MerkleProofResult{
-		NullifierHash: targetHash,
-		CandidateID:   n.CandidateID,
-		Proof:         proof,
+		NullifierHash:        targetHash,
+		CandidateID:          resolveCandidateID(ctx, electionID, n),
+		CandidateCommitment:  n.CandidateCommitment,
+		EncryptedCandidateID: n.EncryptedCandidateID,
+		LeafHash:             computeMerkleLeafHash(n),
+		Proof:                proof,
 	}, nil
 }
 
@@ -1056,6 +1316,10 @@ func (c *VotingContract) ActivateElection(
 	ctx contractapi.TransactionContextInterface,
 	electionID string,
 ) error {
+	if err := requireElectionAdmin(ctx); err != nil {
+		return err
+	}
+
 	election, err := c.GetElection(ctx, electionID)
 	if err != nil {
 		return err
@@ -1075,11 +1339,23 @@ func (c *VotingContract) ActivateElection(
 // Merkle Tree 내부 헬퍼 함수
 // ============================================================
 
-// collectNullifierHashes CouchDB Rich Query로 선거의 모든 Nullifier Hash를 수집합니다.
-func collectNullifierHashes(
+func computeMerkleLeafHash(n *Nullifier) string {
+	if n == nil {
+		return ""
+	}
+	if n.CandidateCommitment == "" || n.EncryptedCandidateID == "" {
+		// 레거시 호환: 이전 버전 원장은 nullifierHash만 Merkle leaf로 사용했다.
+		h := sha256.Sum256([]byte(n.NullifierHash))
+		return fmt.Sprintf("%x", h)
+	}
+	return hashWithLengthPrefix(n.ElectionID, n.NullifierHash, n.CandidateCommitment, n.EncryptedCandidateID)
+}
+
+// collectMerkleLeaves CouchDB Rich Query로 선거의 모든 암호화 투표 레코드 leaf를 수집합니다.
+func collectMerkleLeaves(
 	ctx contractapi.TransactionContextInterface,
 	electionID string,
-) ([]string, error) {
+) ([]MerkleLeaf, error) {
 	queryString := fmt.Sprintf(
 		`{"selector":{"docType":"nullifier","electionID":"%s"},"use_index":["_design/indexElection","electionIndex"]}`,
 		electionID,
@@ -1090,7 +1366,7 @@ func collectNullifierHashes(
 	}
 	defer iter.Close()
 
-	var hashes []string
+	var leaves []MerkleLeaf
 	for iter.HasNext() {
 		qr, err := iter.Next()
 		if err != nil {
@@ -1100,9 +1376,12 @@ func collectNullifierHashes(
 		if err := json.Unmarshal(qr.Value, &n); err != nil {
 			return nil, fmt.Errorf("Nullifier 역직렬화 실패: %w", err)
 		}
-		hashes = append(hashes, n.NullifierHash)
+		leaves = append(leaves, MerkleLeaf{
+			NullifierHash: n.NullifierHash,
+			LeafHash:      computeMerkleLeafHash(&n),
+		})
 	}
-	return hashes, nil
+	return leaves, nil
 }
 
 // hashPair 두 해시를 연결하여 SHA256 해시를 반환합니다.
@@ -1216,6 +1495,10 @@ func (c *VotingContract) InitKeySharing(
 	ctx contractapi.TransactionContextInterface,
 	electionID string,
 ) (*KeySharingStatus, error) {
+	if err := requireElectionAdmin(ctx); err != nil {
+		return nil, err
+	}
+
 	election, err := c.GetElection(ctx, electionID)
 	if err != nil {
 		return nil, err
@@ -1320,6 +1603,10 @@ func (c *VotingContract) SubmitKeyShare(
 	shareIndex string,
 	shareHex string,
 ) (*KeySharingStatus, error) {
+	if err := requireShareOwner(ctx, shareIndex); err != nil {
+		return nil, err
+	}
+
 	statusKey := "KEYSHARING_" + electionID
 	statusBytes, err := ctx.GetStub().GetState(statusKey)
 	if err != nil {
@@ -1510,6 +1797,10 @@ func (c *VotingContract) GetKeyShare(
 	electionID string,
 	shareIndex string,
 ) (string, error) {
+	if err := requireShareOwner(ctx, shareIndex); err != nil {
+		return "", err
+	}
+
 	shareKey := fmt.Sprintf("KEYSHARE_%s_%s", electionID, shareIndex)
 	shareBytes, err := ctx.GetStub().GetPrivateData(VotePrivatePDC, shareKey)
 	if err != nil {
@@ -1697,9 +1988,9 @@ func main() {
 			log.Fatal("CCAAS 모드: CHAINCODE_ID 환경변수가 필요합니다")
 		}
 		server := &shim.ChaincodeServer{
-			CCID:    ccID,
-			Address: serverAddr,
-			CC:      cc,
+			CCID:     ccID,
+			Address:  serverAddr,
+			CC:       cc,
 			TLSProps: shim.TLSProperties{Disabled: true},
 		}
 		log.Printf("CCAAS 서버 모드 시작: %s (ID: %s)", serverAddr, ccID)

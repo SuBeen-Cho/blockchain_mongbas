@@ -6,7 +6,7 @@
  */
 
 import { useState } from 'react';
-import { computeNullifier, computePasswordHash } from '../utils/crypto.js';
+import { computeMerkleRootFromProof, computeNullifier, computePasswordHash } from '../utils/crypto.js';
 
 const API = '/api';
 
@@ -54,7 +54,36 @@ export default function VerifyPage() {
 
       data = await res.json();
       if (!res.ok) throw new Error(data.error);
-      setResult({ nullifierHash: hash, ...data });
+
+      const proofPayload = data.proof && !Array.isArray(data.proof) ? data.proof : data;
+      const proofPath = Array.isArray(data.proof)
+        ? data.proof
+        : Array.isArray(data.proof?.proof)
+          ? data.proof.proof
+          : [];
+      const leafHash = proofPayload.leafHash || data.leafHash || '';
+
+      const rootRes = await fetch(`${API}/elections/${electionID}/merkle`);
+      const rootData = await rootRes.json();
+      if (!rootRes.ok) throw new Error(rootData.error || 'Merkle root 조회 실패');
+
+      const computedRoot = await computeMerkleRootFromProof(leafHash, proofPath);
+      const chainRoot = rootData.rootHash;
+      const localVerified = computedRoot === chainRoot;
+      if (!localVerified) {
+        throw new Error('로컬 Merkle proof 검증 실패: 재계산한 root가 체인 root와 일치하지 않습니다.');
+      }
+
+      setResult({
+        nullifierHash: hash,
+        ...data,
+        localVerification: {
+          ok: localVerified,
+          computedRoot,
+          chainRoot,
+          leafHash,
+        },
+      });
     } catch (e) { setError(e.message); }
     finally { setLoading(false); }
   }
@@ -144,10 +173,43 @@ export default function VerifyPage() {
       {result && (
         <section className="bg-green-50 border border-green-200 rounded-xl p-5 space-y-3">
           <p className="font-bold text-green-700">✅ 검증 성공 — 투표가 집계에 포함됨</p>
+          {result.localVerification?.ok && (
+            <p className="text-xs text-green-700">
+              브라우저에서 Merkle proof를 재계산했고, 체인에 기록된 Root Hash와 일치합니다.
+            </p>
+          )}
           <div className="text-xs space-y-1">
             <p><span className="font-medium">선거:</span> {result.electionID}</p>
             <p><span className="font-medium">Nullifier:</span></p>
             <code className="block bg-white border rounded px-2 py-1 break-all">{result.nullifierHash}</code>
+            {(result.leafHash || result.proof?.leafHash) && (
+              <>
+                <p><span className="font-medium">Merkle Leaf:</span></p>
+                <code className="block bg-white border rounded px-2 py-1 break-all">
+                  {result.leafHash || result.proof.leafHash}
+                </code>
+              </>
+            )}
+            {(result.candidateCommitment || result.proof?.candidateCommitment) && (
+              <>
+                <p><span className="font-medium">Candidate Commitment:</span></p>
+                <code className="block bg-white border rounded px-2 py-1 break-all">
+                  {result.candidateCommitment || result.proof.candidateCommitment}
+                </code>
+              </>
+            )}
+            {result.localVerification?.chainRoot && (
+              <>
+                <p><span className="font-medium">Chain Root:</span></p>
+                <code className="block bg-white border rounded px-2 py-1 break-all">
+                  {result.localVerification.chainRoot}
+                </code>
+                <p><span className="font-medium">Computed Root:</span></p>
+                <code className="block bg-white border rounded px-2 py-1 break-all">
+                  {result.localVerification.computedRoot}
+                </code>
+              </>
+            )}
           </div>
           {result.proof && (
             <details className="text-xs">

@@ -149,7 +149,32 @@ export default function AdminPage() {
       {/* ─── 5. 개표 결과 ─────────────────────────── */}
       <Section title="5. 개표 결과 조회">
         <Btn color="gray" loading={busy.tally} onClick={run('tally', () => apiGet(`${API}/elections/${eid}/tally`))}>결과 조회</Btn>
-        <Msg data={res.tally} error={err.tally} />
+        {err.tally && <p className="text-red-600 text-sm">{err.tally}</p>}
+        {res.tally && (
+          <div className="space-y-2">
+            <p className="text-sm text-gray-600">총 투표수: <span className="font-bold">{res.tally.totalVotes}</span></p>
+            {res.tally.results && Object.entries(res.tally.results)
+              .sort(([,a],[,b]) => b - a)
+              .map(([candidate, count]) => {
+                const pct = res.tally.totalVotes > 0 ? Math.round(count / res.tally.totalVotes * 100) : 0;
+                return (
+                  <div key={candidate} className="text-sm">
+                    <div className="flex justify-between mb-1">
+                      <span className="font-medium">{candidate}</span>
+                      <span className="text-gray-500">{count}표 ({pct}%)</span>
+                    </div>
+                    <div className="w-full bg-gray-200 rounded-full h-4">
+                      <div className="bg-blue-600 h-4 rounded-full transition-all" style={{ width: `${pct}%` }} />
+                    </div>
+                  </div>
+                );
+              })}
+            <details className="text-xs mt-2">
+              <summary className="cursor-pointer text-gray-500">JSON 원본 보기</summary>
+              <pre className="mt-1 bg-gray-50 border rounded p-2 overflow-auto">{JSON.stringify(res.tally, null, 2)}</pre>
+            </details>
+          </div>
+        )}
       </Section>
 
       {/* ─── 6. Merkle Tree ───────────────────────── */}
@@ -197,7 +222,19 @@ export default function AdminPage() {
         <Msg data={res.submitShare} error={err.submitShare} />
 
         <Btn color="gray" loading={busy.decStatus} onClick={run('decStatus', () => apiGet(`${API}/elections/${eid}/decryption`))}>복원 현황 조회</Btn>
-        <Msg data={res.decStatus} error={err.decStatus} />
+        {err.decStatus && <p className="text-red-600 text-sm">{err.decStatus}</p>}
+        {res.decStatus && (
+          <div className="text-sm space-y-1 bg-gray-50 border rounded p-3">
+            <p>
+              복원 상태:{' '}
+              <span className={`font-bold ${res.decStatus.restored ? 'text-green-600' : 'text-yellow-600'}`}>
+                {res.decStatus.restored ? '복원 완료' : '대기 중'}
+              </span>
+            </p>
+            <p>제출된 Share: {res.decStatus.submittedCount || 0} / {res.decStatus.totalShares || 3}</p>
+            <p>필요 Threshold: {res.decStatus.threshold || 2}</p>
+          </div>
+        )}
       </Section>
     </div>
   );

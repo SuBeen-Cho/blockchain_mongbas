@@ -1,5 +1,5 @@
 /**
- * app.js — BFT 익명 전자투표 REST API 서버
+ * app.js — 다조직 합의 익명 전자투표 REST API 서버
  *
  * 실행: node src/app.js
  * 개발: nodemon src/app.js
@@ -17,6 +17,8 @@
 
 const express        = require('express');
 const session        = require('express-session');
+const cors           = require('cors');
+const rateLimit      = require('express-rate-limit');
 const electionsRouter              = require('./routes/elections');
 const voteRouter                   = require('./routes/vote');
 const { router: credentialRouter } = require('./routes/credential');
@@ -25,9 +27,49 @@ const { requireVoterAuth, measureAuthLatency, idemixStatus } = require('./middle
 const app  = express();
 const PORT = process.env.PORT || 3000;
 
+// ── 운영 환경 필수 환경변수 검증 ──────────────────────────────────
+if (process.env.NODE_ENV === 'production') {
+  const required = ['IDEMIX_ENABLED', 'SESSION_SECRET', 'CREDENTIAL_SECRET'];
+  const missing = required.filter((k) => !process.env[k]);
+  if (missing.length > 0) {
+    throw new Error(`운영 환경 필수 환경변수 누락: ${missing.join(', ')}`);
+  }
+  if (process.env.IDEMIX_ENABLED !== 'true') {
+    throw new Error('운영 환경에서는 IDEMIX_ENABLED=true 가 필요합니다. bypass 인증은 개발/벤치마크 전용입니다.');
+  }
+}
+
 // ── 미들웨어 ────────────────────────────────────────────────────
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+app.use(express.json({ limit: '1mb' }));
+app.use(express.urlencoded({ extended: true, limit: '1mb' }));
+
+// CORS — 허용 origin 제한 (CORS_ORIGIN 환경변수 또는 개발용 localhost)
+const allowedOrigins = (process.env.CORS_ORIGIN || 'http://localhost:5173,http://localhost:3000')
+  .split(',').map(o => o.trim());
+app.use(cors({
+  origin: allowedOrigins,
+  credentials: true,
+}));
+
+// Rate Limiting — 전역 (15분당 300회)
+const globalLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 300,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: '요청이 너무 많습니다. 잠시 후 다시 시도하세요.' },
+});
+app.use(globalLimiter);
+
+// 보안 헤더
+app.use((_req, res, next) => {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'DENY');
+  res.setHeader('X-XSS-Protection', '1; mode=block');
+  res.setHeader('Content-Security-Policy',
+    "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self'; img-src 'self' data:; font-src 'self'");
+  next();
+});
 
 // 세션 (Panic Mode 상태 관리에 사용)
 app.use(session({
@@ -38,16 +80,34 @@ app.use(session({
   resave: false,
   saveUninitialized: false,
   cookie: {
-    secure: false,   // HTTPS 사용 시 true로 변경
+    secure: process.env.NODE_ENV === 'production',
+    httpOnly: true,
+    sameSite: 'strict',
     maxAge: 60 * 60 * 1000,  // 1시간
   },
 }));
 
+// ── 민감 엔드포인트 Rate Limiting ─────────────────────────────────
+const voteLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 30,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: '투표 요청이 너무 많습니다. 잠시 후 다시 시도하세요.' },
+});
+const credentialLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 50,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Credential 발급 요청이 너무 많습니다.' },
+});
+
 // ── 라우터 ──────────────────────────────────────────────────────
 app.use('/api/elections',  electionsRouter);
 app.use('/api/nullifier',  voteRouter);
-app.use('/api/credential', credentialRouter);                      // Idemix 자격증명 발급
-app.use('/api/vote',       requireVoterAuth, voteRouter);          // Idemix 인증 미들웨어 적용
+app.use('/api/credential', credentialLimiter, credentialRouter);    // Idemix 자격증명 발급
+app.use('/api/vote',       voteLimiter, requireVoterAuth, voteRouter); // Idemix 인증 미들웨어 적용
 
 // ── 벤치마크 전용 엔드포인트 ────────────────────────────────────
 // 인증 레이턴시만 측정하기 위한 엔드포인트 (체인코드 호출 없음)
@@ -76,7 +136,7 @@ app.get('/health', (_req, res) => {
 // ── API 목록 (개발 편의) ────────────────────────────────────────
 app.get('/', (req, res) => {
   res.json({
-    name: '팀 몽바스 — BFT 익명 전자투표 API',
+    name: '팀 몽바스 — 다조직 합의 익명 전자투표 API',
     version: '1.0.0',
     endpoints: {
       'GET  /health'                         : '서버 상태 확인',
@@ -111,7 +171,7 @@ app.use((err, req, res, _next) => {
 app.listen(PORT, () => {
   console.log(`
 ╔══════════════════════════════════════════════════════╗
-║  팀 몽바스 — BFT 익명 전자투표 API 서버 기동         ║
+║  팀 몽바스 — 다조직 합의 익명 전자투표 API 서버 기동  ║
 ║  http://localhost:${PORT}                              ║
 ╚══════════════════════════════════════════════════════╝
 

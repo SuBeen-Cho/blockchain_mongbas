@@ -19,13 +19,19 @@ let _publicKey  = null;
  */
 function getEd25519Keys() {
   if (!_privateKey) {
-    const { privateKey, publicKey } = crypto.generateKeyPairSync('ed25519', {
-      privateKeyEncoding: { type: 'pkcs8', format: 'der' },
-      publicKeyEncoding:  { type: 'spki',  format: 'der' },
-    });
-    _privateKey = privateKey;
-    _publicKey  = publicKey;
-    console.log('[asym-keys] Ed25519 키쌍 생성 (서버 재시작 시 갱신)');
+    if (process.env.ED25519_PRIVATE_KEY_DER_B64 && process.env.ED25519_PUBLIC_KEY_DER_B64) {
+      _privateKey = Buffer.from(process.env.ED25519_PRIVATE_KEY_DER_B64, 'base64');
+      _publicKey  = Buffer.from(process.env.ED25519_PUBLIC_KEY_DER_B64,  'base64');
+      console.log('[asym-keys] Ed25519 키쌍 로드 (환경변수)');
+    } else {
+      const { privateKey, publicKey } = crypto.generateKeyPairSync('ed25519', {
+        privateKeyEncoding: { type: 'pkcs8', format: 'der' },
+        publicKeyEncoding:  { type: 'spki',  format: 'der' },
+      });
+      _privateKey = privateKey;
+      _publicKey  = publicKey;
+      console.warn('[asym-keys] Ed25519 키쌍 생성 (개발용, 서버 재시작 시 갱신). 운영/체인코드 검증에는 ED25519_*_DER_B64 환경변수를 사용하세요.');
+    }
   }
   return { privateKey: _privateKey, publicKey: _publicKey };
 }

@@ -1,10 +1,10 @@
 ################################################################################
 # docker-compose.yaml
-# BFT 전자투표 네트워크 — 다중 조직 구성 (configtx.yaml, crypto-config.yaml과 일치)
+# 다조직 합의 전자투표 네트워크 (configtx.yaml, crypto-config.yaml과 일치)
 #
-#  이미지: Hyperledger Fabric 3.0 (SmartBFT 지원 최소 버전)
+#  이미지: Hyperledger Fabric 2.5
 #
-#  오더러  4개 : orderer1~4 (SmartBFT, 3f+1)
+#  오더러  4개 : orderer1~4 (etcdraft CFT — SmartBFT 아님)
 #  피어    4개 : EC(2) + Party(1) + Civil(1)
 #  CouchDB 4개 : 피어별 1개
 #  CLI     1개 : 관리 작업용
@@ -119,7 +119,7 @@ services:
       - voting-net
 
   ##############################################################################
-  # 오더러 노드 1~4 (SmartBFT BFT 합의)
+  # 오더러 노드 1~4 (etcdraft CFT 합의)
   ##############################################################################
   orderer1.orderer.voting.example.com:
     container_name: orderer1.orderer.voting.example.com
@@ -575,6 +575,8 @@ services:
     environment:
       - CHAINCODE_SERVER_ADDRESS=0.0.0.0:7052
       - CHAINCODE_ID=voting_1.0   # deploy 후 실제 패키지 ID로 교체 필요
+      - ED25519_PUBLIC_KEY_DER_B64=${ED25519_PUBLIC_KEY_DER_B64:-}
+      - ALLOW_BYPASS_CREDENTIAL=${ALLOW_BYPASS_CREDENTIAL:-false}
     depends_on:
       - peer0.ec.voting.example.com
     networks:

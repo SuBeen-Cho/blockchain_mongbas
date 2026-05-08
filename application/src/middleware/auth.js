@@ -36,11 +36,7 @@ const IDEMIX_ENABLED     = process.env.IDEMIX_ENABLED       === 'true';
 const CACHE_ENABLED      = process.env.IDEMIX_CACHE_ENABLED  === 'true';
 // [MED-06 FIX] 기본 TTL 30초 → 5초. 탈취 자격증명 재사용 윈도우 최소화
 const CACHE_TTL_MS       = parseInt(process.env.IDEMIX_CACHE_TTL_SEC || '5', 10) * 1000;
-const CREDENTIAL_SECRET  = process.env.CREDENTIAL_SECRET     || (() => {
-  console.warn('[WARN] CREDENTIAL_SECRET 환경변수 미설정 — 개발용 기본값 사용 중. 운영 환경에서는 반드시 설정하세요.');
-  return 'dev-only-credential-secret-' + require('crypto').randomBytes(8).toString('hex');
-})();
-const ASYM_CRED_ENABLED  = process.env.ASYM_CRED_ENABLED     === 'true';
+const { CREDENTIAL_SECRET, ASYM_CRED_ENABLED } = require('../routes/credential');
 const IDEMIX_IMPL        = process.env.IDEMIX_IMPL           || '';   // 'ps' | 'bbs' | ''
 
 // PS/BBS 모듈은 필요할 때만 로드
@@ -296,16 +292,26 @@ async function measureAuthLatency(req) {
 
 // ── 헬스 체크용 상태 반환 ───────────────────────────────────────
 function idemixStatus() {
-  let impl;
-  if (IDEMIX_IMPL === 'ps')  impl = 'PS-BN254 (B단계: 진짜 Idemix CL)';
-  else if (IDEMIX_IMPL === 'bbs') impl = 'BBS+-BLS12381 (C단계: 개선 Idemix)';
-  else if (ASYM_CRED_ENABLED)     impl = 'Ed25519-asymmetric';
-  else                             impl = 'HMAC-SHA256';
+  let impl, securityNote;
+  if (IDEMIX_IMPL === 'ps') {
+    impl = 'PS-BN254 (B단계: 진짜 Idemix CL)';
+    securityNote = '익명 credential (선택적 공개, 비연결성) — 체인코드 직접 검증 미완';
+  } else if (IDEMIX_IMPL === 'bbs') {
+    impl = 'BBS+-BLS12381 (C단계: 개선 Idemix)';
+    securityNote = '익명 credential (ZKP 기반 선택적 공개) — 체인코드 직접 검증 미완';
+  } else if (ASYM_CRED_ENABLED) {
+    impl = 'Ed25519-asymmetric';
+    securityNote = '공개키 서명 credential — 체인코드 직접 검증 완료, 익명 credential은 아님';
+  } else {
+    impl = 'HMAC-SHA256';
+    securityNote = '대칭키 서명 — 서버만 검증 가능, 독립 검증 불가';
+  }
 
   return {
     enabled:      IDEMIX_ENABLED,
     mode:         IDEMIX_ENABLED ? `idemix-${IDEMIX_IMPL || 'hmac'}` : 'bypass',
     impl,
+    securityNote,
     idemixImpl:   IDEMIX_IMPL || 'hmac',
     asymEnabled:  ASYM_CRED_ENABLED,
     cacheEnabled: CACHE_ENABLED,

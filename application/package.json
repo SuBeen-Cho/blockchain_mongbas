@@ -1,17 +1,23 @@
 {
   "name": "voting-backend",
   "version": "1.0.0",
-  "description": "BFT 익명 전자투표 블록체인 REST API 서버",
+  "description": "다조직 합의 익명 전자투표 블록체인 REST API 서버",
   "main": "src/app.js",
   "scripts": {
     "start": "node src/app.js",
-    "dev": "nodemon src/app.js"
+    "dev": "nodemon src/app.js",
+    "keys:ed25519": "node scripts/generate-ed25519-env.js",
+    "e2e:ed25519": "node scripts/ed25519-e2e-smoke.js",
+    "e2e:merkle": "node scripts/merkle-e2e-smoke.js",
+    "e2e:full": "node scripts/full-election-e2e.js"
   },
   "dependencies": {
     "@grpc/grpc-js": "^1.10.0",
     "@hyperledger/fabric-gateway": "^1.4.0",
     "@mattrglobal/bbs-signatures": "^2.0.0",
+    "cors": "^2.8.6",
     "express": "^4.18.0",
+    "express-rate-limit": "^8.5.1",
     "express-session": "^1.17.0",
     "uuid": "^9.0.0"
   },

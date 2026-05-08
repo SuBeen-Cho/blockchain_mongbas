@@ -19,8 +19,8 @@ export default function VoterPage() {
   const [election,   setElection]   = useState(null);
 
   // ── Idemix 자격증명 ────────────────────────────────
-  const [enrollmentID,     setEnrollmentID]     = useState('voter1');
-  const [enrollmentSecret, setEnrollmentSecret] = useState('voter1pw');
+  const [enrollmentID,     setEnrollmentID]     = useState('');
+  const [enrollmentSecret, setEnrollmentSecret] = useState('');
   const [idemixCredential, setIdemixCredential] = useState('');
   const [credStatus,       setCredStatus]       = useState('');  // 'fetching' | 'ok' | 'error' | ''
 
@@ -36,6 +36,14 @@ export default function VoterPage() {
   const [result,  setResult]  = useState(null);
   const [error,   setError]   = useState('');
   const [panicMode, setPanicMode] = useState(false);
+  const [credMode, setCredMode] = useState('');
+
+  // ── Credential 모드 확인 (health check) ────────────
+  useEffect(() => {
+    fetch('/health').then(r => r.json())
+      .then(d => setCredMode(d.idemix?.mode || ''))
+      .catch(() => {});
+  }, []);
 
   // ── Idemix 자격증명 사전 발급 ─────────────────────
   // 선거 조회 후 백그라운드에서 자동 발급 (ZKP 사전 생성 최적화)
@@ -140,9 +148,14 @@ export default function VoterPage() {
             onChange={e => setEnrollmentSecret(e.target.value)}
           />
         </div>
-        {credStatus === 'ok'       && <p className="text-xs text-green-600">✅ Idemix 자격증명 발급 완료 (익명 자격 확인됨)</p>}
-        {credStatus === 'fetching' && <p className="text-xs text-blue-500">⏳ 자격증명 발급 중...</p>}
-        {credStatus === 'error'    && <p className="text-xs text-red-500">❌ 자격증명 발급 실패 — 유권자 ID/비밀번호 확인</p>}
+        {credStatus === 'ok'       && <p className="text-xs text-green-600">자격증명 발급 완료 (익명 자격 확인됨)</p>}
+        {credStatus === 'fetching' && <p className="text-xs text-blue-500">자격증명 발급 중...</p>}
+        {credStatus === 'error'    && <p className="text-xs text-red-500">자격증명 발급 실패 - 유권자 ID/비밀번호 확인</p>}
+        {credMode && (
+          <p className="text-xs text-gray-400">
+            인증 모드: <span className="font-mono font-medium text-gray-600">{credMode}</span>
+          </p>
+        )}
       </section>
 
       {/* 선거 조회 */}
@@ -298,7 +311,10 @@ export default function VoterPage() {
               <code className="text-xs bg-white border rounded px-2 py-1 block break-all">
                 {result.nullifierHash}
               </code>
-              <p className="text-xs text-gray-400 mt-1">이 값을 저장해두면 검증 탭에서 투표 포함 여부를 확인할 수 있습니다.</p>
+              <p className="text-xs text-gray-400 mt-1">
+                이 값을 저장해두면 검증 탭에서 투표 포함 여부를 확인할 수 있습니다.
+                <br/>재투표 시 최종 1표만 유효합니다 (이전 투표는 자동 대체).
+              </p>
             </div>
           )}
         </div>

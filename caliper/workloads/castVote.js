@@ -70,13 +70,22 @@ class CastVoteWorkload extends WorkloadModuleBase {
       nullifierHash,
       voteHash: crypto.createHash('sha256').update(voterSecret + candidateID).digest('hex'),
     };
+    const credentialVerification = {
+      credType:   'bypass',
+      electionID: this.electionID,
+      expUnix:    Math.floor(Date.now() / 1000) + 3600,
+      credHash:   crypto.createHash('sha256').update(`caliper-bypass-${this.workerIndex}`).digest('hex'),
+    };
 
     return this.sutAdapter.sendRequests({
       contractId:        'voting',
       channel:           'voting-channel',
       contractFunction:  'CastVote',
       contractArguments: [this.electionID, candidateID, nullifierHash],
-      transientMap:      { votePrivate: Buffer.from(JSON.stringify(votePrivate)) },
+      transientMap:      {
+        votePrivate: Buffer.from(JSON.stringify(votePrivate)),
+        credentialVerification: Buffer.from(JSON.stringify(credentialVerification)),
+      },
       invokerIdentity:   'User1',
       readOnly:          false,
     });

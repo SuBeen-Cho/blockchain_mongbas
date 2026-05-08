@@ -1,0 +1,74 @@
+{
+  "timestamp": "2026-05-04T10:14:44.981Z",
+  "kind": "REST API end-to-end vote benchmark",
+  "rounds": [
+    {
+      "label": "seq1",
+      "targetTps": 1,
+      "n": 20,
+      "success": 20,
+      "fail": 0,
+      "actualTps": 0.99,
+      "latency": {
+        "n": 20,
+        "avg": 1464,
+        "min": 108,
+        "p50": 1129,
+        "p95": 2131,
+        "p99": 2166,
+        "max": 2166
+      }
+    },
+    {
+      "label": "tps5",
+      "targetTps": 5,
+      "n": 40,
+      "success": 40,
+      "fail": 0,
+      "actualTps": 4.78,
+      "latency": {
+        "n": 40,
+        "avg": 1270.7,
+        "min": 180,
+        "p50": 1208,
+        "p95": 2163,
+        "p99": 2208,
+        "max": 2208
+      }
+    },
+    {
+      "label": "tps10",
+      "targetTps": 10,
+      "n": 60,
+      "success": 60,
+      "fail": 0,
+      "actualTps": 9.27,
+      "latency": {
+        "n": 60,
+        "avg": 1255,
+        "min": 159,
+        "p50": 1262,
+        "p95": 2158,
+        "p99": 2267,
+        "max": 2267
+      }
+    },
+    {
+      "label": "tps20",
+      "targetTps": 20,
+      "n": 80,
+      "success": 80,
+      "fail": 0,
+      "actualTps": 18.23,
+      "latency": {
+        "n": 80,
+        "avg": 1360.3,
+        "min": 337,
+        "p50": 1343,
+        "p95": 2234,
+        "p99": 2337,
+        "max": 2337
+      }
+    }
+  ]
+}

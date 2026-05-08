@@ -36,6 +36,7 @@ const CREDENTIAL_TTL_MS  = parseInt(process.env.CREDENTIAL_TTL_SEC || '600', 10)
 const ASYM_CRED_ENABLED  = process.env.ASYM_CRED_ENABLED === 'true';
 const IDEMIX_IMPL        = process.env.IDEMIX_IMPL        || '';   // 'ps' | 'bbs' | ''
 const { getEd25519Keys } = require('../lib/asym-keys');
+const { logCredentialIssuance, logCredentialFailure } = require('../lib/audit-log');
 
 // PS/BBS 모듈은 필요할 때만 로드
 let _psIdemix  = null;
@@ -111,15 +112,14 @@ function issueAsymCredential(voterID, electionID) {  // eslint-disable-line no-u
     exp: Date.now() + CREDENTIAL_TTL_MS,
   };
 
+  const header = Buffer.from(JSON.stringify({ alg: 'EdDSA' })).toString('base64url');
   const payloadB64 = Buffer.from(JSON.stringify(payload)).toString('base64url');
 
   // Ed25519 서명 (deterministic — RFC 8032)
+  // 서명 대상은 검증기와 동일하게 "header.payload"로 고정합니다.
   const privKeyObj = crypto.createPrivateKey({ key: privateKey, format: 'der', type: 'pkcs8' });
-  const sigBuf     = crypto.sign(null, Buffer.from(payloadB64), privKeyObj);
+  const sigBuf     = crypto.sign(null, Buffer.from(`${header}.${payloadB64}`), privKeyObj);
   const sig        = sigBuf.toString('base64url');
-
-  // alg 헤더로 검증 방식 명시
-  const header = Buffer.from(JSON.stringify({ alg: 'EdDSA' })).toString('base64url');
 
   return `${header}.${payloadB64}.${sig}`;
 }
@@ -152,6 +152,7 @@ router.post('/idemix', async (req, res) => {
   const { enrollmentID, enrollmentSecret, electionID } = req.body || {};
 
   if (!enrollmentID || !enrollmentSecret || !electionID) {
+    logCredentialFailure({ electionID, reason: 'missing-fields' });
     return res.status(400).json({
       error: 'enrollmentID, enrollmentSecret, electionID 필수',
     });
@@ -159,13 +160,23 @@ router.post('/idemix', async (req, res) => {
 
   const voter = VOTER_REGISTRY.get(enrollmentID);
   if (!voter || voter.secret !== enrollmentSecret) {
+    logCredentialFailure({ electionID, reason: 'auth-failed' });
     return res.status(401).json({ error: '등록되지 않은 유권자이거나 비밀번호 불일치' });
   }
   if (!voter.eligible) {
+    logCredentialFailure({ electionID, reason: 'not-eligible' });
     return res.status(403).json({ error: '투표 자격이 없는 계정입니다.' });
   }
 
   const { token, credType, sizeBytes } = await issueCredentialAuto(enrollmentID, electionID);
+
+  logCredentialIssuance({
+    credentialHash: crypto.createHash('sha256').update(token).digest('hex'),
+    electionID,
+    credType,
+    expiresAt: Date.now() + CREDENTIAL_TTL_MS,
+    success: true,
+  });
 
   res.json({
     credential: token,
@@ -192,12 +203,14 @@ router.get('/public-key', (_req, res) => {
 });
 
 // ── GET /api/credential/voters (개발·테스트 전용) ───────────────
-router.get('/voters', (_req, res) => {
-  const list = [...VOTER_REGISTRY.entries()].map(([id, v]) => ({
-    enrollmentID: id,
-    eligible: v.eligible,
-  }));
-  res.json({ voters: list, note: '운영 환경에서는 이 엔드포인트를 제거하세요.' });
-});
+if (process.env.NODE_ENV !== 'production') {
+  router.get('/voters', (_req, res) => {
+    const list = [...VOTER_REGISTRY.entries()].map(([id, v]) => ({
+      enrollmentID: id,
+      eligible: v.eligible,
+    }));
+    res.json({ voters: list, note: '운영 환경에서는 이 엔드포인트가 비활성화됩니다.' });
+  });
+}
 
 module.exports = { router, issueCredential, issueAsymCredential, getEd25519Keys, CREDENTIAL_SECRET, ASYM_CRED_ENABLED };

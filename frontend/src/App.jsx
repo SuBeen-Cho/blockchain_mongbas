@@ -19,7 +19,7 @@ export default function App() {
         <div className="max-w-3xl mx-auto px-4 py-4 flex items-center gap-3">
           <span className="text-2xl">🗳️</span>
           <div>
-            <h1 className="text-lg font-bold leading-tight">팀 몽바스 — BFT 익명 전자투표</h1>
+            <h1 className="text-lg font-bold leading-tight">팀 몽바스 — 다조직 합의 익명 전자투표</h1>
             <p className="text-xs text-blue-200">Hyperledger Fabric 2.5 · 2-of-3 다중 기관 합의</p>
           </div>
         </div>

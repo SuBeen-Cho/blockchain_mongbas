@@ -9,7 +9,7 @@
 # ============================================================
 
 test:
-  name: BFT 익명 전자투표 — CastVote 성능 측정
+  name: 다조직 합의 익명 전자투표 — CastVote 성능 측정
   description: |
     Nullifier + PDC 기반 익명 투표 트랜잭션의 처리 성능 측정.
     동시 투표자 수(workers)와 전송 속도(tps)를 변화시켜 최적 운영 파라미터 탐색.
@@ -58,20 +58,6 @@ test:
         module: workloads/castVote.js
         arguments:
           electionID: caliper-bench-high
-          candidates: [A, B, C]
-
-    # ── Round 4: Backlog 제어 ───────────────────────────────
-    - label: CastVote_Backlog
-      description: "백로그 제어 (목표 backlog=5) — 자동 TPS 조정"
-      txNumber: 100
-      rateControl:
-        type: fixed-backlog
-        opts:
-          unfinished_per_client: 5
-      workload:
-        module: workloads/castVote.js
-        arguments:
-          electionID: caliper-bench-backlog
           candidates: [A, B, C]
 
 monitor:

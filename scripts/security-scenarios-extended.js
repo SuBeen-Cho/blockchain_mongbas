@@ -699,7 +699,7 @@ EC + Civil 2개 조직만으로 정상 처리 가능한지 확인합니다.
 ### 시사점
 - 피어 1개 장애 시에도 **2개 조직(EC + Civil) endorsement로 트랜잭션 처리 가능**
 - 성공률 ${r.A3.afterPeer.successRate}로 단일 피어 장애가 **서비스 중단으로 이어지지 않음**
-- BFT 구조의 내결함성(fault tolerance)이 실제 네트워크 레벨에서 검증됨
+- 다조직 합의(etcdraft CFT) 구조의 내결함성(fault tolerance)이 실제 네트워크 레벨에서 검증됨
 
 ---
 

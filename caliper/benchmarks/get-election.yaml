@@ -8,7 +8,7 @@
 # ============================================================
 
 test:
-  name: BFT 익명 전자투표 — 조회 성능 측정
+  name: 다조직 합의 익명 전자투표 — 조회 성능 측정
   description: Read-only 트랜잭션(evaluateTransaction) 처리 성능.
 
   workers:

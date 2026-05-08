@@ -37,6 +37,33 @@ const PEER_HOST_ALIAS = 'peer0.ec.voting.example.com';  // TLS SNI
 const CHANNEL_NAME    = 'voting-channel';
 const CHAINCODE_NAME  = 'voting';
 
+const ORG_PROFILES = {
+  ElectionCommissionMSP: {
+    domain: 'ec.voting.example.com',
+    peer: 'peer0.ec.voting.example.com',
+    endpoint: 'localhost:7051',
+    user: 'User1@ec.voting.example.com',
+  },
+  PartyObserverMSP: {
+    domain: 'party.voting.example.com',
+    peer: 'peer0.party.voting.example.com',
+    endpoint: 'localhost:8051',
+    user: 'User1@party.voting.example.com',
+  },
+  CivilSocietyMSP: {
+    domain: 'civil.voting.example.com',
+    peer: 'peer0.civil.voting.example.com',
+    endpoint: 'localhost:9051',
+    user: 'User1@civil.voting.example.com',
+  },
+};
+
+const SHARE_INDEX_MSP = {
+  '1': 'ElectionCommissionMSP',
+  '2': 'PartyObserverMSP',
+  '3': 'CivilSocietyMSP',
+};
+
 /**
  * keystore 폴더에서 개인키 파일(priv_sk)을 읽어 반환합니다.
  * cryptogen은 랜덤 파일명을 사용하므로 폴더 내 첫 번째 파일을 사용합니다.
@@ -51,11 +78,11 @@ function readPrivateKey(keystoreDir) {
 /**
  * gRPC 클라이언트를 생성합니다 (TLS 포함).
  */
-function newGrpcClient() {
-  const tlsCert = fs.readFileSync(TLS_CA_CERT);
+function newGrpcClient(tlsCaCert = TLS_CA_CERT, endpoint = PEER_ENDPOINT, hostAlias = PEER_HOST_ALIAS) {
+  const tlsCert = fs.readFileSync(tlsCaCert);
   const creds   = grpc.credentials.createSsl(tlsCert);
-  return new grpc.Client(PEER_ENDPOINT, creds, {
-    'grpc.ssl_target_name_override': PEER_HOST_ALIAS,
+  return new grpc.Client(endpoint, creds, {
+    'grpc.ssl_target_name_override': hostAlias,
   });
 }
 
@@ -133,4 +160,40 @@ async function connectGatewayAsVoter(mspId, voterCertPem, voterKeyPem) {
   return { gateway, contract };
 }
 
-module.exports = { connectGateway, connectGatewayAsVoter };
+async function connectGatewayForOrg(mspId) {
+  const profile = ORG_PROFILES[mspId];
+  if (!profile) throw new Error(`지원하지 않는 MSP입니다: ${mspId}`);
+
+  const orgDir = path.join(NETWORK_DIR, `crypto-config/peerOrganizations/${profile.domain}`);
+  const tlsCaCert = path.join(orgDir, `peers/${profile.peer}/tls/ca.crt`);
+  const userMspDir = path.join(orgDir, `users/${profile.user}/msp`);
+  const signCert = path.join(userMspDir, `signcerts/${profile.user}-cert.pem`);
+  const keystore = path.join(userMspDir, 'keystore');
+
+  const client     = newGrpcClient(tlsCaCert, profile.endpoint, profile.peer);
+  const certPem    = fs.readFileSync(signCert);
+  const keyPem     = readPrivateKey(keystore);
+  const privateKey = crypto.createPrivateKey(keyPem);
+
+  const gateway = connect({
+    client,
+    identity: { mspId, credentials: certPem },
+    signer:   signers.newPrivateKeySigner(privateKey),
+    evaluateOptions:     () => ({ deadline: Date.now() + 5_000 }),
+    endorseOptions:      () => ({ deadline: Date.now() + 15_000 }),
+    submitOptions:       () => ({ deadline: Date.now() + 5_000 }),
+    commitStatusOptions: () => ({ deadline: Date.now() + 60_000 }),
+  });
+
+  const network  = gateway.getNetwork(CHANNEL_NAME);
+  const contract = network.getContract(CHAINCODE_NAME);
+  return { gateway, contract };
+}
+
+async function connectGatewayForShareIndex(shareIndex) {
+  const mspId = SHARE_INDEX_MSP[String(shareIndex)];
+  if (!mspId) throw new Error(`shareIndex는 1, 2, 3 중 하나여야 합니다: ${shareIndex}`);
+  return connectGatewayForOrg(mspId);
+}
+
+module.exports = { connectGateway, connectGatewayAsVoter, connectGatewayForOrg, connectGatewayForShareIndex };
