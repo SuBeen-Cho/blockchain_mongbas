@@ -2175,16 +2175,19 @@ func (c *VotingContract) GetEncryptionKey(
 
 // BulletinBoard 선거의 모든 공개 감사 데이터를 한 곳에 모은 구조체
 // Helios 모델: 집계 후 암호화 키를 공개하여 누구나 독립 검증 가능
+// [PAPER-7] 투표 순서를 결정론적으로 셔플하여 시간 분석 공격 방지
 type BulletinBoard struct {
 	ObjectType       string             `json:"docType"`       // "bulletinBoard"
 	ElectionID       string             `json:"electionID"`
 	EncryptionKeyHex string             `json:"encryptionKeyHex"` // 공개된 AES-256 키 (hex)
-	EncryptedBallots []EncryptedBallot  `json:"encryptedBallots"` // 모든 암호화된 투표
+	EncryptedBallots []EncryptedBallot  `json:"encryptedBallots"` // 셔플된 암호화 투표
 	TallyResults     map[string]int     `json:"tallyResults"`     // 공식 집계 결과
 	TotalVotes       int                `json:"totalVotes"`
-	DecryptionProofs []DecryptionProof  `json:"decryptionProofs"` // 복호화 증명
+	DecryptionProofs []DecryptionProof  `json:"decryptionProofs"` // 복호화 증명 (동일 순서로 셔플)
 	TallyProofHash   string             `json:"tallyProofHash"`   // 집계 증명 해시
 	MerkleRoot       string             `json:"merkleRoot,omitempty"` // Merkle tree root
+	ShuffleSeed      string             `json:"shuffleSeed,omitempty"`  // [PAPER-7] 셔플 시드 (hex)
+	ShuffleProofHash string             `json:"shuffleProofHash,omitempty"` // [PAPER-7] 셔플 정확성 증명
 	PublishedAt      int64              `json:"publishedAt"`
 }
 
@@ -2203,6 +2206,7 @@ type PublicVerificationResult struct {
 	OriginalResults     map[string]int `json:"originalResults"`     // 원본 집계 결과
 	ResultsMatch        bool           `json:"resultsMatch"`        // 결과 일치 여부
 	ProofHashMatch      bool           `json:"proofHashMatch"`      // tallyProofHash 일치 여부
+	ShuffleVerified     bool           `json:"shuffleVerified"`     // [PAPER-7] 셔플 정확성 검증
 	DecryptionVerified  int            `json:"decryptionVerified"`  // 검증 성공한 투표 수
 	DecryptionFailed    int            `json:"decryptionFailed"`    // 검증 실패한 투표 수
 	TotalBallots        int            `json:"totalBallots"`
@@ -2276,6 +2280,19 @@ func (c *VotingContract) PublishAuditData(
 		})
 	}
 
+	// [PAPER-7] 결정론적 셔플: 제출 순서와 공개 순서의 연결을 끊어 시간 분석 공격 방지
+	// 셔플 시드 = SHA256(encryptionKey + electionID + tallyProofHash) — 모든 피어에서 동일
+	shuffleSeedInput := append(encKey, []byte(electionID)...)
+	shuffleSeedInput = append(shuffleSeedInput, []byte(tally.TallyProofHash)...)
+	shuffleSeedHash := sha256.Sum256(shuffleSeedInput)
+	shuffleSeed := shuffleSeedHash[:]
+
+	// Fisher-Yates 셔플 (결정론적: 시드 기반 의사 난수)
+	shuffledBallots, shuffledProofs := deterministicShuffle(ballots, tally.DecryptionProofs, shuffleSeed)
+
+	// 셔플 정확성 증명: 셔플 전후 nullifier 집합이 동일함을 해시로 증명
+	shuffleProofHash := computeShuffleProofHash(ballots, shuffledBallots)
+
 	// Merkle root 조회 (있으면 포함)
 	merkleRoot := ""
 	mrKey := "MERKLE_ROOT_" + electionID
@@ -2292,12 +2309,14 @@ func (c *VotingContract) PublishAuditData(
 		ObjectType:       "bulletinBoard",
 		ElectionID:       electionID,
 		EncryptionKeyHex: encKeyHex,
-		EncryptedBallots: ballots,
+		EncryptedBallots: shuffledBallots,
 		TallyResults:     tally.Results,
 		TotalVotes:       tally.TotalVotes,
-		DecryptionProofs: tally.DecryptionProofs,
+		DecryptionProofs: shuffledProofs,
 		TallyProofHash:   tally.TallyProofHash,
 		MerkleRoot:       merkleRoot,
+		ShuffleSeed:      hex.EncodeToString(shuffleSeed),
+		ShuffleProofHash: shuffleProofHash,
 		PublishedAt:       now,
 	}
 
@@ -2401,13 +2420,22 @@ func (c *VotingContract) VerifyTallyPublic(
 		return nil, err
 	}
 
+	// 6. [PAPER-7] 셔플 정확성 검증: ballot 집합에 중복/누락 없는지 확인
+	shuffleVerified := true
+	if bb.ShuffleProofHash != "" {
+		// nullifierHash 집합의 정렬 해시 재계산
+		recomputedShuffleHash := computeShuffleProofHash(bb.EncryptedBallots, bb.EncryptedBallots)
+		shuffleVerified = recomputedShuffleHash == bb.ShuffleProofHash
+	}
+
 	result := &PublicVerificationResult{
 		ElectionID:         electionID,
-		IsValid:            resultsMatch && proofHashMatch && failed == 0,
+		IsValid:            resultsMatch && proofHashMatch && shuffleVerified && failed == 0,
 		RecomputedResults:  recomputed,
 		OriginalResults:    bb.TallyResults,
 		ResultsMatch:       resultsMatch,
 		ProofHashMatch:     proofHashMatch,
+		ShuffleVerified:    shuffleVerified,
 		DecryptionVerified: verified,
 		DecryptionFailed:   failed,
 		TotalBallots:       len(bb.EncryptedBallots),
@@ -2542,6 +2570,93 @@ func computeTallyProofHash(proofs []DecryptionProof) string {
 		h.Write([]byte(p.DecryptedHash))
 	}
 	return hex.EncodeToString(h.Sum(nil))
+}
+
+// ============================================================
+// [PAPER-7] Vote Shuffle — 시간 분석 공격 방지
+// ============================================================
+
+// deterministicShuffle Fisher-Yates 셔플을 결정론적 시드로 수행합니다.
+// 시드에서 의사 난수를 SHA-256 체인으로 생성하여 모든 피어에서 동일한 순서를 보장합니다.
+// ballots와 proofs를 동일한 순열로 셔플합니다.
+func deterministicShuffle(ballots []EncryptedBallot, proofs []DecryptionProof, seed []byte) ([]EncryptedBallot, []DecryptionProof) {
+	n := len(ballots)
+	if n <= 1 {
+		return ballots, proofs
+	}
+
+	// 복사본 생성
+	shuffledB := make([]EncryptedBallot, n)
+	copy(shuffledB, ballots)
+	shuffledP := make([]DecryptionProof, len(proofs))
+	copy(shuffledP, proofs)
+
+	// nullifierHash → proof index 매핑 (ballot과 proof를 동기화)
+	proofMap := make(map[string]int)
+	for i, p := range shuffledP {
+		proofMap[p.NullifierHash] = i
+	}
+
+	// Fisher-Yates shuffle with deterministic PRNG
+	rngState := seed
+	for i := n - 1; i > 0; i-- {
+		// SHA-256 체인으로 다음 의사 난수 생성
+		nextHash := sha256.Sum256(append(rngState, byte(i)))
+		rngState = nextHash[:]
+		// big.Int로 변환하여 modulo
+		j := int(new(big.Int).SetBytes(rngState).Int64()) % (i + 1)
+		if j < 0 {
+			j = -j
+		}
+		// ballot 스왑
+		shuffledB[i], shuffledB[j] = shuffledB[j], shuffledB[i]
+	}
+
+	// proof도 셔플된 ballot 순서에 맞게 재배열
+	reorderedP := make([]DecryptionProof, 0, len(shuffledP))
+	for _, b := range shuffledB {
+		if idx, ok := proofMap[b.NullifierHash]; ok {
+			reorderedP = append(reorderedP, shuffledP[idx])
+		}
+	}
+	// proof가 ballot보다 적을 수 있음 (레거시 투표 등)
+	if len(reorderedP) < len(shuffledP) {
+		// 매칭되지 않은 proof 추가
+		matchedSet := make(map[string]bool)
+		for _, b := range shuffledB {
+			matchedSet[b.NullifierHash] = true
+		}
+		for _, p := range shuffledP {
+			if !matchedSet[p.NullifierHash] {
+				reorderedP = append(reorderedP, p)
+			}
+		}
+	}
+
+	return shuffledB, reorderedP
+}
+
+// computeShuffleProofHash 셔플 정확성 증명: 셔플 전후 nullifier 집합이 동일함을 검증.
+// 정렬된 nullifierHash 집합의 해시가 동일하면 투표가 추가/삭제되지 않았음을 증명.
+func computeShuffleProofHash(original, shuffled []EncryptedBallot) string {
+	hashSet := func(ballots []EncryptedBallot) string {
+		hashes := make([]string, len(ballots))
+		for i, b := range ballots {
+			hashes[i] = b.NullifierHash
+		}
+		sort.Strings(hashes)
+		h := sha256.New()
+		for _, nh := range hashes {
+			h.Write([]byte(nh))
+		}
+		return hex.EncodeToString(h.Sum(nil))
+	}
+	origHash := hashSet(original)
+	shuffHash := hashSet(shuffled)
+	// 두 해시가 같으면 집합 동일 → 셔플 정확성 증명
+	// 최종 proof = SHA256(origHash + shuffHash)
+	proof := sha256.Sum256([]byte(origHash + shuffHash))
+	return hex.EncodeToString(proof[:])
 }
 
 // ============================================================

@@ -373,13 +373,15 @@ async function main() {
     requestJson(`/api/elections/${ELECTION_ID}/bulletin-board`)
   );
   console.log(`[INFO] Bulletin Board: ${bulletinBoard.encryptedBallots.length} ballots, key published=${!!bulletinBoard.encryptionKeyHex}`);
+  // [PAPER-7] 셔플 확인
+  console.log(`[INFO] Shuffle: seed=${bulletinBoard.shuffleSeed ? 'present' : 'none'}, proofHash=${bulletinBoard.shuffleProofHash ? 'present' : 'none'}`);
 
   // 12c. 공개 독립 검증 (키 입력 불필요)
   const publicVerify = await assertOk('public tally verification',
     requestJson(`/api/elections/${ELECTION_ID}/verify-public`, { method: 'POST' })
   );
   console.log(`[INFO] Public verification: valid=${publicVerify.isValid}, verified=${publicVerify.decryptionVerified}/${publicVerify.totalBallots}`);
-  console.log(`[INFO]   Results match: ${publicVerify.resultsMatch}, Proof hash match: ${publicVerify.proofHashMatch}`);
+  console.log(`[INFO]   Results match: ${publicVerify.resultsMatch}, Proof hash match: ${publicVerify.proofHashMatch}, Shuffle verified: ${publicVerify.shuffleVerified}`);
 
   // 12d. 중복 게시 방지 확인
   const dupPublish = await requestJson(`/api/elections/${ELECTION_ID}/publish-audit`, { method: 'POST' });
