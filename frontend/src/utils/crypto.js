@@ -223,3 +223,40 @@ export async function verifyBenalohAudit(auditResult) {
     original: encryptedCandidateID,
   };
 }
+
+/**
+ * [PAPER-6] Bulletin Board를 이용한 공개 독립 검증
+ *
+ * 게시된 암호화 키로 모든 투표를 복호화하고 재집계하여
+ * 원본 결과와 비교합니다. 키가 Bulletin Board에 포함되어 있으므로
+ * 별도의 키 입력 없이 누구나 검증 가능합니다.
+ *
+ * @param {Object} bulletinBoard - GetBulletinBoard 응답
+ * @returns {Promise<{verified: boolean, recount: Object, details: Object}>}
+ */
+export async function verifyBulletinBoard(bulletinBoard) {
+  const { encryptionKeyHex, encryptedBallots, tallyResults, decryptionProofs, tallyProofHash } = bulletinBoard;
+
+  // 1. 공개된 키로 모든 투표 복호화 + 재집계
+  const tallyVerification = await verifyTallyProofs(
+    encryptionKeyHex,
+    decryptionProofs,
+    tallyResults
+  );
+
+  // 2. Bulletin Board의 암호화 투표 수와 DecryptionProof 수 일치 확인
+  const ballotCountMatch = encryptedBallots.length === decryptionProofs.length;
+
+  // 3. 각 암호화 투표가 DecryptionProof에 대응하는지 확인
+  const proofNullifiers = new Set(decryptionProofs.map(p => p.nullifierHash));
+  const allBallotsHaveProof = encryptedBallots.every(b => proofNullifiers.has(b.nullifierHash));
+
+  return {
+    verified: tallyVerification.verified && ballotCountMatch && allBallotsHaveProof,
+    tallyVerification,
+    ballotCountMatch,
+    allBallotsHaveProof,
+    totalBallots: encryptedBallots.length,
+    totalProofs: decryptionProofs.length,
+  };
+}

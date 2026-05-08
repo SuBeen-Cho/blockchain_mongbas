@@ -2170,19 +2170,270 @@ func (c *VotingContract) GetEncryptionKey(
 }
 
 // ============================================================
+// Bulletin Board — 공개 감사 데이터 (PAPER-6: Universal Verifiability)
+// ============================================================
+
+// BulletinBoard 선거의 모든 공개 감사 데이터를 한 곳에 모은 구조체
+// Helios 모델: 집계 후 암호화 키를 공개하여 누구나 독립 검증 가능
+type BulletinBoard struct {
+	ObjectType       string             `json:"docType"`       // "bulletinBoard"
+	ElectionID       string             `json:"electionID"`
+	EncryptionKeyHex string             `json:"encryptionKeyHex"` // 공개된 AES-256 키 (hex)
+	EncryptedBallots []EncryptedBallot  `json:"encryptedBallots"` // 모든 암호화된 투표
+	TallyResults     map[string]int     `json:"tallyResults"`     // 공식 집계 결과
+	TotalVotes       int                `json:"totalVotes"`
+	DecryptionProofs []DecryptionProof  `json:"decryptionProofs"` // 복호화 증명
+	TallyProofHash   string             `json:"tallyProofHash"`   // 집계 증명 해시
+	MerkleRoot       string             `json:"merkleRoot,omitempty"` // Merkle tree root
+	PublishedAt      int64              `json:"publishedAt"`
+}
+
+// EncryptedBallot 공개 원장의 개별 암호화 투표
+type EncryptedBallot struct {
+	NullifierHash        string `json:"nullifierHash"`
+	EncryptedCandidateID string `json:"encryptedCandidateID"`
+	CandidateCommitment  string `json:"candidateCommitment"`
+}
+
+// PublicVerificationResult 공개 검증 결과
+type PublicVerificationResult struct {
+	ElectionID          string         `json:"electionID"`
+	IsValid             bool           `json:"isValid"`
+	RecomputedResults   map[string]int `json:"recomputedResults"`   // 독립 재집계 결과
+	OriginalResults     map[string]int `json:"originalResults"`     // 원본 집계 결과
+	ResultsMatch        bool           `json:"resultsMatch"`        // 결과 일치 여부
+	ProofHashMatch      bool           `json:"proofHashMatch"`      // tallyProofHash 일치 여부
+	DecryptionVerified  int            `json:"decryptionVerified"`  // 검증 성공한 투표 수
+	DecryptionFailed    int            `json:"decryptionFailed"`    // 검증 실패한 투표 수
+	TotalBallots        int            `json:"totalBallots"`
+	VerifiedAt          int64          `json:"verifiedAt"`
+}
+
+// PublishAuditData [PAPER-6] 집계 완료 후 모든 감사 데이터를 공개 원장에 게시합니다.
+// Helios 모델: 암호화 키를 공개하여 누구나 투표를 복호화하고 집계를 독립 검증 가능.
+// 전제조건: 선거 CLOSED + Shamir 키 복원 완료 + TallyVotes 완료
+func (c *VotingContract) PublishAuditData(
+	ctx contractapi.TransactionContextInterface,
+	electionID string,
+) (*BulletinBoard, error) {
+	if err := requireElectionAdmin(ctx); err != nil {
+		return nil, err
+	}
+
+	// 선거 상태 확인
+	election, err := c.GetElection(ctx, electionID)
+	if err != nil {
+		return nil, err
+	}
+	if election.Status != "CLOSED" {
+		return nil, fmt.Errorf("CLOSED 상태의 선거에서만 감사 데이터를 게시할 수 있습니다 (현재: %s)", election.Status)
+	}
+
+	// 중복 게시 방지
+	bbKey := "BULLETIN_" + electionID
+	if existing, _ := ctx.GetStub().GetState(bbKey); existing != nil {
+		return nil, fmt.Errorf("이미 감사 데이터가 게시된 선거입니다: %s", electionID)
+	}
+
+	// 집계 결과 조회
+	tally, err := c.GetTally(ctx, electionID)
+	if err != nil {
+		return nil, fmt.Errorf("집계 결과 조회 실패: %w", err)
+	}
+
+	// 암호화 키 조회 (Shamir 복원 후 PDC에 저장됨)
+	encKey, err := getEncryptionKey(ctx, electionID)
+	if err != nil {
+		return nil, fmt.Errorf("암호화 키 조회 실패 — Shamir 복원이 완료되었는지 확인하세요: %w", err)
+	}
+	encKeyHex := hex.EncodeToString(encKey)
+
+	// 모든 nullifier (암호화된 투표) 조회
+	queryString := fmt.Sprintf(
+		`{"selector":{"docType":"nullifier","electionID":"%s"},"use_index":["_design/indexElection","electionIndex"]}`,
+		electionID,
+	)
+	resultsIterator, err := ctx.GetStub().GetQueryResult(queryString)
+	if err != nil {
+		return nil, fmt.Errorf("nullifier 조회 실패: %w", err)
+	}
+	defer resultsIterator.Close()
+
+	var ballots []EncryptedBallot
+	for resultsIterator.HasNext() {
+		qr, err := resultsIterator.Next()
+		if err != nil {
+			return nil, fmt.Errorf("결과 순회 실패: %w", err)
+		}
+		var nul Nullifier
+		if err := json.Unmarshal(qr.Value, &nul); err != nil {
+			continue
+		}
+		ballots = append(ballots, EncryptedBallot{
+			NullifierHash:        nul.NullifierHash,
+			EncryptedCandidateID: nul.EncryptedCandidateID,
+			CandidateCommitment:  nul.CandidateCommitment,
+		})
+	}
+
+	// Merkle root 조회 (있으면 포함)
+	merkleRoot := ""
+	mrKey := "MERKLE_ROOT_" + electionID
+	if mrBytes, _ := ctx.GetStub().GetState(mrKey); mrBytes != nil {
+		merkleRoot = string(mrBytes)
+	}
+
+	now, err := getTxTime(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	bb := BulletinBoard{
+		ObjectType:       "bulletinBoard",
+		ElectionID:       electionID,
+		EncryptionKeyHex: encKeyHex,
+		EncryptedBallots: ballots,
+		TallyResults:     tally.Results,
+		TotalVotes:       tally.TotalVotes,
+		DecryptionProofs: tally.DecryptionProofs,
+		TallyProofHash:   tally.TallyProofHash,
+		MerkleRoot:       merkleRoot,
+		PublishedAt:       now,
+	}
+
+	b, err := json.Marshal(bb)
+	if err != nil {
+		return nil, fmt.Errorf("BulletinBoard 직렬화 실패: %w", err)
+	}
+	if err := ctx.GetStub().PutState(bbKey, b); err != nil {
+		return nil, fmt.Errorf("BulletinBoard 저장 실패: %w", err)
+	}
+
+	log.Printf("[PublishAuditData] 게시 완료 — election: %s, ballots: %d, key published", electionID, len(ballots))
+	return &bb, nil
+}
+
+// GetBulletinBoard [PAPER-6] 공개 감사 데이터를 조회합니다 (인증 불필요).
+func (c *VotingContract) GetBulletinBoard(
+	ctx contractapi.TransactionContextInterface,
+	electionID string,
+) (*BulletinBoard, error) {
+	bbKey := "BULLETIN_" + electionID
+	b, err := ctx.GetStub().GetState(bbKey)
+	if err != nil {
+		return nil, fmt.Errorf("BulletinBoard 조회 실패: %w", err)
+	}
+	if b == nil {
+		return nil, fmt.Errorf("감사 데이터가 아직 게시되지 않았습니다: %s", electionID)
+	}
+	var bb BulletinBoard
+	if err := json.Unmarshal(b, &bb); err != nil {
+		return nil, fmt.Errorf("BulletinBoard 역직렬화 실패: %w", err)
+	}
+	return &bb, nil
+}
+
+// VerifyTallyPublic [PAPER-6] 공개 감사 데이터로 집계를 독립 검증합니다.
+// 누구나 호출 가능: 게시된 키로 모든 투표를 복호화하고 재집계하여 원본과 비교.
+func (c *VotingContract) VerifyTallyPublic(
+	ctx contractapi.TransactionContextInterface,
+	electionID string,
+) (*PublicVerificationResult, error) {
+	// 1. BulletinBoard 조회
+	bb, err := c.GetBulletinBoard(ctx, electionID)
+	if err != nil {
+		return nil, err
+	}
+
+	// 2. 공개된 키로 모든 암호화 투표 복호화 + 재집계
+	encKey, err := hex.DecodeString(bb.EncryptionKeyHex)
+	if err != nil {
+		return nil, fmt.Errorf("공개 키 디코딩 실패: %w", err)
+	}
+
+	recomputed := make(map[string]int)
+	verified := 0
+	failed := 0
+
+	for _, ballot := range bb.EncryptedBallots {
+		if ballot.EncryptedCandidateID == "" {
+			failed++
+			continue
+		}
+		decrypted, decErr := decryptAESGCM(encKey, ballot.EncryptedCandidateID)
+		if decErr != nil {
+			failed++
+			continue
+		}
+		recomputed[decrypted]++
+		verified++
+	}
+
+	// 3. 재집계 결과와 원본 비교
+	resultsMatch := len(recomputed) == len(bb.TallyResults)
+	if resultsMatch {
+		for cand, count := range bb.TallyResults {
+			if recomputed[cand] != count {
+				resultsMatch = false
+				break
+			}
+		}
+	}
+
+	// 4. DecryptionProof 해시 재계산 및 비교
+	recomputedProofHash := computeTallyProofHash(bb.DecryptionProofs)
+	proofHashMatch := recomputedProofHash == bb.TallyProofHash
+
+	// 5. 개별 DecryptionProof 검증 (decryptedHash 확인)
+	for _, proof := range bb.DecryptionProofs {
+		decrypted, decErr := decryptAESGCM(encKey, proof.EncryptedCandidateID)
+		if decErr != nil {
+			continue
+		}
+		dh := sha256.Sum256([]byte(decrypted))
+		if hex.EncodeToString(dh[:]) != proof.DecryptedHash {
+			resultsMatch = false
+		}
+	}
+
+	now, err := getTxTime(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	result := &PublicVerificationResult{
+		ElectionID:         electionID,
+		IsValid:            resultsMatch && proofHashMatch && failed == 0,
+		RecomputedResults:  recomputed,
+		OriginalResults:    bb.TallyResults,
+		ResultsMatch:       resultsMatch,
+		ProofHashMatch:     proofHashMatch,
+		DecryptionVerified: verified,
+		DecryptionFailed:   failed,
+		TotalBallots:       len(bb.EncryptedBallots),
+		VerifiedAt:         now,
+	}
+
+	log.Printf("[VerifyTallyPublic] 검증 완료 — election: %s, valid: %v, verified: %d/%d",
+		electionID, result.IsValid, verified, len(bb.EncryptedBallots))
+	return result, nil
+}
+
+// ============================================================
 // Security Properties — 형식 보안 증명과 코드의 연결 (PAPER-5)
 // ============================================================
 
 // SecurityProperties 시스템의 보안 속성 요약 (감사 및 논문용)
 type SecurityProperties struct {
-	BallotSecrecy       SecurityProperty `json:"ballotSecrecy"`
-	CastAsIntended      SecurityProperty `json:"castAsIntended"`
-	RecordedAsCast      SecurityProperty `json:"recordedAsCast"`
-	TalliedAsRecorded   SecurityProperty `json:"talliedAsRecorded"`
-	CoercionResistance  SecurityProperty `json:"coercionResistance"`
-	EligibilityVerify   SecurityProperty `json:"eligibilityVerify"`
-	CryptoPrimitives    []string         `json:"cryptoPrimitives"`
-	EndorsementPolicy   string           `json:"endorsementPolicy"`
+	BallotSecrecy          SecurityProperty `json:"ballotSecrecy"`
+	CastAsIntended         SecurityProperty `json:"castAsIntended"`
+	RecordedAsCast         SecurityProperty `json:"recordedAsCast"`
+	TalliedAsRecorded      SecurityProperty `json:"talliedAsRecorded"`
+	UniversalVerifiability SecurityProperty `json:"universalVerifiability"`
+	CoercionResistance     SecurityProperty `json:"coercionResistance"`
+	EligibilityVerify      SecurityProperty `json:"eligibilityVerify"`
+	CryptoPrimitives       []string         `json:"cryptoPrimitives"`
+	EndorsementPolicy      string           `json:"endorsementPolicy"`
 }
 
 // SecurityProperty 개별 보안 속성
@@ -2238,6 +2489,13 @@ func (c *VotingContract) GetSecurityProperties(
 			Mechanism:  "DecryptionProof per-vote + tallyProofHash aggregate",
 			Assumption: "SHA-256 preimage resistance + AES-256 correctness",
 			PaperRef:   "PAPER-2 (22차)",
+		},
+		UniversalVerifiability: SecurityProperty{
+			Property:   "Universal Verifiability",
+			Status:     "achieved",
+			Mechanism:  "Bulletin Board + post-election key publication + independent re-tally",
+			Assumption: "AES-256-GCM correctness + SHA-256 collision resistance",
+			PaperRef:   "PAPER-6 (26차)",
 		},
 		CoercionResistance: SecurityProperty{
 			Property:   "Coercion Resistance (Bounded)",

@@ -5,7 +5,10 @@
  * POST /api/elections              선거 생성 (관리자)
  * POST /api/elections/:id/close    선거 종료 + 자동 집계 (관리자)
  * GET  /api/elections/:id/tally    개표 결과 조회
- * POST /api/elections/:id/verify-tally  집계 정확성 독립 검증
+ * POST /api/elections/:id/verify-tally  집계 정확성 독립 검증 (키 필요)
+ * POST /api/elections/:id/publish-audit 감사 데이터 공개 게시 (PAPER-6)
+ * GET  /api/elections/:id/bulletin-board 공개 감사 데이터 조회 (PAPER-6)
+ * POST /api/elections/:id/verify-public  공개 독립 검증 (PAPER-6, 키 불필요)
  */
 
 'use strict';
@@ -458,6 +461,56 @@ router.get('/:id/decryption', async (req, res) => {
   try {
     const result = await contract.evaluateTransaction('GetKeyDecryptionStatus', id);
     res.json(JSON.parse(Buffer.from(result).toString('utf8')));
+  } catch (err) {
+    res.status(500).json({ error: sanitizeError(err) });
+  } finally {
+    gateway.close();
+  }
+});
+
+// ── POST /:id/publish-audit ───────────────────────────────────
+// [PAPER-6] 감사 데이터 공개 게시 (Universal Verifiability)
+router.post('/:id/publish-audit', requireValidElectionID, async (req, res) => {
+  const { gateway, contract } = await connectGateway();
+  try {
+    const result = await contract.submitTransaction('PublishAuditData', req.params.id);
+    const bb = JSON.parse(Buffer.from(result).toString('utf8'));
+    res.json({
+      message: '감사 데이터 게시 완료',
+      electionID: bb.electionID,
+      ballotsPublished: bb.encryptedBallots?.length || 0,
+      keyPublished: true,
+    });
+  } catch (err) {
+    res.status(500).json({ error: sanitizeError(err) });
+  } finally {
+    gateway.close();
+  }
+});
+
+// ── GET /:id/bulletin-board ──────────────────────────────────
+// [PAPER-6] 공개 감사 데이터 조회 (인증 불필요)
+router.get('/:id/bulletin-board', requireValidElectionID, async (req, res) => {
+  const { gateway, contract } = await connectGateway();
+  try {
+    const result = await contract.evaluateTransaction('GetBulletinBoard', req.params.id);
+    const bb = JSON.parse(Buffer.from(result).toString('utf8'));
+    res.json(bb);
+  } catch (err) {
+    res.status(500).json({ error: sanitizeError(err) });
+  } finally {
+    gateway.close();
+  }
+});
+
+// ── POST /:id/verify-public ─────────────────────────────────
+// [PAPER-6] 공개 독립 검증 (키 불필요 — Bulletin Board에서 자동 사용)
+router.post('/:id/verify-public', requireValidElectionID, async (req, res) => {
+  const { gateway, contract } = await connectGateway();
+  try {
+    const result = await contract.evaluateTransaction('VerifyTallyPublic', req.params.id);
+    const verification = JSON.parse(Buffer.from(result).toString('utf8'));
+    res.json(verification);
   } catch (err) {
     res.status(500).json({ error: sanitizeError(err) });
   } finally {

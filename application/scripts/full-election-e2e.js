@@ -359,6 +359,36 @@ async function main() {
   console.log(`[INFO] Crypto: ${secProps.cryptoPrimitives.join(', ')}`);
   console.log(`[INFO] Endorsement: ${secProps.endorsementPolicy}`);
 
+  // ── Phase 12: Universal Verifiability (PAPER-6) ────────────
+  console.log('\n── Phase 12: Universal Verifiability ──');
+
+  // 12a. 감사 데이터 공개 게시
+  const publishResult = await assertOk('publish audit data',
+    requestJson(`/api/elections/${ELECTION_ID}/publish-audit`, { method: 'POST' })
+  );
+  console.log(`[INFO] Bulletin Board published: ${publishResult.ballotsPublished} ballots, key=${publishResult.keyPublished}`);
+
+  // 12b. Bulletin Board 조회
+  const bulletinBoard = await assertOk('get bulletin board',
+    requestJson(`/api/elections/${ELECTION_ID}/bulletin-board`)
+  );
+  console.log(`[INFO] Bulletin Board: ${bulletinBoard.encryptedBallots.length} ballots, key published=${!!bulletinBoard.encryptionKeyHex}`);
+
+  // 12c. 공개 독립 검증 (키 입력 불필요)
+  const publicVerify = await assertOk('public tally verification',
+    requestJson(`/api/elections/${ELECTION_ID}/verify-public`, { method: 'POST' })
+  );
+  console.log(`[INFO] Public verification: valid=${publicVerify.isValid}, verified=${publicVerify.decryptionVerified}/${publicVerify.totalBallots}`);
+  console.log(`[INFO]   Results match: ${publicVerify.resultsMatch}, Proof hash match: ${publicVerify.proofHashMatch}`);
+
+  // 12d. 중복 게시 방지 확인
+  const dupPublish = await requestJson(`/api/elections/${ELECTION_ID}/publish-audit`, { method: 'POST' });
+  if (!dupPublish.ok) {
+    console.log('[OK] Duplicate publish correctly rejected');
+  }
+
+  const universalVerified = publicVerify.isValid;
+
   // ── 최종 요약 ──────────────────────────────────────────────
   console.log('\n═══════════════════════════════════════════════════');
   console.log(' SUMMARY');
@@ -373,9 +403,10 @@ async function main() {
   console.log(`  Credential:   ${health.idemix?.impl || 'unknown'}`);
   console.log(`  Blind Mode:   voter4 -> ${blindVoter.candidate} (client-side encryption)`);
   console.log(`  Benaloh:      audit verified=${benalohVerified} (cast-as-intended)`);
+  console.log(`  Universal:    public verify=${universalVerified} (PAPER-6)`);
   console.log(`  Security:     ${achieved}/5 achieved, ${partial}/1 partial`);
   console.log('═══════════════════════════════════════════════════');
-  console.log('[DONE] Full Election E2E Integration Test completed (11 phases)');
+  console.log('[DONE] Full Election E2E Integration Test completed (12 phases)');
 }
 
 main().catch((err) => {
