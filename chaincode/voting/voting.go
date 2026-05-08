@@ -134,11 +134,23 @@ type VotePrivate struct {
 
 // VoteTally 선거 집계 결과 (공개 원장, CloseElection 호출 시 기록)
 type VoteTally struct {
-	ObjectType string         `json:"docType"` // "tally"
-	ElectionID string         `json:"electionID"`
-	Results    map[string]int `json:"results"` // candidateID → 득표수
-	TotalVotes int            `json:"totalVotes"`
-	ClosedAt   int64          `json:"closedAt"`
+	ObjectType     string         `json:"docType"` // "tally"
+	ElectionID     string         `json:"electionID"`
+	Results        map[string]int `json:"results"` // candidateID → 득표수
+	TotalVotes     int            `json:"totalVotes"`
+	ClosedAt       int64          `json:"closedAt"`
+	// [PAPER-2] tallied-as-recorded 검증용 증명
+	TallyProofHash string              `json:"tallyProofHash,omitempty"` // 모든 복호화 기록의 해시
+	DecryptionProofs []DecryptionProof `json:"decryptionProofs,omitempty"` // 개별 투표 복호화 증명
+}
+
+// DecryptionProof [PAPER-2] 개별 투표의 복호화 정확성 증명
+// 검증자는 encryptionKey로 encryptedCandidateID를 복호화하여 decryptedHash와 비교할 수 있음
+type DecryptionProof struct {
+	NullifierHash        string `json:"nullifierHash"`        // 투표 식별자
+	EncryptedCandidateID string `json:"encryptedCandidateID"` // 원본 암호문
+	DecryptedHash        string `json:"decryptedHash"`        // SHA256(복호화된 candidateID)
+	CandidateCommitment  string `json:"candidateCommitment"`  // 투표 시 생성된 commitment
 }
 
 // VoterPWPrivate PDC에 저장되는 유권자 비밀번호 해시 (비공개)
@@ -915,6 +927,7 @@ func (c *VotingContract) TallyVotes(
 		results[cand] = 0 // 0표도 명시적으로 기록
 	}
 	totalVotes := 0
+	var decProofs []DecryptionProof
 
 	for resultsIterator.HasNext() {
 		queryResult, err := resultsIterator.Next()
@@ -933,6 +946,14 @@ func (c *VotingContract) TallyVotes(
 			decrypted, decErr := decryptAESGCM(encKey, nullifier.EncryptedCandidateID)
 			if decErr == nil {
 				candID = decrypted
+				// [PAPER-2] 복호화 정확성 증명 생성
+				dh := sha256.Sum256([]byte(decrypted))
+				decProofs = append(decProofs, DecryptionProof{
+					NullifierHash:        nullifier.NullifierHash,
+					EncryptedCandidateID: nullifier.EncryptedCandidateID,
+					DecryptedHash:        hex.EncodeToString(dh[:]),
+					CandidateCommitment:  nullifier.CandidateCommitment,
+				})
 			} else {
 				log.Printf("[TallyVotes] 복호화 실패 (평문 폴백) — %v", decErr)
 			}
@@ -942,12 +963,17 @@ func (c *VotingContract) TallyVotes(
 		totalVotes++
 	}
 
+	// [PAPER-2] 전체 집계 증명 해시 계산: 모든 DecryptionProof의 정렬된 해시
+	tallyProofHash := computeTallyProofHash(decProofs)
+
 	tally := VoteTally{
-		ObjectType: "tally",
-		ElectionID: electionID,
-		Results:    results,
-		TotalVotes: totalVotes,
-		ClosedAt:   closedAt,
+		ObjectType:       "tally",
+		ElectionID:       electionID,
+		Results:          results,
+		TotalVotes:       totalVotes,
+		ClosedAt:         closedAt,
+		TallyProofHash:   tallyProofHash,
+		DecryptionProofs: decProofs,
 	}
 
 	// 집계 결과를 원장에 영구 기록 (키: "TALLY_<electionID>")
@@ -1873,6 +1899,28 @@ func (c *VotingContract) GetEncryptionKey(
 		return "", fmt.Errorf("암호화 키 조회 실패 — Shamir 복원 전이거나 키가 삭제되었습니다")
 	}
 	return string(ekHex), nil
+}
+
+// computeTallyProofHash [PAPER-2] 모든 DecryptionProof를 정렬 후 해시하여 집계 무결성 증명을 생성합니다.
+// 검증자는 이 해시를 재계산하여 집계 결과 변조 여부를 확인할 수 있습니다.
+func computeTallyProofHash(proofs []DecryptionProof) string {
+	if len(proofs) == 0 {
+		return ""
+	}
+	// nullifierHash 기준 정렬 (결정론적 순서)
+	sorted := make([]DecryptionProof, len(proofs))
+	copy(sorted, proofs)
+	sort.Slice(sorted, func(i, j int) bool {
+		return sorted[i].NullifierHash < sorted[j].NullifierHash
+	})
+
+	h := sha256.New()
+	for _, p := range sorted {
+		h.Write([]byte(p.NullifierHash))
+		h.Write([]byte(p.EncryptedCandidateID))
+		h.Write([]byte(p.DecryptedHash))
+	}
+	return hex.EncodeToString(h.Sum(nil))
 }
 
 // ============================================================

@@ -211,7 +211,24 @@ async function main() {
   if (tally.totalVotes < voters.length) {
     throw new Error(`Total votes expected >= ${voters.length}, got ${tally.totalVotes}`);
   }
-  console.log(`[OK] tally results valid (${tally.totalVotes - voters.length} dummy votes included)`);
+  console.log(`[OK] tally results valid (${tally.totalVotes - voters.length - 1} dummy votes included)`);
+
+  // [PAPER-2] 집계 정확성 독립 검증
+  if (tally.tallyProofHash && tally.decryptionProofs) {
+    console.log(`[INFO] tallyProofHash: ${tally.tallyProofHash.substring(0, 32)}...`);
+    console.log(`[INFO] decryptionProofs: ${tally.decryptionProofs.length} entries`);
+
+    const verifyResult = await assertOk('verify tally (PAPER-2)', requestJson(`/api/elections/${encodeURIComponent(ELECTION_ID)}/verify-tally`, {
+      method: 'POST',
+      body: JSON.stringify({ encryptionKeyHex: ekResp.encryptionKeyHex }),
+    }));
+    console.log(`[INFO] tally verification: verified=${verifyResult.verified}, valid=${verifyResult.validProofs}/${verifyResult.totalProofs}, tallyMatch=${verifyResult.tallyMatch}, proofHashMatch=${verifyResult.proofHashMatch}`);
+    if (!verifyResult.verified) {
+      console.log('[WARN] Tally verification failed — results may have been tampered');
+    }
+  } else {
+    console.log('[INFO] No decryption proofs in tally (legacy mode)');
+  }
 
   // ── Phase 8: Merkle Tree + Proof 검증 ──────────────────────
   console.log('\n── Phase 8: Merkle Proof Verification ──');

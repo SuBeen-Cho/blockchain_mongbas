@@ -5,6 +5,7 @@
  * POST /api/elections              선거 생성 (관리자)
  * POST /api/elections/:id/close    선거 종료 + 자동 집계 (관리자)
  * GET  /api/elections/:id/tally    개표 결과 조회
+ * POST /api/elections/:id/verify-tally  집계 정확성 독립 검증
  */
 
 'use strict';
@@ -183,6 +184,93 @@ router.get('/:id/tally', async (req, res) => {
   } catch (err) {
     console.error('[elections] GetTally error:', err.message);
     res.status(404).json({ error: sanitizeError(err) });
+  } finally {
+    gateway.close();
+  }
+});
+
+// ── POST /api/elections/:id/verify-tally ─────────────────────
+// [PAPER-2] 집계 정확성 독립 검증
+// Body: { encryptionKeyHex } — 암호화 키로 각 투표를 복호화하여 집계 결과와 대조
+router.post('/:id/verify-tally', async (req, res) => {
+  const { id } = req.params;
+  const { encryptionKeyHex } = req.body || {};
+  if (!encryptionKeyHex) {
+    return res.status(400).json({ error: 'encryptionKeyHex 필드가 필요합니다.' });
+  }
+
+  const { gateway, contract } = await connectGateway();
+  try {
+    const tallyResult = await contract.evaluateTransaction('GetTally', id);
+    const tally = JSON.parse(Buffer.from(tallyResult).toString('utf8'));
+
+    if (!tally.decryptionProofs || tally.decryptionProofs.length === 0) {
+      return res.json({ verified: false, reason: '복호화 증명이 없습니다.' });
+    }
+
+    // 각 decryptionProof를 독립 검증
+    const key = Buffer.from(encryptionKeyHex, 'hex');
+    const verificationResults = [];
+    const recount = {};
+
+    for (const proof of tally.decryptionProofs) {
+      // AES-256-GCM 복호화
+      const data = Buffer.from(proof.encryptedCandidateID, 'hex');
+      const nonce = data.subarray(0, 12);
+      const cipherAndTag = data.subarray(12);
+      // GCM tag는 마지막 16바이트
+      const authTag = cipherAndTag.subarray(cipherAndTag.length - 16);
+      const ciphertext = cipherAndTag.subarray(0, cipherAndTag.length - 16);
+
+      let decrypted = null;
+      let valid = false;
+      try {
+        const decipher = crypto.createDecipheriv('aes-256-gcm', key, nonce);
+        decipher.setAuthTag(authTag);
+        decrypted = Buffer.concat([decipher.update(ciphertext), decipher.final()]).toString('utf8');
+        const expectedHash = crypto.createHash('sha256').update(decrypted).digest('hex');
+        valid = expectedHash === proof.decryptedHash;
+        if (valid) {
+          recount[decrypted] = (recount[decrypted] || 0) + 1;
+        }
+      } catch {
+        valid = false;
+      }
+
+      verificationResults.push({
+        nullifierHash: proof.nullifierHash,
+        valid,
+        decryptedCandidate: valid ? decrypted : null,
+      });
+    }
+
+    // 재집계 결과와 원본 집계 비교
+    const tallyMatch = JSON.stringify(Object.keys(tally.results).sort().map(k => [k, tally.results[k]])) ===
+                       JSON.stringify(Object.keys(recount).sort().map(k => [k, recount[k]]));
+
+    // tallyProofHash 재계산
+    const sorted = [...tally.decryptionProofs].sort((a, b) => a.nullifierHash.localeCompare(b.nullifierHash));
+    const h = crypto.createHash('sha256');
+    for (const p of sorted) {
+      h.update(p.nullifierHash);
+      h.update(p.encryptedCandidateID);
+      h.update(p.decryptedHash);
+    }
+    const recomputedProofHash = h.digest('hex');
+    const proofHashMatch = recomputedProofHash === tally.tallyProofHash;
+
+    res.json({
+      verified: verificationResults.every(v => v.valid) && tallyMatch && proofHashMatch,
+      totalProofs: verificationResults.length,
+      validProofs: verificationResults.filter(v => v.valid).length,
+      tallyMatch,
+      proofHashMatch,
+      recount,
+      originalResults: tally.results,
+    });
+  } catch (err) {
+    console.error('[elections] verify-tally error:', err.message);
+    res.status(500).json({ error: sanitizeError(err) });
   } finally {
     gateway.close();
   }

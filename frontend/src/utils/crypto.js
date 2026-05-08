@@ -136,3 +136,67 @@ export async function encryptCandidateID(encryptionKeyHex, candidateID) {
   result.set(cipherBytes, nonce.length);
   return Array.from(result).map(b => b.toString(16).padStart(2, '0')).join('');
 }
+
+/**
+ * [PAPER-2] 집계 결과의 복호화 정확성을 독립 검증합니다.
+ *
+ * 각 DecryptionProof의 encryptedCandidateID를 복호화하여
+ * decryptedHash와 비교하고, 재집계 결과를 원본과 대조합니다.
+ *
+ * @param {string} encryptionKeyHex - 선거 암호화 키 (hex)
+ * @param {Array} decryptionProofs - DecryptionProof 배열
+ * @param {Object} originalResults - 원본 집계 결과 { candidateID: count }
+ * @returns {Promise<{verified: boolean, recount: Object, details: Array}>}
+ */
+export async function verifyTallyProofs(encryptionKeyHex, decryptionProofs, originalResults) {
+  const keyBytes = new Uint8Array(
+    encryptionKeyHex.match(/.{1,2}/g).map(b => parseInt(b, 16))
+  );
+  const cryptoKey = await crypto.subtle.importKey(
+    'raw', keyBytes, { name: 'AES-GCM' }, false, ['decrypt']
+  );
+
+  const recount = {};
+  const details = [];
+
+  for (const proof of decryptionProofs) {
+    const data = new Uint8Array(
+      proof.encryptedCandidateID.match(/.{1,2}/g).map(b => parseInt(b, 16))
+    );
+    const nonce = data.slice(0, 12);
+    const ciphertext = data.slice(12);
+
+    let valid = false;
+    let decrypted = null;
+    try {
+      const plainBuf = await crypto.subtle.decrypt(
+        { name: 'AES-GCM', iv: nonce }, cryptoKey, ciphertext
+      );
+      decrypted = new TextDecoder().decode(plainBuf);
+      const expectedHash = await sha256(decrypted);
+      valid = expectedHash === proof.decryptedHash;
+      if (valid) {
+        recount[decrypted] = (recount[decrypted] || 0) + 1;
+      }
+    } catch {
+      valid = false;
+    }
+
+    details.push({ nullifierHash: proof.nullifierHash, valid, decrypted });
+  }
+
+  const tallyMatch = JSON.stringify(
+    Object.keys(originalResults).sort().map(k => [k, originalResults[k]])
+  ) === JSON.stringify(
+    Object.keys(recount).sort().map(k => [k, recount[k]])
+  );
+
+  return {
+    verified: details.every(d => d.valid) && tallyMatch,
+    recount,
+    tallyMatch,
+    validCount: details.filter(d => d.valid).length,
+    totalCount: details.length,
+    details,
+  };
+}
