@@ -2,6 +2,8 @@
  * routes/vote.js — 투표 및 Nullifier 확인 API
  *
  * POST /api/vote                  투표 제출
+ * POST /api/vote/prepare          Benaloh Challenge: 투표 사전 암호화
+ * POST /api/vote/audit            Benaloh Challenge: 투표 검증 (spoil)
  * GET  /api/nullifier/:hash       투표 여부 확인 (최종 1표만 유효 — 재투표 허용)
  *
  * ══ 핵심 프라이버시 설계 ══════════════════════════════════════════
@@ -157,6 +159,52 @@ router.post('/', async (req, res) => {
     }
     console.error('[vote] CastVote error:', err.message);
     res.status(500).json({ error: '투표 처리 중 오류가 발생했습니다.' });
+  } finally {
+    gateway.close();
+  }
+});
+
+// ── POST /api/vote/prepare ────────────────────────────────────
+// [PAPER-3] Benaloh Challenge: 투표 사전 암호화 (commit phase)
+// 유권자가 후보자를 선택하면 체인코드가 암호화하고 commitment을 반환.
+// 유권자는 이후 audit(검증) 또는 cast(투표) 중 하나를 선택.
+router.post('/prepare', async (req, res) => {
+  const { electionID, candidateID } = req.body;
+  if (!electionID || !candidateID) {
+    return res.status(400).json({ error: 'electionID, candidateID 필드가 필요합니다.' });
+  }
+
+  const { gateway, contract } = await connectGateway();
+  try {
+    const result = await contract.submitTransaction('PrepareBallot', electionID, candidateID);
+    const ballot = JSON.parse(Buffer.from(result).toString('utf8'));
+    res.json(ballot);
+  } catch (err) {
+    console.error('[vote] PrepareBallot error:', err.message);
+    res.status(500).json({ error: '투표 준비 중 오류가 발생했습니다.' });
+  } finally {
+    gateway.close();
+  }
+});
+
+// ── POST /api/vote/audit ─────────────────────────────────────
+// [PAPER-3] Benaloh Challenge: 투표 검증 (audit/spoil phase)
+// 암호화 키와 평문을 공개하여 유권자가 암호문 정확성을 독립 검증.
+// audit된 투표는 폐기되며 실제 투표에 사용할 수 없음.
+router.post('/audit', async (req, res) => {
+  const { electionID, ballotID } = req.body;
+  if (!electionID || !ballotID) {
+    return res.status(400).json({ error: 'electionID, ballotID 필드가 필요합니다.' });
+  }
+
+  const { gateway, contract } = await connectGateway();
+  try {
+    const result = await contract.evaluateTransaction('AuditBallot', electionID, ballotID);
+    const auditResult = JSON.parse(Buffer.from(result).toString('utf8'));
+    res.json(auditResult);
+  } catch (err) {
+    console.error('[vote] AuditBallot error:', err.message);
+    res.status(500).json({ error: '투표 검증 중 오류가 발생했습니다.' });
   } finally {
     gateway.close();
   }

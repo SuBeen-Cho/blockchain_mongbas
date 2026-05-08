@@ -200,3 +200,26 @@ export async function verifyTallyProofs(encryptionKeyHex, decryptionProofs, orig
     details,
   };
 }
+
+/**
+ * [PAPER-3] Benaloh Challenge: audit 결과를 독립 검증합니다.
+ *
+ * 체인코드가 반환한 candidateID와 encryptionKeyHex로
+ * encryptedCandidateID를 직접 재암호화하여 일치 여부를 확인합니다.
+ *
+ * @param {Object} auditResult - AuditBallot 응답
+ *   { candidateID, encryptedCandidateID, encryptionKeyHex, ballotID }
+ * @returns {Promise<{verified: boolean, reEncrypted: string, original: string}>}
+ */
+export async function verifyBenalohAudit(auditResult) {
+  const { candidateID, encryptedCandidateID, encryptionKeyHex } = auditResult;
+
+  // 동일한 키와 후보자로 재암호화 (결정론적 nonce → 동일 결과)
+  const reEncrypted = await encryptCandidateID(encryptionKeyHex, candidateID);
+
+  return {
+    verified: reEncrypted === encryptedCandidateID,
+    reEncrypted,
+    original: encryptedCandidateID,
+  };
+}

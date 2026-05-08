@@ -165,6 +165,18 @@ type VoterPWPrivate struct {
 	PanicCandidateID string `json:"panicCandidateID"` // 강압자에게 보여줄 가짜 후보
 }
 
+// BallotPreparation [PAPER-3] Benaloh Challenge용 사전 암호화 투표
+// PDC에 임시 저장되며, audit 또는 cast 중 하나만 수행 가능
+type BallotPreparation struct {
+	BallotID             string `json:"ballotID"`             // 고유 ID (SHA256 유도)
+	ElectionID           string `json:"electionID"`
+	CandidateID          string `json:"candidateID"`          // 평문 (audit 시에만 공개)
+	EncryptedCandidateID string `json:"encryptedCandidateID"` // AES-GCM 암호문
+	Commitment           string `json:"commitment"`           // SHA256(ballotID + encryptedCandidateID)
+	Status               string `json:"status"`               // "prepared" | "audited" | "cast"
+	CreatedAt            int64  `json:"createdAt"`
+}
+
 // ============================================================
 // 체인코드 컨트랙트
 // ============================================================
@@ -876,6 +888,147 @@ func (c *VotingContract) CastVote(
 
 	log.Printf("[CastVote] 투표 완료 — election: %s, candidate: %s, eviction: %v", electionID, candidateID, isEviction)
 	return nil
+}
+
+// ============================================================
+// Benaloh Challenge — cast-as-intended 검증 (PAPER-3)
+// ============================================================
+
+// PrepareBallot [PAPER-3] 투표 암호화를 사전 수행하고 commitment을 반환합니다.
+// 유권자는 이 commitment을 받은 후 audit(검증) 또는 cast(투표) 중 하나를 선택합니다.
+//
+// 인자: electionID, candidateID
+// 반환: ballotID, encryptedCandidateID, commitment
+func (c *VotingContract) PrepareBallot(
+	ctx contractapi.TransactionContextInterface,
+	electionID string,
+	candidateID string,
+) (*BallotPreparation, error) {
+	if err := validateElectionID(electionID); err != nil {
+		return nil, err
+	}
+
+	electionBytes, err := ctx.GetStub().GetState(electionID)
+	if err != nil || electionBytes == nil {
+		return nil, fmt.Errorf("선거를 찾을 수 없습니다: %s", electionID)
+	}
+	var election Election
+	if err := json.Unmarshal(electionBytes, &election); err != nil {
+		return nil, fmt.Errorf("선거 데이터 파싱 실패: %w", err)
+	}
+	if election.Status != "ACTIVE" {
+		return nil, fmt.Errorf("ACTIVE 상태의 선거에서만 투표 준비가 가능합니다")
+	}
+	if !contains(election.Candidates, candidateID) {
+		return nil, fmt.Errorf("유효하지 않은 후보자 ID입니다: %s", candidateID)
+	}
+
+	encKey, err := getEncryptionKey(ctx, electionID)
+	if err != nil {
+		return nil, fmt.Errorf("암호화 키 조회 실패: %w", err)
+	}
+	encryptedCandID, err := encryptAESGCM(encKey, candidateID)
+	if err != nil {
+		return nil, fmt.Errorf("후보자 암호화 실패: %w", err)
+	}
+
+	// ballotID: SHA256(electionID + encryptedCandID + txID)
+	txID := ctx.GetStub().GetTxID()
+	ballotIDRaw := sha256.Sum256([]byte(electionID + encryptedCandID + txID))
+	ballotID := hex.EncodeToString(ballotIDRaw[:])
+
+	// commitment: SHA256(ballotID + encryptedCandidateID) — 변조 감지용
+	commitRaw := sha256.Sum256([]byte(ballotID + encryptedCandID))
+	commitment := hex.EncodeToString(commitRaw[:])
+
+	now, _ := getTxTime(ctx)
+	bp := BallotPreparation{
+		BallotID:             ballotID,
+		ElectionID:           electionID,
+		CandidateID:          candidateID,
+		EncryptedCandidateID: encryptedCandID,
+		Commitment:           commitment,
+		Status:               "prepared",
+		CreatedAt:            now,
+	}
+
+	// PDC에 임시 저장 (키: BALLOT_{ballotID})
+	bpBytes, _ := json.Marshal(bp)
+	ballotKey := "BALLOT_" + ballotID
+	if err := ctx.GetStub().PutPrivateData(VotePrivatePDC, ballotKey, bpBytes); err != nil {
+		return nil, fmt.Errorf("ballot PDC 저장 실패: %w", err)
+	}
+
+	log.Printf("[PrepareBallot] 투표 준비 완료 — election: %s, ballotID: %s", electionID, ballotID[:16])
+
+	// 클라이언트에 반환: candidateID 제외 (audit 전까지 비공개)
+	return &BallotPreparation{
+		BallotID:             ballotID,
+		ElectionID:           electionID,
+		EncryptedCandidateID: encryptedCandID,
+		Commitment:           commitment,
+		Status:               "prepared",
+		CreatedAt:            now,
+	}, nil
+}
+
+// AuditBallot [PAPER-3] 사전 준비된 투표를 검증합니다 (spoil).
+// 암호화 키를 공개하여 클라이언트가 암호문 정확성을 독립 검증할 수 있게 합니다.
+// audit된 투표는 "audited"로 표시되어 실제 투표에 사용할 수 없습니다.
+//
+// 인자: electionID, ballotID
+// 반환: candidateID(평문), encryptionKeyHex (검증용)
+func (c *VotingContract) AuditBallot(
+	ctx contractapi.TransactionContextInterface,
+	electionID string,
+	ballotID string,
+) (string, error) {
+	if err := validateElectionID(electionID); err != nil {
+		return "", err
+	}
+
+	ballotKey := "BALLOT_" + ballotID
+	bpBytes, err := ctx.GetStub().GetPrivateData(VotePrivatePDC, ballotKey)
+	if err != nil || bpBytes == nil {
+		return "", fmt.Errorf("ballot을 찾을 수 없습니다: %s", ballotID)
+	}
+
+	var bp BallotPreparation
+	if err := json.Unmarshal(bpBytes, &bp); err != nil {
+		return "", fmt.Errorf("ballot 파싱 실패: %w", err)
+	}
+	if bp.ElectionID != electionID {
+		return "", fmt.Errorf("ballot의 선거 ID가 일치하지 않습니다")
+	}
+	if bp.Status != "prepared" {
+		return "", fmt.Errorf("이미 처리된 ballot입니다 (status: %s)", bp.Status)
+	}
+
+	// audit으로 상태 변경 (재사용 방지)
+	bp.Status = "audited"
+	bpBytes, _ = json.Marshal(bp)
+	if err := ctx.GetStub().PutPrivateData(VotePrivatePDC, ballotKey, bpBytes); err != nil {
+		return "", fmt.Errorf("ballot 상태 업데이트 실패: %w", err)
+	}
+
+	// 암호화 키 조회 → 클라이언트에 반환 (검증용)
+	encKey, err := getEncryptionKey(ctx, electionID)
+	if err != nil {
+		return "", fmt.Errorf("암호화 키 조회 실패: %w", err)
+	}
+
+	// JSON으로 audit 결과 반환
+	auditResult := map[string]string{
+		"ballotID":             ballotID,
+		"candidateID":          bp.CandidateID,
+		"encryptedCandidateID": bp.EncryptedCandidateID,
+		"encryptionKeyHex":     hex.EncodeToString(encKey),
+		"status":               "audited",
+	}
+	resultBytes, _ := json.Marshal(auditResult)
+
+	log.Printf("[AuditBallot] 투표 검증 (spoil) — election: %s, ballotID: %s", electionID, ballotID[:16])
+	return string(resultBytes), nil
 }
 
 // ============================================================

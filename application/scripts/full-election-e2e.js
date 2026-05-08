@@ -182,6 +182,32 @@ async function main() {
   console.log(`[INFO] blind mode result: blindMode=${blindResult.blindMode}, candidateID=${blindResult.candidateID}`);
   nullifiers.push(blindNH);
 
+  // [PAPER-3] Benaloh Challenge: prepare → audit → verify
+  console.log('\n── Phase 5c: Benaloh Challenge (PAPER-3) ──');
+  const prepResult = await assertOk('prepare ballot (Benaloh)', requestJson('/api/vote/prepare', {
+    method: 'POST',
+    body: JSON.stringify({ electionID: ELECTION_ID, candidateID: 'CANDIDATE_B' }),
+  }));
+  console.log(`[INFO] ballot prepared: ballotID=${prepResult.ballotID.substring(0, 16)}..., commitment=${prepResult.commitment.substring(0, 16)}...`);
+
+  // audit (spoil) — 암호화 키와 평문 공개
+  const auditResult = await assertOk('audit ballot (Benaloh spoil)', requestJson('/api/vote/audit', {
+    method: 'POST',
+    body: JSON.stringify({ electionID: ELECTION_ID, ballotID: prepResult.ballotID }),
+  }));
+  console.log(`[INFO] audit result: candidateID=${auditResult.candidateID}, status=${auditResult.status}`);
+
+  // 독립 검증: 공개된 키로 재암호화하여 암호문 일치 확인
+  const reEncrypted = encryptAESGCM(auditResult.encryptionKeyHex, auditResult.candidateID);
+  const benalohVerified = reEncrypted === auditResult.encryptedCandidateID;
+  console.log(`[${benalohVerified ? 'OK' : 'FAIL'}] Benaloh re-encryption match: ${benalohVerified}`);
+
+  // audit된 ballot은 재사용 불가 확인
+  await assertRejected('re-audit spoiled ballot', requestJson('/api/vote/audit', {
+    method: 'POST',
+    body: JSON.stringify({ electionID: ELECTION_ID, ballotID: prepResult.ballotID }),
+  }));
+
   // ── Phase 6: 공개 Nullifier에 후보자 평문 없음 확인 ─────────
   console.log('\n── Phase 6: Privacy Verification ──');
   for (let i = 0; i < nullifiers.length; i++) {
@@ -325,6 +351,7 @@ async function main() {
   console.log(`  Deniable:     normal/panic proof tested`);
   console.log(`  Credential:   ${health.idemix?.impl || 'unknown'}`);
   console.log(`  Blind Mode:   voter4 -> ${blindVoter.candidate} (client-side encryption)`);
+  console.log(`  Benaloh:      audit verified=${benalohVerified} (cast-as-intended)`);
   console.log('═══════════════════════════════════════════════════');
   console.log('[DONE] Full Election E2E Integration Test completed (10 phases + blind mode)');
 }
