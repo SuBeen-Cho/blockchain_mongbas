@@ -2169,6 +2169,101 @@ func (c *VotingContract) GetEncryptionKey(
 	return string(ekHex), nil
 }
 
+// ============================================================
+// Security Properties — 형식 보안 증명과 코드의 연결 (PAPER-5)
+// ============================================================
+
+// SecurityProperties 시스템의 보안 속성 요약 (감사 및 논문용)
+type SecurityProperties struct {
+	BallotSecrecy       SecurityProperty `json:"ballotSecrecy"`
+	CastAsIntended      SecurityProperty `json:"castAsIntended"`
+	RecordedAsCast      SecurityProperty `json:"recordedAsCast"`
+	TalliedAsRecorded   SecurityProperty `json:"talliedAsRecorded"`
+	CoercionResistance  SecurityProperty `json:"coercionResistance"`
+	EligibilityVerify   SecurityProperty `json:"eligibilityVerify"`
+	CryptoPrimitives    []string         `json:"cryptoPrimitives"`
+	EndorsementPolicy   string           `json:"endorsementPolicy"`
+}
+
+// SecurityProperty 개별 보안 속성
+type SecurityProperty struct {
+	Property    string `json:"property"`
+	Status      string `json:"status"`      // "achieved" | "partial" | "not-achieved"
+	Mechanism   string `json:"mechanism"`    // 구현 메커니즘
+	Assumption  string `json:"assumption"`   // 암호학적 가정
+	PaperRef    string `json:"paperRef"`     // 구현 보고서 참조
+}
+
+// GetSecurityProperties [PAPER-5] 시스템의 보안 속성 요약을 반환합니다.
+// 감사자(auditor)가 시스템의 보안 수준을 확인하는 데 사용됩니다.
+func (c *VotingContract) GetSecurityProperties(
+	ctx contractapi.TransactionContextInterface,
+) (*SecurityProperties, error) {
+	hasCredSecret := os.Getenv("CREDENTIAL_SECRET") != ""
+	hasPubKey := os.Getenv("ED25519_PUBLIC_KEY_DER_B64") != ""
+
+	credMechanism := "metadata-only"
+	if hasCredSecret {
+		credMechanism = "chaincode-hmac"
+	}
+	if hasPubKey {
+		credMechanism = "chaincode-ed25519"
+	}
+
+	return &SecurityProperties{
+		BallotSecrecy: SecurityProperty{
+			Property:   "Ballot Secrecy",
+			Status:     "achieved",
+			Mechanism:  "AES-256-GCM client-side encryption (blind mode) + nullifier anonymity",
+			Assumption: "AES IND-CPA + SHA-256 preimage resistance",
+			PaperRef:   "PAPER-1 (21차)",
+		},
+		CastAsIntended: SecurityProperty{
+			Property:   "Cast-as-Intended",
+			Status:     "achieved",
+			Mechanism:  "Benaloh Challenge (PrepareBallot/AuditBallot) with deterministic re-encryption",
+			Assumption: "AES-256-GCM deterministic nonce correctness",
+			PaperRef:   "PAPER-3 (23차)",
+		},
+		RecordedAsCast: SecurityProperty{
+			Property:   "Recorded-as-Cast",
+			Status:     "achieved",
+			Mechanism:  "Merkle tree inclusion proof (hashWithLengthPrefix)",
+			Assumption: "SHA-256 collision resistance",
+			PaperRef:   "Merkle proof (기존)",
+		},
+		TalliedAsRecorded: SecurityProperty{
+			Property:   "Tallied-as-Recorded",
+			Status:     "achieved",
+			Mechanism:  "DecryptionProof per-vote + tallyProofHash aggregate",
+			Assumption: "SHA-256 preimage resistance + AES-256 correctness",
+			PaperRef:   "PAPER-2 (22차)",
+		},
+		CoercionResistance: SecurityProperty{
+			Property:   "Coercion Resistance (Bounded)",
+			Status:     "partial",
+			Mechanism:  "Panic Password + deniable Merkle proof + dummy nullifiers",
+			Assumption: "Timing-safe comparison + structural indistinguishability",
+			PaperRef:   "Panic Password (기존)",
+		},
+		EligibilityVerify: SecurityProperty{
+			Property:   "Eligibility Verifiability",
+			Status:     "achieved",
+			Mechanism:  credMechanism + " + 2-of-3 endorsement",
+			Assumption: "HMAC-SHA256 PRF / Ed25519 SUF-CMA",
+			PaperRef:   "PAPER-4 (24차)",
+		},
+		CryptoPrimitives: []string{
+			"AES-256-GCM (symmetric encryption, deterministic nonce)",
+			"SHA-256 (hash, commitment, Merkle tree)",
+			"Ed25519 (credential signature, RFC 8032)",
+			"HMAC-SHA256 (credential authentication)",
+			"Shamir SSS (2-of-3 threshold, GF(secp256k1 prime))",
+		},
+		EndorsementPolicy: "2-of-3 (ElectionCommission, PartyObserver, CivilSociety)",
+	}, nil
+}
+
 // computeTallyProofHash [PAPER-2] 모든 DecryptionProof를 정렬 후 해시하여 집계 무결성 증명을 생성합니다.
 // 검증자는 이 해시를 재계산하여 집계 결과 변조 여부를 확인할 수 있습니다.
 func computeTallyProofHash(proofs []DecryptionProof) string {

@@ -344,6 +344,21 @@ async function main() {
     console.log(`[WARN] response structure differs: normal=${normalKeys}, panic=${panicKeys}`);
   }
 
+  // ── Phase 11: Security Properties (PAPER-5) ─────────────────
+  console.log('\n── Phase 11: Security Properties ──');
+  const secProps = await assertOk('security properties', requestJson('/api/elections/security-properties'));
+  const achieved = [
+    secProps.ballotSecrecy,
+    secProps.castAsIntended,
+    secProps.recordedAsCast,
+    secProps.talliedAsRecorded,
+    secProps.eligibilityVerify,
+  ].filter(p => p.status === 'achieved').length;
+  const partial = secProps.coercionResistance.status === 'partial' ? 1 : 0;
+  console.log(`[INFO] Security properties: ${achieved} achieved, ${partial} partial`);
+  console.log(`[INFO] Crypto: ${secProps.cryptoPrimitives.join(', ')}`);
+  console.log(`[INFO] Endorsement: ${secProps.endorsementPolicy}`);
+
   // ── 최종 요약 ──────────────────────────────────────────────
   console.log('\n═══════════════════════════════════════════════════');
   console.log(' SUMMARY');
@@ -358,8 +373,9 @@ async function main() {
   console.log(`  Credential:   ${health.idemix?.impl || 'unknown'}`);
   console.log(`  Blind Mode:   voter4 -> ${blindVoter.candidate} (client-side encryption)`);
   console.log(`  Benaloh:      audit verified=${benalohVerified} (cast-as-intended)`);
+  console.log(`  Security:     ${achieved}/5 achieved, ${partial}/1 partial`);
   console.log('═══════════════════════════════════════════════════');
-  console.log('[DONE] Full Election E2E Integration Test completed (10 phases + blind mode)');
+  console.log('[DONE] Full Election E2E Integration Test completed (11 phases)');
 }
 
 main().catch((err) => {

@@ -98,6 +98,22 @@ router.get('/:id/encryption-key', async (req, res) => {
   }
 });
 
+// ── GET /api/elections/security-properties ───────────────────
+// [PAPER-5] 시스템 보안 속성 요약 (감사 및 논문용)
+// 주의: /:id 라우트보다 먼저 정의해야 함 (Express 라우팅 우선순위)
+router.get('/security-properties', async (_req, res) => {
+  const { gateway, contract } = await connectGateway();
+  try {
+    const result = await contract.evaluateTransaction('GetSecurityProperties');
+    res.json(JSON.parse(Buffer.from(result).toString('utf8')));
+  } catch (err) {
+    console.error('[elections] GetSecurityProperties error:', err.message);
+    res.status(500).json({ error: sanitizeError(err) });
+  } finally {
+    gateway.close();
+  }
+});
+
 // ── GET /api/elections/:id ─────────────────────────────────────
 // 선거 정보 조회 (누구나)
 router.get('/:id', async (req, res) => {
