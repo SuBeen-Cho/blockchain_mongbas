@@ -37,6 +37,19 @@ async function assertRejected(label, promise) {
   return res.body;
 }
 
+// [PAPER-1] AES-256-GCM 클라이언트-사이드 암호화 (blind mode 테스트용)
+// 체인코드와 동일한 결정론적 nonce: SHA256(key + plaintext)[:12]
+function encryptAESGCM(keyHex, plaintext) {
+  const key = Buffer.from(keyHex, 'hex');
+  const nonceInput = Buffer.concat([key, Buffer.from(plaintext)]);
+  const nonceHash = crypto.createHash('sha256').update(nonceInput).digest();
+  const nonce = nonceHash.subarray(0, 12);
+  const cipher = crypto.createCipheriv('aes-256-gcm', key, nonce);
+  const encrypted = Buffer.concat([cipher.update(plaintext, 'utf8'), cipher.final()]);
+  const tag = cipher.getAuthTag();
+  return Buffer.concat([nonce, encrypted, tag]).toString('hex');
+}
+
 function mutateTokenSignature(token) {
   const parts = token.split('.');
   const sigBuf = Buffer.from(parts[2], 'base64url');
@@ -130,7 +143,7 @@ async function main() {
     body: JSON.stringify({ electionID: ELECTION_ID, candidateID: 'CANDIDATE_A', nullifierHash: makeNullifier('nocred') }),
   }));
 
-  // ── Phase 5: 투표 제출 (3명) ────────────────────────────────
+  // ── Phase 5: 투표 제출 (3명 레거시 + 1명 blind) ─────────────
   console.log('\n── Phase 5: Vote Submission ──');
   const nullifiers = [];
   for (let i = 0; i < voters.length; i++) {
@@ -142,6 +155,32 @@ async function main() {
     }));
     nullifiers.push(nh);
   }
+
+  // [PAPER-1] blind mode: voter4가 클라이언트-사이드 암호화로 투표
+  console.log('\n── Phase 5b: Blind Mode Vote (PAPER-1) ──');
+  const blindVoter = { id: 'voter4', secret: 'voter4pw', candidate: 'CANDIDATE_C' };
+  const blindCred = await assertOk('issue credential (voter4 blind)', requestJson('/api/credential/idemix', {
+    method: 'POST',
+    body: JSON.stringify({ enrollmentID: blindVoter.id, enrollmentSecret: blindVoter.secret, electionID: ELECTION_ID }),
+  }));
+  // 암호화 키 조회
+  const ekResp = await assertOk('fetch encryption key', requestJson(`/api/elections/${encodeURIComponent(ELECTION_ID)}/encryption-key`));
+  console.log(`[INFO] encryption key: ${ekResp.encryptionKeyHex.substring(0, 16)}...`);
+  // 클라이언트-사이드 AES-GCM 암호화
+  const encCandID = encryptAESGCM(ekResp.encryptionKeyHex, blindVoter.candidate);
+  console.log(`[INFO] encrypted candidateID: ${encCandID.substring(0, 32)}...`);
+  const blindNH = makeNullifier('blind-voter4');
+  const blindResult = await assertOk(`vote blind (${blindVoter.id} -> ${blindVoter.candidate})`, requestJson('/api/vote', {
+    method: 'POST',
+    headers: { 'x-idemix-credential': blindCred.credential },
+    body: JSON.stringify({
+      electionID: ELECTION_ID,
+      nullifierHash: blindNH,
+      encryptedCandidateID: encCandID,
+    }),
+  }));
+  console.log(`[INFO] blind mode result: blindMode=${blindResult.blindMode}, candidateID=${blindResult.candidateID}`);
+  nullifiers.push(blindNH);
 
   // ── Phase 6: 공개 Nullifier에 후보자 평문 없음 확인 ─────────
   console.log('\n── Phase 6: Privacy Verification ──');
@@ -261,15 +300,16 @@ async function main() {
   console.log(' SUMMARY');
   console.log('═══════════════════════════════════════════════════');
   console.log(`  Election:     ${ELECTION_ID}`);
-  console.log(`  Voters:       ${voters.length} (+ ${tally.totalVotes - voters.length} dummies)`);
+  console.log(`  Voters:       ${voters.length} legacy + 1 blind (total=${tally.totalVotes})`);
   console.log(`  Tally:        ${JSON.stringify(tally.results)}`);
   console.log(`  Merkle Root:  ${chainRoot}`);
   console.log(`  Merkle Leaves:${merkleResult.leafCount}`);
   console.log(`  Shamir:       2-of-3 restored=${decStatus.restored}`);
   console.log(`  Deniable:     normal/panic proof tested`);
   console.log(`  Credential:   ${health.idemix?.impl || 'unknown'}`);
+  console.log(`  Blind Mode:   voter4 -> ${blindVoter.candidate} (client-side encryption)`);
   console.log('═══════════════════════════════════════════════════');
-  console.log('[DONE] Full Election E2E Integration Test completed (10 phases)');
+  console.log('[DONE] Full Election E2E Integration Test completed (10 phases + blind mode)');
 }
 
 main().catch((err) => {

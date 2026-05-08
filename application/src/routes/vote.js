@@ -46,12 +46,19 @@ const router = express.Router();
 //   세션에 panicMode=true 설정 후 더미 응답 반환.
 router.post('/', async (req, res) => {
   const { electionID, candidateID, nullifierHash,
+          encryptedCandidateID,
           normalPWHash, panicPWHash, panicCandidateID } = req.body;
 
   // ── 필수 필드 검증 ─────────────────────────────────────────
-  if (!electionID || !candidateID || !nullifierHash) {
+  // [PAPER-1] blind mode: candidateID 없이 encryptedCandidateID만 제공 가능
+  if (!electionID || !nullifierHash) {
     return res.status(400).json({
-      error: 'electionID, candidateID, nullifierHash 필드가 필요합니다.',
+      error: 'electionID, nullifierHash 필드가 필요합니다.',
+    });
+  }
+  if (!candidateID && !encryptedCandidateID) {
+    return res.status(400).json({
+      error: 'candidateID 또는 encryptedCandidateID 중 하나가 필요합니다.',
     });
   }
 
@@ -69,6 +76,9 @@ router.post('/', async (req, res) => {
   // ── 실제 투표 처리 ─────────────────────────────────────────
   const { gateway, contract } = await connectGateway();
   try {
+    // [PAPER-1] blind mode 판별: encryptedCandidateID가 있으면 blind mode
+    const isBlindMode = !candidateID && !!encryptedCandidateID;
+
     // PDC에 저장될 비공개 데이터 (오더러 미전달)
     const votePrivateData = {
       docType:      'votePrivate',
@@ -79,6 +89,10 @@ router.post('/', async (req, res) => {
         .update(`${electionID}|${nullifierHash}|${Date.now()}`)
         .digest('hex'),
     };
+    // blind mode: 클라이언트가 암호화한 candidateID를 transient에 포함
+    if (isBlindMode) {
+      votePrivateData.encryptedCandidateID = encryptedCandidateID;
+    }
 
     // ※ transientData로 전달 — PDC 경로로만 피어에 전달됨
     // @hyperledger/fabric-gateway v1.x API: newProposal → endorse → submit → getStatus
@@ -117,8 +131,9 @@ router.post('/', async (req, res) => {
       transientData.voterPW = Buffer.from(JSON.stringify(voterPWData));
     }
 
+    // blind mode: candidateID를 빈 문자열로 전달 → 체인코드가 transient의 encryptedCandidateID 사용
     const proposal = contract.newProposal('CastVote', {
-      arguments: [electionID, candidateID, nullifierHash],
+      arguments: [electionID, isBlindMode ? '' : candidateID, nullifierHash],
       transientData,
     });
     const transaction = await proposal.endorse();
@@ -131,8 +146,9 @@ router.post('/', async (req, res) => {
     res.json({
       message : '투표가 완료되었습니다.',
       electionID,
-      candidateID,
+      candidateID: isBlindMode ? '(blind)' : candidateID,
       nullifierHash,
+      blindMode: isBlindMode,
     });
   } catch (err) {
     // 재투표 불가 시 체인코드가 에러 반환

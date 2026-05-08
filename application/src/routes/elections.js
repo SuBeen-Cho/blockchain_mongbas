@@ -79,6 +79,24 @@ router.get('/:id/blinding-factor', async (req, res) => {
   }
 });
 
+// ── GET /api/elections/:id/encryption-key ─────────────────────
+// [PAPER-1] 클라이언트-사이드 암호화용 AES 키 조회
+// ACTIVE 상태의 선거에서만 반환 (체인코드에서 상태 검증)
+router.get('/:id/encryption-key', async (req, res) => {
+  const { id } = req.params;
+  const { gateway, contract } = await connectGateway();
+  try {
+    const result = await contract.evaluateTransaction('GetEncryptionKey', id);
+    const encryptionKeyHex = Buffer.from(result).toString('utf8').replace(/^"|"$/g, '');
+    res.json({ electionID: id, encryptionKeyHex });
+  } catch (err) {
+    console.error('[elections] GetEncryptionKey error:', err.message);
+    res.status(400).json({ error: sanitizeError(err) });
+  } finally {
+    gateway.close();
+  }
+});
+
 // ── GET /api/elections/:id ─────────────────────────────────────
 // 선거 정보 조회 (누구나)
 router.get('/:id', async (req, res) => {

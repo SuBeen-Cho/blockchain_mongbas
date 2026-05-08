@@ -92,3 +92,47 @@ export function generateVoterSecret() {
   crypto.getRandomValues(bytes);
   return Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('');
 }
+
+/**
+ * [PAPER-1] 클라이언트-사이드 AES-256-GCM 투표 암호화
+ *
+ * 체인코드와 동일한 형식으로 candidateID를 암호화합니다:
+ *   - 결정론적 nonce: SHA256(key + plaintext)의 앞 12바이트
+ *   - 출력: hex(nonce + ciphertext)
+ *
+ * 이 함수를 사용하면 체인코드(서버)는 평문 후보자를 볼 수 없습니다.
+ * 체인코드는 복호화 후 유효한 후보인지만 검증합니다.
+ *
+ * @param {string} encryptionKeyHex - 선거 암호화 키 (hex, 64자 = 32바이트)
+ * @param {string} candidateID      - 암호화할 후보자 ID
+ * @returns {Promise<string>} hex(nonce + ciphertext)
+ */
+export async function encryptCandidateID(encryptionKeyHex, candidateID) {
+  // hex → Uint8Array
+  const keyBytes = new Uint8Array(
+    encryptionKeyHex.match(/.{1,2}/g).map(b => parseInt(b, 16))
+  );
+  const plainBytes = new TextEncoder().encode(candidateID);
+
+  // 결정론적 nonce: SHA256(key + plaintext)[:12] — 체인코드와 동일
+  const nonceInput = new Uint8Array(keyBytes.length + plainBytes.length);
+  nonceInput.set(keyBytes, 0);
+  nonceInput.set(plainBytes, keyBytes.length);
+  const nonceHash = await crypto.subtle.digest('SHA-256', nonceInput);
+  const nonce = new Uint8Array(nonceHash).slice(0, 12);
+
+  // AES-256-GCM 암호화
+  const cryptoKey = await crypto.subtle.importKey(
+    'raw', keyBytes, { name: 'AES-GCM' }, false, ['encrypt']
+  );
+  const cipherBuf = await crypto.subtle.encrypt(
+    { name: 'AES-GCM', iv: nonce }, cryptoKey, plainBytes
+  );
+  const cipherBytes = new Uint8Array(cipherBuf);
+
+  // hex(nonce + ciphertext)
+  const result = new Uint8Array(nonce.length + cipherBytes.length);
+  result.set(nonce, 0);
+  result.set(cipherBytes, nonce.length);
+  return Array.from(result).map(b => b.toString(16).padStart(2, '0')).join('');
+}

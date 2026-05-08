@@ -74,6 +74,11 @@ type Election struct {
 	// SHA256(voterSecret + electionID + blindingFactor) 으로 nullifier 계산
 	// 선거마다 다른 salt → voterSecret이 유출돼도 선거 간 역추적 불가
 	BlindingFactor string `json:"blindingFactor"` // SHA256(txID + electionID)
+	// [PAPER-1] 선거 공개 암호화 키 (hex)
+	// 클라이언트가 이 키로 candidateID를 암호화하여 제출.
+	// 체인코드는 암호문만 저장하고 평문을 보지 않음.
+	// 비밀키는 PDC에만 저장 → Shamir으로 분산 → threshold 복호화로 집계.
+	EncryptionPubKey string `json:"encryptionPubKey,omitempty"` // AES-256 키를 감싼 공개키 (hex)
 }
 
 // Nullifier 익명 투표 증명 (공개 원장)
@@ -724,12 +729,7 @@ func (c *VotingContract) CastVote(
 		log.Printf("[CastVote] Eviction 감지 — nullifier: %s, 재투표 #%d", nullifierHash[:16], evictCount)
 	}
 
-	// ── Step 3: 후보자 유효성 검사 ───────────────────────────
-	if !contains(election.Candidates, candidateID) {
-		return fmt.Errorf("유효하지 않은 후보자 ID입니다: %s", candidateID)
-	}
-
-	// ── Step 4: Transient Map에서 비공개 투표 데이터 읽기 ────
+	// ── Step 3: Transient Map에서 비공개 투표 데이터 읽기 ────
 	// 클라이언트는 SDK의 transient 옵션으로 {"votePrivate": <JSON bytes>} 전달
 	transient, err := ctx.GetStub().GetTransient()
 	if err != nil {
@@ -746,27 +746,59 @@ func (c *VotingContract) CastVote(
 		return fmt.Errorf("VotePrivate 파싱 실패: %w", err)
 	}
 
-	// 비공개 데이터 무결성 검사: electionID, candidateID, nullifierHash 일치 확인
+	// 비공개 데이터 무결성 검사: electionID, nullifierHash 일치 확인
 	if vp.ElectionID != electionID || vp.NullifierHash != nullifierHash {
 		return fmt.Errorf("비공개 투표 데이터와 공개 파라미터가 일치하지 않습니다")
 	}
-
-	// voteHash 검증 생략 가능 (클라이언트 신뢰 수준에 따라 결정)
-	// 필요 시: expectedHash := ComputeVoteHash(vp.VoterID, candidateID, salt) 로 검증
 
 	// ObjectType 강제 설정 (클라이언트 제공값 덮어쓰기)
 	vp.ObjectType = "votePrivate"
 	vp.Timestamp = now
 
+	// ── Step 3b: 후보자 암호화 처리 ─────────────────────────
+	// [PAPER-1] 클라이언트-사이드 암호화 지원:
+	//   A) candidateID가 비어있고 encryptedCandidateID가 있으면 → 클라이언트가 암호화 (체인코드 blind)
+	//   B) candidateID가 있으면 → 체인코드가 암호화 (레거시 호환)
+	// A 방식에서 체인코드는 평문 후보자를 절대 보지 않음 → ballot secrecy 강화
+	var encryptedCandID string
+	var candidateCommitment string
+
 	encKey, ekErr := getEncryptionKey(ctx, electionID)
-	if ekErr != nil {
-		return fmt.Errorf("후보자 암호화 키 조회 실패: %w", ekErr)
+
+	if candidateID == "" && vp.EncryptedCandidateID != "" {
+		// [PAPER-1] 클라이언트-사이드 암호화 모드 (blind mode)
+		// 체인코드는 암호문의 복호화 가능성만 검증 (유효한 후보인지 확인)
+		if ekErr != nil {
+			return fmt.Errorf("암호화 키 조회 실패: %w", ekErr)
+		}
+		decrypted, decErr := decryptAESGCM(encKey, vp.EncryptedCandidateID)
+		if decErr != nil {
+			return fmt.Errorf("클라이언트 암호문 복호화 검증 실패: %w", decErr)
+		}
+		if !contains(election.Candidates, decrypted) {
+			return fmt.Errorf("유효하지 않은 후보자입니다")
+		}
+		encryptedCandID = vp.EncryptedCandidateID
+		candidateCommitment = computeCandidateCommitment(electionID, nullifierHash, encryptedCandID)
+		log.Printf("[CastVote] 클라이언트-사이드 암호화 모드 (blind) — election: %s", electionID)
+	} else if candidateID != "" {
+		// 레거시 모드: 체인코드가 직접 암호화
+		if !contains(election.Candidates, candidateID) {
+			return fmt.Errorf("유효하지 않은 후보자 ID입니다: %s", candidateID)
+		}
+		if ekErr != nil {
+			return fmt.Errorf("후보자 암호화 키 조회 실패: %w", ekErr)
+		}
+		var encErr error
+		encryptedCandID, encErr = encryptAESGCM(encKey, candidateID)
+		if encErr != nil {
+			return fmt.Errorf("candidateID 암호화 실패: %w", encErr)
+		}
+		candidateCommitment = computeCandidateCommitment(electionID, nullifierHash, encryptedCandID)
+	} else {
+		return fmt.Errorf("candidateID 또는 encryptedCandidateID가 필요합니다")
 	}
-	encryptedCandID, encErr := encryptAESGCM(encKey, candidateID)
-	if encErr != nil {
-		return fmt.Errorf("candidateID 암호화 실패: %w", encErr)
-	}
-	candidateCommitment := computeCandidateCommitment(electionID, nullifierHash, encryptedCandID)
+
 	vp.EncryptedCandidateID = encryptedCandID
 	vp.CandidateCommitment = candidateCommitment
 
@@ -1810,6 +1842,37 @@ func (c *VotingContract) GetKeyShare(
 		return "", fmt.Errorf("share %s를 찾을 수 없습니다. InitKeySharing을 먼저 호출하세요", shareIndex)
 	}
 	return string(shareBytes), nil
+}
+
+// GetEncryptionKey ACTIVE 상태의 선거 암호화 키를 반환합니다 (클라이언트-사이드 암호화용).
+// [PAPER-1] 클라이언트가 이 키로 candidateID를 직접 암호화 → 체인코드는 평문을 보지 않음
+// 선거가 ACTIVE 상태일 때만 반환하여 투표 기간 외 키 노출을 방지합니다.
+func (c *VotingContract) GetEncryptionKey(
+	ctx contractapi.TransactionContextInterface,
+	electionID string,
+) (string, error) {
+	if err := validateElectionID(electionID); err != nil {
+		return "", err
+	}
+
+	electionBytes, err := ctx.GetStub().GetState(electionID)
+	if err != nil || electionBytes == nil {
+		return "", fmt.Errorf("선거를 찾을 수 없습니다: %s", electionID)
+	}
+	var election Election
+	if err := json.Unmarshal(electionBytes, &election); err != nil {
+		return "", fmt.Errorf("선거 데이터 파싱 실패: %w", err)
+	}
+	if election.Status != "ACTIVE" {
+		return "", fmt.Errorf("ACTIVE 상태의 선거에서만 암호화 키를 조회할 수 있습니다 (현재: %s)", election.Status)
+	}
+
+	ekKey := "ENCRYPTION_KEY_" + electionID
+	ekHex, err := ctx.GetStub().GetPrivateData(VotePrivatePDC, ekKey)
+	if err != nil || ekHex == nil {
+		return "", fmt.Errorf("암호화 키 조회 실패 — Shamir 복원 전이거나 키가 삭제되었습니다")
+	}
+	return string(ekHex), nil
 }
 
 // ============================================================
