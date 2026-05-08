@@ -116,9 +116,10 @@ router.post('/', async (req, res) => {
       return res.status(403).json({ error: '유효한 자격증명 메타데이터가 없습니다.' });
     }
     transientData.credentialVerification = Buffer.from(JSON.stringify(credVerification));
-    if (credVerification.credType === 'ed25519') {
+    // [PAPER-4] ed25519, hmac 모두 체인코드 직접 검증을 위해 credential 원문 전달
+    if (credVerification.credType === 'ed25519' || credVerification.credType === 'hmac') {
       const credHeader = req.headers['x-idemix-credential'] || '';
-      if (!credHeader) return res.status(403).json({ error: 'Ed25519 credential 원문이 필요합니다.' });
+      if (!credHeader) return res.status(403).json({ error: 'credential 원문이 필요합니다.' });
       transientData.credentialToken = Buffer.from(credHeader);
     }
 

@@ -209,13 +209,19 @@ async function main() {
   }));
 
   // ── Phase 6: 공개 Nullifier에 후보자 평문 없음 확인 ─────────
-  console.log('\n── Phase 6: Privacy Verification ──');
+  console.log('\n── Phase 6: Privacy + Credential Verification ──');
+  const allVoterLabels = [...voters.map(v => v.id), blindVoter.id];
   for (let i = 0; i < nullifiers.length; i++) {
-    const nr = await assertOk(`get nullifier (${voters[i].id})`, requestJson(`/api/nullifier/${nullifiers[i]}`));
+    const label = allVoterLabels[i] || `voter${i}`;
+    const nr = await assertOk(`get nullifier (${label})`, requestJson(`/api/nullifier/${nullifiers[i]}`));
     if (nr.candidateID && nr.candidateID !== '') {
-      console.log(`[WARN] nullifier for ${voters[i].id} has candidateID in public record: ${nr.candidateID}`);
+      console.log(`[WARN] nullifier for ${label} has candidateID in public record: ${nr.candidateID}`);
     } else {
-      console.log(`[OK] nullifier for ${voters[i].id} has no plaintext candidateID`);
+      console.log(`[OK] nullifier for ${label} has no plaintext candidateID`);
+    }
+    // [PAPER-4] credential 검증 수준 확인
+    if (nr.credVerifyLevel) {
+      console.log(`[INFO] ${label} credVerifyLevel: ${nr.credVerifyLevel}`);
     }
   }
 

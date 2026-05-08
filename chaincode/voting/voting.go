@@ -16,6 +16,7 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/ed25519"
+	"crypto/hmac"
 	"crypto/sha256"
 	"crypto/subtle"
 	"crypto/x509"
@@ -96,6 +97,8 @@ type Nullifier struct {
 	LastEvictedAt        int64  `json:"lastEvictedAt"` // 마지막 재투표 시각
 	// [CRIT-01/02 FIX] 자격증명 감사 해시
 	CredentialHash string `json:"credentialHash"` // SHA256(credential token)
+	// [PAPER-4] 자격증명 검증 수준
+	CredVerifyLevel string `json:"credVerifyLevel,omitempty"` // "chaincode" | "metadata-only"
 }
 
 // CredentialVerification [CRIT-01/02 FIX] 체인코드 독립 검증용 자격증명 메타데이터
@@ -354,6 +357,111 @@ func verifyEd25519CredentialToken(ctx contractapi.TransactionContextInterface, c
 		return fmt.Errorf("Ed25519 credential hash 불일치")
 	}
 	return nil
+}
+
+// verifyHMACCredentialToken [PAPER-4] HMAC-SHA256 credential을 체인코드에서 직접 검증합니다.
+// 환경변수 CREDENTIAL_SECRET으로 서명을 재계산하여 API 미들웨어 우회 공격을 방지합니다.
+//
+// credential 형식: payloadB64.signatureB64
+// signature = HMAC-SHA256(CREDENTIAL_SECRET, payloadB64)
+func verifyHMACCredentialToken(ctx contractapi.TransactionContextInterface, cv CredentialVerification, electionID string, txNow int64) error {
+	credSecret := os.Getenv("CREDENTIAL_SECRET")
+	if credSecret == "" {
+		// CREDENTIAL_SECRET 미설정 시 메타데이터 검증만으로 통과 (하위 호환)
+		log.Printf("[verifyHMACCredentialToken] CREDENTIAL_SECRET 미설정 — 메타데이터 검증만 수행")
+		return nil
+	}
+
+	transient, err := ctx.GetStub().GetTransient()
+	if err != nil {
+		return fmt.Errorf("transient 읽기 실패: %w", err)
+	}
+	tokenBytes, ok := transient["credentialToken"]
+	if !ok || len(tokenBytes) == 0 {
+		return fmt.Errorf("HMAC credentialToken 누락 — x-idemix-credential 헤더를 transient로 전달하세요")
+	}
+	token := string(tokenBytes)
+
+	// payload.signature 분리
+	dotIdx := strings.LastIndex(token, ".")
+	if dotIdx < 1 {
+		return fmt.Errorf("HMAC credential 형식 오류")
+	}
+	payloadB64 := token[:dotIdx]
+	sig := token[dotIdx+1:]
+
+	// HMAC-SHA256 서명 재계산
+	mac := hmac.New(sha256.New, []byte(credSecret))
+	mac.Write([]byte(payloadB64))
+	expected := base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
+
+	if !hmac.Equal([]byte(sig), []byte(expected)) {
+		return fmt.Errorf("HMAC credential 서명 검증 실패")
+	}
+
+	// payload 파싱 및 속성 검증
+	payloadJSON, err := base64.RawURLEncoding.DecodeString(payloadB64)
+	if err != nil {
+		return fmt.Errorf("HMAC credential payload 디코딩 실패: %w", err)
+	}
+
+	var payload struct {
+		VoterEligible string  `json:"voterEligible"`
+		ElectionID    string  `json:"electionID"`
+		Exp           float64 `json:"exp"`
+	}
+	if err := json.Unmarshal(payloadJSON, &payload); err != nil {
+		return fmt.Errorf("HMAC credential payload 파싱 실패: %w", err)
+	}
+
+	if payload.VoterEligible != "1" {
+		return fmt.Errorf("투표 자격 속성 없음")
+	}
+	if payload.ElectionID != electionID {
+		return fmt.Errorf("HMAC credential 선거ID 불일치: payload=%s, req=%s", payload.ElectionID, electionID)
+	}
+	expUnix := int64(payload.Exp / 1000)
+	if txNow > expUnix {
+		return fmt.Errorf("HMAC credential 만료 (exp=%d, now=%d)", expUnix, txNow)
+	}
+
+	// credHash 일치 확인
+	hashRaw := sha256.Sum256([]byte(token))
+	if hex.EncodeToString(hashRaw[:]) != cv.CredHash {
+		return fmt.Errorf("HMAC credential hash 불일치")
+	}
+
+	log.Printf("[verifyHMACCredentialToken] HMAC credential 체인코드 직접 검증 성공")
+	return nil
+}
+
+// getCredVerifyLevel [PAPER-4] 자격증명의 체인코드 검증 수준을 결정합니다.
+func getCredVerifyLevel(ctx contractapi.TransactionContextInterface) string {
+	transient, err := ctx.GetStub().GetTransient()
+	if err != nil {
+		return "metadata-only"
+	}
+	cvBytes, ok := transient["credentialVerification"]
+	if !ok {
+		return "metadata-only"
+	}
+	var cv CredentialVerification
+	if err := json.Unmarshal(cvBytes, &cv); err != nil {
+		return "metadata-only"
+	}
+	switch cv.CredType {
+	case "ed25519":
+		return "chaincode-ed25519"
+	case "hmac":
+		if os.Getenv("CREDENTIAL_SECRET") != "" {
+			return "chaincode-hmac"
+		}
+		return "metadata-only"
+	case "bypass":
+		return "bypass"
+	default:
+		return "metadata-only"
+	}
 }
 
 // KeySharingStatus Shamir SSS 키 분산 현황 (공개 원장)
@@ -632,6 +740,12 @@ func verifyCredentialTransient(
 			return "", err
 		}
 	}
+	// [PAPER-4] HMAC credential 체인코드 직접 검증
+	if cv.CredType == "hmac" {
+		if err := verifyHMACCredentialToken(ctx, cv, electionID, txNow); err != nil {
+			return "", err
+		}
+	}
 	return cv.CredHash, nil
 }
 
@@ -876,7 +990,8 @@ func (c *VotingContract) CastVote(
 			}
 			return 0
 		}(),
-		CredentialHash: credHash, // [CRIT-01/02 FIX] 자격증명 감사 해시 기록
+		CredentialHash:  credHash, // [CRIT-01/02 FIX] 자격증명 감사 해시 기록
+		CredVerifyLevel: getCredVerifyLevel(ctx),
 	}
 	nBytes, err := json.Marshal(nullifier)
 	if err != nil {

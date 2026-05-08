@@ -304,7 +304,7 @@ function idemixStatus() {
     securityNote = '공개키 서명 credential — 체인코드 직접 검증 완료, 익명 credential은 아님';
   } else {
     impl = 'HMAC-SHA256';
-    securityNote = '대칭키 서명 — 서버만 검증 가능, 독립 검증 불가';
+    securityNote = '대칭키 서명 — 체인코드 직접 검증 완료 (CREDENTIAL_SECRET 환경변수 공유)';
   }
 
   return {
