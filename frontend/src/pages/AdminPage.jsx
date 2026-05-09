@@ -85,6 +85,7 @@ export default function AdminPage() {
   const [newTitle,       setNewTitle]       = useState('');
   const [newDesc,        setNewDesc]        = useState('');
   const [newCandidates,  setNewCandidates]  = useState('');
+  const [newEncMode,     setNewEncMode]     = useState('aes'); // 'aes' | 'elgamal'
 
   // ── 선거 ID 입력 (공통) ───────────────────────────
   const [eid,      setEid]      = useState('');
@@ -115,6 +116,22 @@ export default function AdminPage() {
         <input className="border rounded px-3 py-2 w-full text-sm" placeholder="제목"    value={newTitle}  onChange={e => setNewTitle(e.target.value)} />
         <input className="border rounded px-3 py-2 w-full text-sm" placeholder="설명"    value={newDesc}   onChange={e => setNewDesc(e.target.value)} />
         <input className="border rounded px-3 py-2 w-full text-sm" placeholder="후보자 (쉼표 구분, 예: A,B,C)" value={newCandidates} onChange={e => setNewCandidates(e.target.value)} />
+        <div className="flex items-center gap-3 text-sm">
+          <span className="text-gray-500">암호화 모드:</span>
+          <label className="flex items-center gap-1 cursor-pointer">
+            <input type="radio" value="aes" checked={newEncMode==='aes'} onChange={() => setNewEncMode('aes')} />
+            AES-256-GCM
+          </label>
+          <label className="flex items-center gap-1 cursor-pointer">
+            <input type="radio" value="elgamal" checked={newEncMode==='elgamal'} onChange={() => setNewEncMode('elgamal')} />
+            ElGamal (PAPER-11)
+          </label>
+        </div>
+        {newEncMode === 'elgamal' && (
+          <p className="text-xs text-purple-600">
+            ElGamal 공개키 암호화 — Chaum-Pedersen ZKP로 키 공개 없이 복호화 검증 가능
+          </p>
+        )}
         <Btn
           loading={busy.create}
           onClick={run('create', () => apiPost(`${API}/elections`, {
@@ -123,6 +140,7 @@ export default function AdminPage() {
             description: newDesc,
             candidates:  newCandidates.split(',').map(s => s.trim()).filter(Boolean),
             endTime,
+            encryptionMode: newEncMode,
           }))}
         >선거 생성</Btn>
         <Msg data={res.create} error={err.create} />

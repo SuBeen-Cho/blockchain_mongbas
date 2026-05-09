@@ -224,6 +224,138 @@ export async function verifyBenalohAudit(auditResult) {
   };
 }
 
+// ============================================================
+// [PAPER-11] ElGamal 암호화 — BigInt 기반 (RFC 3526 Group 14)
+// ============================================================
+
+/**
+ * [PAPER-11] ElGamal 암호화: candidateID를 공개키 (p, g, y)로 암호화합니다.
+ *
+ * 브라우저에서 랜덤 r을 생성하여 비결정론적 암호화를 수행합니다.
+ * 체인코드에서는 비밀키 x로 결정론적 복호화만 수행 → Fabric 결정론성 유지.
+ *
+ * 학술적 의의: AES 대칭키와 달리 공개키 암호화 → 키 공개 없이 ZKP로 검증 가능
+ *
+ * @param {Object} pubKey - ElGamal 공개키 { p, g, y } (hex strings)
+ * @param {string} candidateID - 암호화할 후보자 ID
+ * @returns {{c1: string, c2: string}} 암호문 (hex strings)
+ */
+export function elgamalEncrypt(pubKey, candidateID) {
+  const p = BigInt('0x' + pubKey.p);
+  const g = BigInt('0x' + pubKey.g);
+  const y = BigInt('0x' + pubKey.y);
+
+  // candidateID를 BigInt로 인코딩 (0x01 prefix → 0이 되지 않도록 보장)
+  const encoder = new TextEncoder();
+  const bytes = encoder.encode(candidateID);
+  const mBytes = new Uint8Array(bytes.length + 1);
+  mBytes[0] = 0x01;
+  mBytes.set(bytes, 1);
+  const m = bytesToBigInt(mBytes);
+
+  // 랜덤 r 생성 (256비트, r < p-2)
+  const rBytes = new Uint8Array(32);
+  crypto.getRandomValues(rBytes);
+  let r = bytesToBigInt(rBytes);
+  const pMinus2 = p - 2n;
+  r = r % pMinus2;
+  if (r === 0n) r = 1n;
+
+  // c1 = g^r mod p
+  const c1 = modPow(g, r, p);
+  // c2 = m * y^r mod p
+  const yr = modPow(y, r, p);
+  const c2 = (m * yr) % p;
+
+  return {
+    c1: c1.toString(16),
+    c2: c2.toString(16),
+  };
+}
+
+/**
+ * [PAPER-11] Chaum-Pedersen ZKP 검증 (브라우저 독립 검증)
+ *
+ * 검증: g^z ≡ a1 * y^e (mod p) AND c1^z ≡ a2 * s^e (mod p)
+ * 여기서 s = c2 * m^(-1) mod p (올바른 복호화의 "shared exponent" 부분)
+ *
+ * @param {Object} pubKey - ElGamal 공개키 { p, g, y }
+ * @param {Object} proof - Chaum-Pedersen 증명 { c1, c2, a1, a2, e, z }
+ * @param {string} decryptedCandidate - 복호화된 후보자 ID
+ * @returns {boolean} 검증 성공 여부
+ */
+export function verifyChaumPedersen(pubKey, proof, decryptedCandidate) {
+  const p = BigInt('0x' + pubKey.p);
+  const g = BigInt('0x' + pubKey.g);
+  const y = BigInt('0x' + pubKey.y);
+  const c1 = BigInt('0x' + proof.c1);
+  const c2 = BigInt('0x' + proof.c2);
+  const a1 = BigInt('0x' + proof.a1);
+  const a2 = BigInt('0x' + proof.a2);
+  const e = BigInt('0x' + proof.e);
+  const z = BigInt('0x' + proof.z);
+
+  // m = encode(decryptedCandidate)
+  const encoder = new TextEncoder();
+  const bytes = encoder.encode(decryptedCandidate);
+  const mBytes = new Uint8Array(bytes.length + 1);
+  mBytes[0] = 0x01;
+  mBytes.set(bytes, 1);
+  const m = bytesToBigInt(mBytes);
+
+  // s = c2 * m^(-1) mod p
+  const mInv = modInverse(m, p);
+  if (mInv === null) return false;
+  const s = (c2 * mInv) % p;
+
+  // 검증 1: g^z ≡ a1 * y^e (mod p)
+  const lhs1 = modPow(g, z, p);
+  const rhs1 = (a1 * modPow(y, e, p)) % p;
+  if (lhs1 !== rhs1) return false;
+
+  // 검증 2: c1^z ≡ a2 * s^e (mod p)
+  const lhs2 = modPow(c1, z, p);
+  const rhs2 = (a2 * modPow(s, e, p)) % p;
+  return lhs2 === rhs2;
+}
+
+// BigInt 헬퍼: 모듈러 거듭제곱 (binary exponentiation)
+function modPow(base, exp, mod) {
+  let result = 1n;
+  base = ((base % mod) + mod) % mod;
+  while (exp > 0n) {
+    if (exp & 1n) {
+      result = (result * base) % mod;
+    }
+    exp >>= 1n;
+    base = (base * base) % mod;
+  }
+  return result;
+}
+
+// BigInt 헬퍼: 모듈러 역원 (확장 유클리드)
+function modInverse(a, m) {
+  a = ((a % m) + m) % m;
+  let [old_r, r] = [a, m];
+  let [old_s, s] = [1n, 0n];
+  while (r !== 0n) {
+    const q = old_r / r;
+    [old_r, r] = [r, old_r - q * r];
+    [old_s, s] = [s, old_s - q * s];
+  }
+  if (old_r !== 1n) return null;
+  return ((old_s % m) + m) % m;
+}
+
+// Uint8Array → BigInt (big-endian)
+function bytesToBigInt(bytes) {
+  let result = 0n;
+  for (const b of bytes) {
+    result = (result << 8n) | BigInt(b);
+  }
+  return result;
+}
+
 /**
  * [PAPER-6] Bulletin Board를 이용한 공개 독립 검증
  *

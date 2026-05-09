@@ -8,7 +8,7 @@
  */
 
 import { useState } from 'react';
-import { computeMerkleRootFromProof, computeNullifier, computePasswordHash, verifyBulletinBoard } from '../utils/crypto.js';
+import { computeMerkleRootFromProof, computeNullifier, computePasswordHash, verifyBulletinBoard, verifyChaumPedersen } from '../utils/crypto.js';
 
 const API = '/api';
 
@@ -27,6 +27,8 @@ export default function VerifyPage() {
   const [bbResult, setBbResult] = useState(null);
   // [PAPER-8] Receipt-free
   const [rfResult, setRfResult] = useState(null);
+  // [PAPER-11] ElGamal ZKP
+  const [zkpResult, setZkpResult] = useState(null);
 
   async function verify() {
     setLoading(true); setError(''); setResult(null);
@@ -129,6 +131,22 @@ export default function VerifyPage() {
     finally { setLoading(false); }
   }
 
+  // [PAPER-11] ElGamal ZKP 검증
+  async function verifyElGamalZKP() {
+    setLoading(true); setError(''); setZkpResult(null);
+    try {
+      const res = await fetch(`${API}/elections/${electionID}/verify-elgamal`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ electionID }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'ZKP 검증 실패');
+      setZkpResult(data);
+    } catch (e) { setError(e.message); }
+    finally { setLoading(false); }
+  }
+
   // [PAPER-8] Receipt-Free 검증
   async function verifyReceiptFree() {
     setLoading(true); setError(''); setRfResult(null);
@@ -180,8 +198,12 @@ export default function VerifyPage() {
             Bulletin Board (PAPER-6)
           </label>
           <label className="flex items-center gap-1 cursor-pointer">
-            <input type="radio" value="receipt-free" checked={mode==='receipt-free'} onChange={() => { setMode('receipt-free'); setResult(null); setBbResult(null); setRfResult(null); }} />
+            <input type="radio" value="receipt-free" checked={mode==='receipt-free'} onChange={() => { setMode('receipt-free'); setResult(null); setBbResult(null); setRfResult(null); setZkpResult(null); }} />
             Receipt-Free (PAPER-8)
+          </label>
+          <label className="flex items-center gap-1 cursor-pointer">
+            <input type="radio" value="elgamal-zkp" checked={mode==='elgamal-zkp'} onChange={() => { setMode('elgamal-zkp'); setResult(null); setBbResult(null); setRfResult(null); setZkpResult(null); }} />
+            ElGamal ZKP (PAPER-11)
           </label>
         </div>
 
@@ -236,6 +258,16 @@ export default function VerifyPage() {
           </div>
         )}
 
+        {mode === 'elgamal-zkp' && (
+          <div className="space-y-2">
+            <p className="text-xs text-gray-500">
+              ElGamal 모드 선거에서 Chaum-Pedersen ZKP로 복호화 정확성을 검증합니다.
+              <br/>비밀키를 공개하지 않고도 각 투표의 복호화가 올바른지 수학적으로 증명합니다.
+              <br/>AES 모드의 "키 공개 후 검증"과 달리 Zero-Knowledge로 검증합니다.
+            </p>
+          </div>
+        )}
+
         {mode === 'receipt-free' && (
           <div className="space-y-2">
             <p className="text-xs text-gray-500">
@@ -267,6 +299,7 @@ export default function VerifyPage() {
           onClick={
             mode === 'bulletin' ? verifyBulletinBoardPublic :
             mode === 'receipt-free' ? verifyReceiptFree :
+            mode === 'elgamal-zkp' ? verifyElGamalZKP :
             verify
           }
           disabled={loading}
@@ -274,6 +307,7 @@ export default function VerifyPage() {
           {loading ? '검증 중...' :
            mode === 'bulletin' ? '공개 검증 (Bulletin Board)' :
            mode === 'receipt-free' ? 'Receipt-Free 확인' :
+           mode === 'elgamal-zkp' ? 'ZKP 검증 (ElGamal)' :
            '검증하기'}
         </button>
       </section>
@@ -362,6 +396,41 @@ export default function VerifyPage() {
               }
               <p className="text-gray-500 mt-1">총 {bbResult.bulletinBoard.totalBallots}표</p>
             </div>
+          </div>
+        </section>
+      )}
+
+      {/* [PAPER-11] ElGamal ZKP 결과 */}
+      {zkpResult && (
+        <section className={`border rounded-xl p-5 space-y-3 ${
+          zkpResult.isValid ? 'bg-green-50 border-green-200' : 'bg-red-50 border-red-200'
+        }`}>
+          <p className={`font-bold ${zkpResult.isValid ? 'text-green-700' : 'text-red-700'}`}>
+            {zkpResult.isValid
+              ? 'Chaum-Pedersen ZKP 검증 성공 — 비밀키 없이 복호화 정확성 증명됨'
+              : 'ZKP 검증 실패 — 복호화 불일치 감지'}
+          </p>
+          <div className="text-xs space-y-2">
+            <div className="bg-white border rounded p-3">
+              <p className="font-medium text-gray-600 mb-1">Zero-Knowledge Proof 결과</p>
+              <p>검증된 투표: <span className="font-bold text-green-600">{zkpResult.verified}</span> / {zkpResult.totalProofs}</p>
+              <p>실패: <span className={`font-bold ${zkpResult.failed > 0 ? 'text-red-600' : 'text-gray-400'}`}>{zkpResult.failed}</span></p>
+              <p>재집계 일치: <span className={`font-bold ${zkpResult.resultsMatch ? 'text-green-600' : 'text-red-600'}`}>
+                {zkpResult.resultsMatch ? 'YES' : 'NO'}
+              </span></p>
+            </div>
+            <div className="bg-white border rounded p-3">
+              <p className="font-medium text-gray-600 mb-1">집계 결과 (ZKP 검증됨)</p>
+              {zkpResult.recount && Object.entries(zkpResult.recount)
+                .sort(([,a],[,b]) => b - a)
+                .map(([candidate, count]) => (
+                  <p key={candidate}>{candidate}: <span className="font-bold">{count}표</span></p>
+                ))
+              }
+            </div>
+            <p className="text-gray-400">
+              암호화 모드: {zkpResult.encryptionMode} — 비밀키를 공개하지 않고 검증 완료
+            </p>
           </div>
         </section>
       )}

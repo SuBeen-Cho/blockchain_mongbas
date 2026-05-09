@@ -41,6 +41,64 @@ var shamirBigPrime, _ = new(big.Int).SetString(
 	"FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEFFFFFC2F", 16,
 )
 
+// ============================================================
+// [PAPER-11] ElGamal 암호화 파라미터 — RFC 3526 Group 14 (2048-bit MODP)
+// ============================================================
+//
+// 표준화된 2048비트 안전 소수 그룹 (IKE/TLS에서 검증됨)
+// p = 안전 소수, q = (p-1)/2 (소수), g = 2 (원시근)
+//
+// 학술적 의의:
+//   - AES 대칭키와 달리 공개키 기반 → 키 공개 없이 ZKP로 복호화 검증 가능
+//   - Chaum-Pedersen ZKP: log_g(y) = log_c1(c2/m) 증명
+//   - 기존 Bulletin Board의 "키 공개 후 검증"을 "ZKP 검증"으로 대체
+
+var elgamalP, _ = new(big.Int).SetString(
+	"FFFFFFFFFFFFFFFFC90FDAA22168C234C4C6628B80DC1CD1"+
+		"29024E088A67CC74020BBEA63B139B22514A08798E3404DD"+
+		"EF9519B3CD3A431B302B0A6DF25F14374FE1356D6D51C245"+
+		"E485B576625E7EC6F44C42E9A637ED6B0BFF5CB6F406B7ED"+
+		"EE386BFB5A899FA5AE9F24117C4B1FE649286651ECE45B3D"+
+		"C2007CB8A163BF0598DA48361C55D39A69163FA8FD24CF5F"+
+		"83655D23DCA3AD961C62F356208552BB9ED529077096966D"+
+		"670C354E4ABC9804F1746C08CA18217C32905E462E36CE3B"+
+		"E39E772C180E86039B2783A2EC07A28FB5C55DF06F4C52C9"+
+		"DE2BCBF6955817183995497CEA956AE515D2261898FA0510"+
+		"15728E5A8AACAA68FFFFFFFFFFFFFFFF", 16)
+
+var elgamalG = big.NewInt(2)
+
+// q = (p-1)/2 — ElGamal 부분군 위수
+var elgamalQ = new(big.Int).Rsh(new(big.Int).Sub(elgamalP, big.NewInt(1)), 1)
+
+// ElGamalPublicKey 공개키 (공개 원장에 저장)
+type ElGamalPublicKey struct {
+	P string `json:"p"` // 소수 (hex)
+	G string `json:"g"` // 생성자 (hex)
+	Y string `json:"y"` // g^x mod p (hex)
+}
+
+// ElGamalCiphertext 암호문 (c1, c2)
+type ElGamalCiphertext struct {
+	C1 string `json:"c1"` // g^r mod p (hex)
+	C2 string `json:"c2"` // m * y^r mod p (hex)
+}
+
+// ChaumPedersenProof [PAPER-11] 복호화 정확성 ZKP
+// 증명: "나는 x를 알고 있으며, y = g^x 이고 s = c1^x 이다"
+// → c2/m = c1^x = s 가 올바른 복호화임을 키 공개 없이 증명
+type ChaumPedersenProof struct {
+	NullifierHash        string `json:"nullifierHash"`
+	C1                   string `json:"c1"`                   // ElGamal 암호문 c1
+	C2                   string `json:"c2"`                   // ElGamal 암호문 c2
+	DecryptedHash        string `json:"decryptedHash"`        // SHA256(복호화된 평문)
+	A1                   string `json:"a1"`                   // g^k mod p
+	A2                   string `json:"a2"`                   // c1^k mod p
+	E                    string `json:"e"`                    // Fiat-Shamir challenge
+	Z                    string `json:"z"`                    // k + e*x mod q
+	CandidateCommitment  string `json:"candidateCommitment"`
+}
+
 // getTxTime 트랜잭션 타임스탬프를 Unix seconds로 반환합니다.
 // time.Now() 대신 반드시 이 함수를 사용해야 합니다.
 // 이유: 다중 조직 endorsement 환경에서 피어마다 time.Now() 값이 달라
@@ -80,6 +138,10 @@ type Election struct {
 	// 체인코드는 암호문만 저장하고 평문을 보지 않음.
 	// 비밀키는 PDC에만 저장 → Shamir으로 분산 → threshold 복호화로 집계.
 	EncryptionPubKey string `json:"encryptionPubKey,omitempty"` // AES-256 키를 감싼 공개키 (hex)
+	// [PAPER-11] 암호화 모드: "aes" (기본) 또는 "elgamal"
+	EncryptionMode string `json:"encryptionMode,omitempty"` // "aes" | "elgamal"
+	// [PAPER-11] ElGamal 공개키 (elgamal 모드일 때만 사용)
+	ElGamalPubKey *ElGamalPublicKey `json:"elgamalPubKey,omitempty"`
 }
 
 // Nullifier 익명 투표 증명 (공개 원장)
@@ -148,12 +210,15 @@ type VoteTally struct {
 }
 
 // DecryptionProof [PAPER-2] 개별 투표의 복호화 정확성 증명
-// 검증자는 encryptionKey로 encryptedCandidateID를 복호화하여 decryptedHash와 비교할 수 있음
+// AES 모드: 검증자는 encryptionKey로 encryptedCandidateID를 복호화하여 decryptedHash와 비교
+// ElGamal 모드: Chaum-Pedersen ZKP로 키 공개 없이 검증 (PAPER-11)
 type DecryptionProof struct {
 	NullifierHash        string `json:"nullifierHash"`        // 투표 식별자
 	EncryptedCandidateID string `json:"encryptedCandidateID"` // 원본 암호문
 	DecryptedHash        string `json:"decryptedHash"`        // SHA256(복호화된 candidateID)
 	CandidateCommitment  string `json:"candidateCommitment"`  // 투표 시 생성된 commitment
+	// [PAPER-11] ElGamal + Chaum-Pedersen ZKP 필드 (ElGamal 모드일 때만 사용)
+	ZKProof *ChaumPedersenProof `json:"zkProof,omitempty"`
 }
 
 // VoterPWPrivate PDC에 저장되는 유권자 비밀번호 해시 (비공개)
@@ -588,16 +653,42 @@ func (c *VotingContract) CreateElection(
 	bfRaw := sha256.Sum256([]byte(bfInput))
 	blindingFactor := hex.EncodeToString(bfRaw[:])
 
-	// [C-4] 선거 암호화 키 생성 → PDC에 저장 (Shamir B안)
-	// AES-256-GCM으로 candidateID를 암호화하여 공개 원장에서 후보자 정보를 숨김
+	// [PAPER-11] 암호화 모드 결정: transient "encryptionMode" 키가 있으면 사용, 없으면 "aes"
+	encryptionMode := "aes"
+	if transient, tErr := ctx.GetStub().GetTransient(); tErr == nil {
+		if modeBytes, ok := transient["encryptionMode"]; ok {
+			mode := strings.TrimSpace(string(modeBytes))
+			if mode == "elgamal" {
+				encryptionMode = "elgamal"
+			}
+		}
+	}
+
+	var elgamalPubKey *ElGamalPublicKey
+
+	// AES 키 생성 (모든 모드에서 공통 — Shamir 분산 + 더미 Nullifier 암호화용)
 	ekInput := fmt.Sprintf("ENCRYPTION_%s_%s", electionID, txID)
 	ekRaw := sha256.Sum256([]byte(ekInput))
 	ekKey := "ENCRYPTION_KEY_" + electionID
 	ekHexStr := hex.EncodeToString(ekRaw[:])
 	if pdcErr := ctx.GetStub().PutPrivateData(VotePrivatePDC, ekKey, []byte(ekHexStr)); pdcErr != nil {
 		return fmt.Errorf("암호화 키 PDC 저장 실패: %w", pdcErr)
+	}
+
+	if encryptionMode == "elgamal" {
+		// [PAPER-11] ElGamal 키쌍 생성 — 결정론적 (txID 기반)
+		keySeed := sha256.Sum256([]byte(fmt.Sprintf("ELGAMAL_KEY_%s_%s", electionID, txID)))
+		privKey, pubKey := elgamalGenerateKeyPair(keySeed[:])
+		elgamalPubKey = pubKey
+
+		// 비밀키를 PDC에 저장
+		pkKey := "ELGAMAL_PRIVKEY_" + electionID
+		if pdcErr := ctx.GetStub().PutPrivateData(VotePrivatePDC, pkKey, []byte(privKey.Text(16))); pdcErr != nil {
+			return fmt.Errorf("ElGamal 비밀키 PDC 저장 실패: %w", pdcErr)
+		}
+		log.Printf("[CreateElection] ElGamal 키쌍 생성 완료 — pubKey.Y: %s...", pubKey.Y[:16])
 	} else {
-		log.Printf("[CreateElection] 암호화 키 생성 완료 — PDC key: %s, hex: %s...", ekKey, ekHexStr[:16])
+		log.Printf("[CreateElection] AES 암호화 키 생성 완료 — PDC key: %s, hex: %s...", ekKey, ekHexStr[:16])
 	}
 
 	election := Election{
@@ -611,6 +702,8 @@ func (c *VotingContract) CreateElection(
 		Status:         "CREATED",
 		CreatedBy:      mspID,
 		BlindingFactor: blindingFactor,
+		EncryptionMode: encryptionMode,
+		ElGamalPubKey:  elgamalPubKey,
 	}
 
 	b, err := json.Marshal(election)
@@ -905,20 +998,45 @@ func (c *VotingContract) CastVote(
 
 	if candidateID == "" && vp.EncryptedCandidateID != "" {
 		// [PAPER-1] 클라이언트-사이드 암호화 모드 (blind mode)
-		// 체인코드는 암호문의 복호화 가능성만 검증 (유효한 후보인지 확인)
-		if ekErr != nil {
-			return fmt.Errorf("암호화 키 조회 실패: %w", ekErr)
+
+		if election.EncryptionMode == "elgamal" {
+			// [PAPER-11] ElGamal blind mode: 클라이언트가 공개키로 암호화
+			// 체인코드는 비밀키로 복호화하여 유효 후보 검증
+			privKey, pkErr := getElGamalPrivateKey(ctx, electionID)
+			if pkErr != nil {
+				return fmt.Errorf("ElGamal 비밀키 조회 실패: %w", pkErr)
+			}
+			// ElGamal 암호문 파싱: "c1_hex:c2_hex" 형식
+			parts := strings.SplitN(vp.EncryptedCandidateID, ":", 2)
+			if len(parts) != 2 {
+				return fmt.Errorf("ElGamal 암호문 형식 오류 (c1:c2 형식 필요)")
+			}
+			decrypted, decErr := elgamalDecrypt(privKey, parts[0], parts[1])
+			if decErr != nil {
+				return fmt.Errorf("ElGamal 복호화 실패: %w", decErr)
+			}
+			if !contains(election.Candidates, decrypted) {
+				return fmt.Errorf("유효하지 않은 후보자입니다")
+			}
+			encryptedCandID = vp.EncryptedCandidateID
+			candidateCommitment = computeCandidateCommitment(electionID, nullifierHash, encryptedCandID)
+			log.Printf("[CastVote] ElGamal blind mode — election: %s", electionID)
+		} else {
+			// AES blind mode (기존)
+			if ekErr != nil {
+				return fmt.Errorf("암호화 키 조회 실패: %w", ekErr)
+			}
+			decrypted, decErr := decryptAESGCM(encKey, vp.EncryptedCandidateID)
+			if decErr != nil {
+				return fmt.Errorf("클라이언트 암호문 복호화 검증 실패: %w", decErr)
+			}
+			if !contains(election.Candidates, decrypted) {
+				return fmt.Errorf("유효하지 않은 후보자입니다")
+			}
+			encryptedCandID = vp.EncryptedCandidateID
+			candidateCommitment = computeCandidateCommitment(electionID, nullifierHash, encryptedCandID)
+			log.Printf("[CastVote] AES blind mode — election: %s", electionID)
 		}
-		decrypted, decErr := decryptAESGCM(encKey, vp.EncryptedCandidateID)
-		if decErr != nil {
-			return fmt.Errorf("클라이언트 암호문 복호화 검증 실패: %w", decErr)
-		}
-		if !contains(election.Candidates, decrypted) {
-			return fmt.Errorf("유효하지 않은 후보자입니다")
-		}
-		encryptedCandID = vp.EncryptedCandidateID
-		candidateCommitment = computeCandidateCommitment(electionID, nullifierHash, encryptedCandID)
-		log.Printf("[CastVote] 클라이언트-사이드 암호화 모드 (blind) — election: %s", electionID)
 	} else if candidateID != "" {
 		// 레거시 모드: 체인코드가 직접 암호화
 		if !contains(election.Candidates, candidateID) {
@@ -1185,9 +1303,19 @@ func (c *VotingContract) TallyVotes(
 		return nil, err
 	}
 
-	// [C-4] 암호화 키 조회 (B안 — 암호화된 candidateID 복호화용)
+	// 암호화 키/비밀키 조회
 	encKey, ekErr := getEncryptionKey(ctx, electionID)
-	useEncrypted := ekErr == nil && encKey != nil
+	useAES := ekErr == nil && encKey != nil
+	var elgamalPrivKey *big.Int
+	useElGamal := election.EncryptionMode == "elgamal"
+	if useElGamal {
+		var pkErr error
+		elgamalPrivKey, pkErr = getElGamalPrivateKey(ctx, electionID)
+		if pkErr != nil {
+			log.Printf("[TallyVotes] ElGamal 비밀키 조회 실패 (AES 폴백) — %v", pkErr)
+			useElGamal = false
+		}
+	}
 
 	// 후보자별 득표 집계
 	results := make(map[string]int)
@@ -1208,13 +1336,43 @@ func (c *VotingContract) TallyVotes(
 			return nil, fmt.Errorf("Nullifier 역직렬화 실패: %w", err)
 		}
 
-		// [C-4] 암호화된 candidateID가 있으면 복호화, 없으면 평문 사용 (하위 호환)
 		candID := nullifier.CandidateID
-		if useEncrypted && nullifier.EncryptedCandidateID != "" {
+
+		if useElGamal && nullifier.EncryptedCandidateID != "" {
+			// [PAPER-11] ElGamal 복호화 + Chaum-Pedersen ZKP 생성
+			parts := strings.SplitN(nullifier.EncryptedCandidateID, ":", 2)
+			if len(parts) == 2 {
+				decrypted, decErr := elgamalDecrypt(elgamalPrivKey, parts[0], parts[1])
+				if decErr == nil {
+					candID = decrypted
+					// 평문의 BigInt 표현
+					m := elgamalEncodePlaintext(decrypted)
+					// Chaum-Pedersen ZKP 생성
+					zkProof, _, zpErr := chaumPedersenProve(
+						elgamalPrivKey, parts[0], parts[1], m.Text(16),
+						nullifier.NullifierHash, electionID,
+					)
+					dh := sha256.Sum256([]byte(decrypted))
+					dp := DecryptionProof{
+						NullifierHash:        nullifier.NullifierHash,
+						EncryptedCandidateID: nullifier.EncryptedCandidateID,
+						DecryptedHash:        hex.EncodeToString(dh[:]),
+						CandidateCommitment:  nullifier.CandidateCommitment,
+					}
+					if zpErr == nil {
+						zkProof.CandidateCommitment = nullifier.CandidateCommitment
+						dp.ZKProof = zkProof
+					}
+					decProofs = append(decProofs, dp)
+				} else {
+					log.Printf("[TallyVotes] ElGamal 복호화 실패 — %v", decErr)
+				}
+			}
+		} else if useAES && nullifier.EncryptedCandidateID != "" {
+			// AES 복호화 (기존)
 			decrypted, decErr := decryptAESGCM(encKey, nullifier.EncryptedCandidateID)
 			if decErr == nil {
 				candID = decrypted
-				// [PAPER-2] 복호화 정확성 증명 생성
 				dh := sha256.Sum256([]byte(decrypted))
 				decProofs = append(decProofs, DecryptionProof{
 					NullifierHash:        nullifier.NullifierHash,
@@ -1223,7 +1381,7 @@ func (c *VotingContract) TallyVotes(
 					CandidateCommitment:  nullifier.CandidateCommitment,
 				})
 			} else {
-				log.Printf("[TallyVotes] 복호화 실패 (평문 폴백) — %v", decErr)
+				log.Printf("[TallyVotes] AES 복호화 실패 (평문 폴백) — %v", decErr)
 			}
 		}
 
@@ -2225,6 +2383,115 @@ func (c *VotingContract) GetEncryptionKey(
 	return string(ekHex), nil
 }
 
+// [PAPER-11] GetElGamalPublicKey ElGamal 공개키 조회 (ElGamal 모드 선거에서만)
+func (c *VotingContract) GetElGamalPublicKey(
+	ctx contractapi.TransactionContextInterface,
+	electionID string,
+) (string, error) {
+	if err := validateElectionID(electionID); err != nil {
+		return "", err
+	}
+	election, err := c.GetElection(ctx, electionID)
+	if err != nil {
+		return "", err
+	}
+	if election.EncryptionMode != "elgamal" || election.ElGamalPubKey == nil {
+		return "", fmt.Errorf("이 선거는 ElGamal 모드가 아닙니다 (현재 모드: %s)", election.EncryptionMode)
+	}
+	pubKeyJSON, err := json.Marshal(election.ElGamalPubKey)
+	if err != nil {
+		return "", fmt.Errorf("ElGamal 공개키 직렬화 실패: %w", err)
+	}
+	return string(pubKeyJSON), nil
+}
+
+// [PAPER-11] VerifyElGamalProofs ElGamal Chaum-Pedersen ZKP 공개 검증
+// 집계 후 Tally의 ZKP를 공개키로 검증 — 비밀키 없이 복호화 정확성 확인
+func (c *VotingContract) VerifyElGamalProofs(
+	ctx contractapi.TransactionContextInterface,
+	electionID string,
+) (string, error) {
+	if err := validateElectionID(electionID); err != nil {
+		return "", err
+	}
+	election, err := c.GetElection(ctx, electionID)
+	if err != nil {
+		return "", err
+	}
+	if election.EncryptionMode != "elgamal" || election.ElGamalPubKey == nil {
+		return "", fmt.Errorf("이 선거는 ElGamal 모드가 아닙니다")
+	}
+
+	// Tally 조회
+	tallyKey := "TALLY_" + electionID
+	tallyBytes, err := ctx.GetStub().GetState(tallyKey)
+	if err != nil || tallyBytes == nil {
+		return "", fmt.Errorf("집계 결과를 찾을 수 없습니다")
+	}
+	var tally VoteTally
+	if err := json.Unmarshal(tallyBytes, &tally); err != nil {
+		return "", fmt.Errorf("Tally 파싱 실패: %w", err)
+	}
+
+	// 각 ZKP 검증
+	verified := 0
+	failed := 0
+	recount := make(map[string]int)
+
+	for _, proof := range tally.DecryptionProofs {
+		if proof.ZKProof == nil {
+			failed++
+			continue
+		}
+
+		// decryptedHash로부터 평문을 직접 알 수 없으므로,
+		// 모든 후보를 시도하여 decryptedHash와 일치하는 후보를 찾음
+		var matchedCandidate string
+		for _, cand := range election.Candidates {
+			dh := sha256.Sum256([]byte(cand))
+			if hex.EncodeToString(dh[:]) == proof.DecryptedHash {
+				matchedCandidate = cand
+				break
+			}
+		}
+		if matchedCandidate == "" {
+			failed++
+			continue
+		}
+
+		if chaumPedersenVerify(election.ElGamalPubKey, proof.ZKProof, matchedCandidate) {
+			verified++
+			recount[matchedCandidate]++
+		} else {
+			failed++
+		}
+	}
+
+	// 재집계 결과와 원본 비교
+	resultsMatch := true
+	for k, v := range tally.Results {
+		if recount[k] != v {
+			resultsMatch = false
+			break
+		}
+	}
+
+	result := map[string]interface{}{
+		"electionID":     electionID,
+		"encryptionMode": "elgamal",
+		"totalProofs":    len(tally.DecryptionProofs),
+		"verified":       verified,
+		"failed":         failed,
+		"resultsMatch":   resultsMatch,
+		"recount":        recount,
+		"originalResults": tally.Results,
+		"isValid":        failed == 0 && resultsMatch,
+	}
+
+	resultJSON, _ := json.Marshal(result)
+	return string(resultJSON), nil
+}
+
 // ============================================================
 // Bulletin Board — 공개 감사 데이터 (PAPER-6: Universal Verifiability)
 // ============================================================
@@ -2597,6 +2864,8 @@ func (c *VotingContract) GetSecurityProperties(
 		},
 		CryptoPrimitives: []string{
 			"AES-256-GCM (symmetric encryption, deterministic nonce)",
+			"ElGamal (public-key encryption, RFC 3526 Group 14, 2048-bit MODP)",
+			"Chaum-Pedersen ZKP (non-interactive decryption correctness proof)",
 			"SHA-256 (hash, commitment, Merkle tree)",
 			"Ed25519 (credential signature, RFC 8032)",
 			"HMAC-SHA256 (credential authentication)",
@@ -2778,6 +3047,181 @@ func getEncryptionKey(ctx contractapi.TransactionContextInterface, electionID st
 		return nil, fmt.Errorf("암호화 키 조회 실패 (election: %s)", electionID)
 	}
 	return hex.DecodeString(string(ekHex))
+}
+
+// ============================================================
+// [PAPER-11] ElGamal 암호화 헬퍼 — RFC 3526 Group 14 (2048-bit MODP)
+// ============================================================
+
+// elgamalGenerateKeyPair 결정론적 ElGamal 키쌍 생성
+// seed에서 비밀키 x를 유도 → Fabric 결정론성 보장
+func elgamalGenerateKeyPair(seed []byte) (x *big.Int, pubKey *ElGamalPublicKey) {
+	// x = SHA256(seed) mod q, x != 0
+	xHash := sha256.Sum256(seed)
+	x = new(big.Int).SetBytes(xHash[:])
+	x.Mod(x, elgamalQ)
+	if x.Sign() == 0 {
+		x.SetInt64(1)
+	}
+	// y = g^x mod p
+	y := new(big.Int).Exp(elgamalG, x, elgamalP)
+
+	pubKey = &ElGamalPublicKey{
+		P: elgamalP.Text(16),
+		G: elgamalG.Text(16),
+		Y: y.Text(16),
+	}
+	return x, pubKey
+}
+
+// elgamalDecrypt ElGamal 복호화: m = c2 * c1^(-x) mod p
+func elgamalDecrypt(x *big.Int, c1Hex, c2Hex string) (string, error) {
+	c1, ok1 := new(big.Int).SetString(c1Hex, 16)
+	c2, ok2 := new(big.Int).SetString(c2Hex, 16)
+	if !ok1 || !ok2 {
+		return "", fmt.Errorf("ElGamal 암호문 파싱 실패")
+	}
+
+	// s = c1^x mod p
+	s := new(big.Int).Exp(c1, x, elgamalP)
+	// s_inv = s^(-1) mod p
+	sInv := new(big.Int).ModInverse(s, elgamalP)
+	if sInv == nil {
+		return "", fmt.Errorf("모듈러 역원 계산 실패")
+	}
+	// m = c2 * s^(-1) mod p
+	m := new(big.Int).Mul(c2, sInv)
+	m.Mod(m, elgamalP)
+
+	return elgamalDecodePlaintext(m)
+}
+
+// elgamalEncodePlaintext candidateID 문자열을 BigInt로 인코딩
+// 0x01 prefix를 추가하여 0이 되지 않도록 보장
+func elgamalEncodePlaintext(plaintext string) *big.Int {
+	data := append([]byte{0x01}, []byte(plaintext)...)
+	return new(big.Int).SetBytes(data)
+}
+
+// elgamalDecodePlaintext BigInt를 candidateID 문자열로 디코딩
+func elgamalDecodePlaintext(m *big.Int) (string, error) {
+	data := m.Bytes()
+	if len(data) == 0 || data[0] != 0x01 {
+		return "", fmt.Errorf("ElGamal 평문 디코딩 실패: 잘못된 prefix")
+	}
+	return string(data[1:]), nil
+}
+
+// chaumPedersenProve Chaum-Pedersen ZKP 생성 (Fiat-Shamir 비대화형)
+// 증명: "y = g^x AND s = c1^x" (s = c2/m, 올바른 복호화 증명)
+// 결정론적 k: SHA256(x || c1 || c2 || electionID || nullifierHash) → Fabric 결정론성 보장
+func chaumPedersenProve(x *big.Int, c1Hex, c2Hex, mHex, nullifierHash, electionID string) (*ChaumPedersenProof, string, error) {
+	c1, _ := new(big.Int).SetString(c1Hex, 16)
+	c2, _ := new(big.Int).SetString(c2Hex, 16)
+	m, _ := new(big.Int).SetString(mHex, 16)
+	y := new(big.Int).Exp(elgamalG, x, elgamalP)
+
+	// s = c2/m mod p = c2 * m^(-1) mod p → 이것이 c1^x와 같음을 증명
+	mInv := new(big.Int).ModInverse(m, elgamalP)
+	s := new(big.Int).Mul(c2, mInv)
+	s.Mod(s, elgamalP)
+
+	// 결정론적 k 유도 (Fabric 결정론성)
+	kInput := append(x.Bytes(), []byte(c1Hex+c2Hex+electionID+nullifierHash)...)
+	kHash := sha256.Sum256(kInput)
+	k := new(big.Int).SetBytes(kHash[:])
+	k.Mod(k, elgamalQ)
+	if k.Sign() == 0 {
+		k.SetInt64(1)
+	}
+
+	// a1 = g^k mod p
+	a1 := new(big.Int).Exp(elgamalG, k, elgamalP)
+	// a2 = c1^k mod p
+	a2 := new(big.Int).Exp(c1, k, elgamalP)
+
+	// Fiat-Shamir challenge: e = SHA256(g || y || c1 || s || a1 || a2) mod q
+	eInput := fmt.Sprintf("%s|%s|%s|%s|%s|%s",
+		elgamalG.Text(16), y.Text(16), c1.Text(16), s.Text(16), a1.Text(16), a2.Text(16))
+	eHash := sha256.Sum256([]byte(eInput))
+	e := new(big.Int).SetBytes(eHash[:])
+	e.Mod(e, elgamalQ)
+
+	// z = k + e*x mod q
+	z := new(big.Int).Mul(e, x)
+	z.Add(z, k)
+	z.Mod(z, elgamalQ)
+
+	// 복호화된 평문 해시
+	plaintext, err := elgamalDecodePlaintext(m)
+	if err != nil {
+		return nil, "", err
+	}
+	dh := sha256.Sum256([]byte(plaintext))
+
+	proof := &ChaumPedersenProof{
+		NullifierHash: nullifierHash,
+		C1:            c1Hex,
+		C2:            c2Hex,
+		DecryptedHash: hex.EncodeToString(dh[:]),
+		A1:            a1.Text(16),
+		A2:            a2.Text(16),
+		E:             e.Text(16),
+		Z:             z.Text(16),
+	}
+
+	return proof, plaintext, nil
+}
+
+// chaumPedersenVerify Chaum-Pedersen ZKP 검증 (누구나 공개키로 검증 가능)
+// 검증: g^z == a1 * y^e mod p AND c1^z == a2 * s^e mod p
+func chaumPedersenVerify(pubKey *ElGamalPublicKey, proof *ChaumPedersenProof, decryptedPlaintext string) bool {
+	p, _ := new(big.Int).SetString(pubKey.P, 16)
+	g, _ := new(big.Int).SetString(pubKey.G, 16)
+	y, _ := new(big.Int).SetString(pubKey.Y, 16)
+	c1, _ := new(big.Int).SetString(proof.C1, 16)
+	c2, _ := new(big.Int).SetString(proof.C2, 16)
+	a1, _ := new(big.Int).SetString(proof.A1, 16)
+	a2, _ := new(big.Int).SetString(proof.A2, 16)
+	e, _ := new(big.Int).SetString(proof.E, 16)
+	z, _ := new(big.Int).SetString(proof.Z, 16)
+
+	// m = encode(decryptedPlaintext)
+	m := elgamalEncodePlaintext(decryptedPlaintext)
+	// s = c2 * m^(-1) mod p
+	mInv := new(big.Int).ModInverse(m, p)
+	s := new(big.Int).Mul(c2, mInv)
+	s.Mod(s, p)
+
+	// 검증 1: g^z == a1 * y^e mod p
+	lhs1 := new(big.Int).Exp(g, z, p)
+	rhs1 := new(big.Int).Exp(y, e, p)
+	rhs1.Mul(rhs1, a1)
+	rhs1.Mod(rhs1, p)
+	if lhs1.Cmp(rhs1) != 0 {
+		return false
+	}
+
+	// 검증 2: c1^z == a2 * s^e mod p
+	lhs2 := new(big.Int).Exp(c1, z, p)
+	rhs2 := new(big.Int).Exp(s, e, p)
+	rhs2.Mul(rhs2, a2)
+	rhs2.Mod(rhs2, p)
+	return lhs2.Cmp(rhs2) == 0
+}
+
+// getElGamalPrivateKey PDC에서 ElGamal 비밀키를 조회합니다.
+func getElGamalPrivateKey(ctx contractapi.TransactionContextInterface, electionID string) (*big.Int, error) {
+	pkKey := "ELGAMAL_PRIVKEY_" + electionID
+	pkHex, err := ctx.GetStub().GetPrivateData(VotePrivatePDC, pkKey)
+	if err != nil || pkHex == nil {
+		return nil, fmt.Errorf("ElGamal 비밀키 조회 실패 (election: %s)", electionID)
+	}
+	x, ok := new(big.Int).SetString(string(pkHex), 16)
+	if !ok {
+		return nil, fmt.Errorf("ElGamal 비밀키 파싱 실패")
+	}
+	return x, nil
 }
 
 // ============================================================

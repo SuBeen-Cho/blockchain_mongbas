@@ -102,6 +102,39 @@ router.get('/:id/encryption-key', async (req, res) => {
   }
 });
 
+// ── GET /api/elections/:id/elgamal-pubkey ─────────────────────
+// [PAPER-11] ElGamal 공개키 조회 (ElGamal 모드 선거에서만)
+router.get('/:id/elgamal-pubkey', async (req, res) => {
+  const { id } = req.params;
+  const { gateway, contract } = await connectGateway();
+  try {
+    const result = await contract.evaluateTransaction('GetElGamalPublicKey', id);
+    const pubKey = JSON.parse(Buffer.from(result).toString('utf8'));
+    res.json({ electionID: id, pubKey });
+  } catch (err) {
+    console.error('[elections] GetElGamalPublicKey error:', err.message);
+    res.status(400).json({ error: sanitizeError(err) });
+  } finally {
+    gateway.close();
+  }
+});
+
+// ── POST /api/elections/:id/verify-elgamal ────────────────────
+// [PAPER-11] ElGamal Chaum-Pedersen ZKP 공개 검증
+router.post('/:id/verify-elgamal', async (req, res) => {
+  const { id } = req.params;
+  const { gateway, contract } = await connectGateway();
+  try {
+    const result = await contract.evaluateTransaction('VerifyElGamalProofs', id);
+    res.json(JSON.parse(Buffer.from(result).toString('utf8')));
+  } catch (err) {
+    console.error('[elections] VerifyElGamalProofs error:', err.message);
+    res.status(400).json({ error: sanitizeError(err) });
+  } finally {
+    gateway.close();
+  }
+});
+
 // ── GET /api/elections/security-properties ───────────────────
 // [PAPER-5] 시스템 보안 속성 요약 (감사 및 논문용)
 // 주의: /:id 라우트보다 먼저 정의해야 함 (Express 라우팅 우선순위)
@@ -139,7 +172,7 @@ router.get('/:id', async (req, res) => {
 // Body: { electionID, title, description, candidates: [], startTime, endTime }
 // startTime, endTime: Unix timestamp (초), startTime 생략 시 현재 시각 사용
 router.post('/', async (req, res) => {
-  const { electionID, title, description, candidates, startTime, endTime } = req.body;
+  const { electionID, title, description, candidates, startTime, endTime, encryptionMode } = req.body;
 
   if (!electionID || !title || !candidates || !Array.isArray(candidates) || !endTime) {
     return res.status(400).json({
@@ -155,12 +188,24 @@ router.post('/', async (req, res) => {
     return res.status(400).json({ error: '중복된 후보자가 있습니다.' });
   }
 
+  // [PAPER-11] 암호화 모드 검증
+  const mode = encryptionMode || 'aes';
+  if (!['aes', 'elgamal'].includes(mode)) {
+    return res.status(400).json({ error: 'encryptionMode는 "aes" 또는 "elgamal"이어야 합니다.' });
+  }
+
   const actualStartTime = startTime || Math.floor(Date.now() / 1000);
 
   const { gateway, contract } = await connectGateway();
   try {
-    await contract.submitTransaction(
-      'CreateElection',
+    // [PAPER-11] encryptionMode를 transient data로 전달
+    const tx = contract.createTransaction('CreateElection');
+    if (mode === 'elgamal') {
+      tx.setTransient({
+        encryptionMode: Buffer.from('elgamal'),
+      });
+    }
+    await tx.submit(
       electionID,
       title,
       description || '',
@@ -168,7 +213,7 @@ router.post('/', async (req, res) => {
       String(actualStartTime),
       String(endTime),
     );
-    res.status(201).json({ message: '선거가 생성되었습니다.', electionID });
+    res.status(201).json({ message: '선거가 생성되었습니다.', electionID, encryptionMode: mode });
   } catch (err) {
     console.error('[elections] CreateElection error:', err.message);
     res.status(500).json({ error: sanitizeError(err) });

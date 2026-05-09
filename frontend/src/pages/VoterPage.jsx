@@ -17,6 +17,7 @@ import {
   generateVoterSecret,
   encryptCandidateID,
   verifyBenalohAudit,
+  elgamalEncrypt,
 } from '../utils/crypto.js';
 
 const API = '/api';
@@ -62,14 +63,28 @@ export default function VoterPage() {
       .catch(() => {});
   }, []);
 
-  // ── [PAPER-1] Blind Mode: 선거 암호화 키 조회 ─────
+  // ── [PAPER-1/11] Blind Mode: 선거 암호화 키 조회 ────
+  const [elgamalPubKey, setElgamalPubKey] = useState(null);
+  const isElGamal = election?.encryptionMode === 'elgamal';
+
   useEffect(() => {
-    if (!blindMode || !election || !electionID) { setEncryptionKey(''); return; }
-    fetch(`${API}/elections/${electionID}/encryption-key`)
-      .then(r => r.json())
-      .then(d => setEncryptionKey(d.encryptionKeyHex || ''))
-      .catch(() => setEncryptionKey(''));
-  }, [blindMode, election, electionID]);
+    if (!blindMode || !election || !electionID) {
+      setEncryptionKey(''); setElgamalPubKey(null); return;
+    }
+    if (isElGamal) {
+      // ElGamal 공개키 조회
+      fetch(`${API}/elections/${electionID}/elgamal-pubkey`)
+        .then(r => r.json())
+        .then(d => { setElgamalPubKey(d.pubKey || null); setEncryptionKey('elgamal'); })
+        .catch(() => { setElgamalPubKey(null); setEncryptionKey(''); });
+    } else {
+      // AES 키 조회
+      fetch(`${API}/elections/${electionID}/encryption-key`)
+        .then(r => r.json())
+        .then(d => setEncryptionKey(d.encryptionKeyHex || ''))
+        .catch(() => setEncryptionKey(''));
+    }
+  }, [blindMode, election, electionID, isElGamal]);
 
   // ── Idemix 자격증명 사전 발급 ─────────────────────
   // 선거 조회 후 백그라운드에서 자동 발급 (ZKP 사전 생성 최적화)
@@ -121,10 +136,16 @@ export default function VoterPage() {
 
       const body = { electionID, nullifierHash };
 
-      // [PAPER-1] Blind Mode: 클라이언트에서 AES-256-GCM 암호화
+      // [PAPER-1/11] Blind Mode 암호화
       if (blindMode) {
-        body.encryptedCandidateID = await encryptCandidateID(encryptionKey, candidateID);
-        // candidateID를 서버에 보내지 않음 — 체인코드가 복호화 후 유효 후보 검증
+        if (isElGamal && elgamalPubKey) {
+          // [PAPER-11] ElGamal 공개키 암호화 (비결정론적, 랜덤 r)
+          const { c1, c2 } = elgamalEncrypt(elgamalPubKey, candidateID);
+          body.encryptedCandidateID = `${c1}:${c2}`;
+        } else {
+          // AES-256-GCM 대칭키 암호화 (결정론적 nonce)
+          body.encryptedCandidateID = await encryptCandidateID(encryptionKey, candidateID);
+        }
       } else {
         body.candidateID = candidateID;
       }
@@ -283,10 +304,17 @@ export default function VoterPage() {
             <span className="text-xs text-gray-500">
               {blindMode
                 ? encryptionKey
-                  ? '클라이언트 AES-256-GCM 암호화 활성 — 서버가 평문 후보를 볼 수 없음'
+                  ? isElGamal
+                    ? 'ElGamal 공개키 암호화 활성 (PAPER-11) — ZKP로 복호화 검증 가능'
+                    : 'AES-256-GCM 암호화 활성 (PAPER-1) — 서버가 평문 후보를 볼 수 없음'
                   : '암호화 키 로딩 중...'
                 : '서버에 평문 후보 전달 (기본 모드)'}
             </span>
+            {isElGamal && (
+              <span className="ml-2 text-xs font-bold text-purple-600 bg-purple-50 px-2 py-0.5 rounded">
+                ElGamal
+              </span>
+            )}
           </div>
 
           {/* voterSecret */}
