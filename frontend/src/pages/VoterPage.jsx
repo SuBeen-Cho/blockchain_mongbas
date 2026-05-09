@@ -49,6 +49,9 @@ export default function VoterPage() {
   const [benalohBallot, setBenalohBallot] = useState(null);
   const [benalohAuditResult, setBenalohAudit] = useState(null);
 
+  // ── [PAPER-12] Deniable Credential Duality ─────────
+  const [panicCredential, setPanicCredential] = useState(false); // 패닉 투표 모드
+
   // ── UI 상태 ─────────────────────────────────────────
   const [loading, setLoading] = useState(false);
   const [result,  setResult]  = useState(null);
@@ -154,6 +157,11 @@ export default function VoterPage() {
         body.normalPWHash     = await computePasswordHash(normalPassword, nullifierHash);
         body.panicPWHash      = await computePasswordHash(panicPassword,  nullifierHash);
         body.panicCandidateID = panicCandidate || candidateID;
+      }
+
+      // [PAPER-12] Deniable Credential Duality — 패닉 투표 모드
+      if (panicCredential) {
+        body.credentialType = 'panic';
       }
 
       const headers = { 'Content-Type': 'application/json' };
@@ -315,6 +323,24 @@ export default function VoterPage() {
                 ElGamal
               </span>
             )}
+          </div>
+
+          {/* [PAPER-12] Panic Credential 토글 */}
+          <div className="flex items-center gap-3 p-3 bg-red-50 rounded border border-red-200">
+            <label className="flex items-center gap-2 cursor-pointer text-sm">
+              <input
+                type="checkbox"
+                checked={panicCredential}
+                onChange={e => setPanicCredential(e.target.checked)}
+                className="w-4 h-4 accent-red-500"
+              />
+              <span className="font-medium text-red-700">Panic Credential (PAPER-12)</span>
+            </label>
+            <span className="text-xs text-red-500">
+              {panicCredential
+                ? '강압 투표 모드 — 이 투표는 집계에서 제외됩니다 (PDC Cleansing-Hiding)'
+                : '정상 투표 모드 — 유효한 투표로 집계됩니다'}
+            </span>
           </div>
 
           {/* voterSecret */}
@@ -505,6 +531,11 @@ export default function VoterPage() {
           {result.blindMode && (
             <p className="text-xs text-purple-600 font-medium">
               Blind Mode 투표 — 서버는 평문 후보를 보지 못했습니다
+            </p>
+          )}
+          {panicCredential && (
+            <p className="text-xs text-red-600 font-medium">
+              Panic Credential 투표 — 이 투표는 집계에서 자동 제외됩니다 (PAPER-12)
             </p>
           )}
           {result.nullifierHash && (

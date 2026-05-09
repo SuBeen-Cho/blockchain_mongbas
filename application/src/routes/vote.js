@@ -49,7 +49,8 @@ const router = express.Router();
 router.post('/', async (req, res) => {
   const { electionID, candidateID, nullifierHash,
           encryptedCandidateID,
-          normalPWHash, panicPWHash, panicCandidateID } = req.body;
+          normalPWHash, panicPWHash, panicCandidateID,
+          credentialType } = req.body; // [PAPER-12] credentialType: "real" | "panic"
 
   // ── 필수 필드 검증 ─────────────────────────────────────────
   // [PAPER-1] blind mode: candidateID 없이 encryptedCandidateID만 제공 가능
@@ -121,6 +122,12 @@ router.post('/', async (req, res) => {
       const credHeader = req.headers['x-idemix-credential'] || '';
       if (!credHeader) return res.status(403).json({ error: 'credential 원문이 필요합니다.' });
       transientData.credentialToken = Buffer.from(credHeader);
+    }
+
+    // [PAPER-12] Deniable Credential Duality — credentialType을 transient로 전달
+    // "panic" 이면 체인코드가 PDC에 credentialType="panic" 저장 → 집계 시 필터링
+    if (credentialType === 'panic') {
+      transientData.credentialType = Buffer.from('panic');
     }
 
     // Panic Mode 비밀번호 해시가 제공된 경우 PDC에 함께 저장

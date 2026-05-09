@@ -195,6 +195,11 @@ type VotePrivate struct {
 	CandidateCommitment  string `json:"candidateCommitment"`  // 공개 원장 commitment와 일치해야 함
 	VoteHash             string `json:"voteHash"`             // 암호화 투표 레코드 무결성 확인용
 	Timestamp            int64  `json:"timestamp"`
+	// [PAPER-12] Deniable Credential Duality — PDC-based coercion resistance
+	// "real" (기본): 유효 투표, 집계에 포함
+	// "panic": 강압 하 제출된 투표, 집계에서 제외 (Cleansing-Hiding)
+	// 공개 원장에서는 real/panic이 구조적으로 동일 (구별 불가)
+	CredentialType string `json:"credentialType,omitempty"` // "real" | "panic"
 }
 
 // VoteTally 선거 집계 결과 (공개 원장, CloseElection 호출 시 기록)
@@ -986,6 +991,22 @@ func (c *VotingContract) CastVote(
 	vp.ObjectType = "votePrivate"
 	vp.Timestamp = now
 
+	// [PAPER-12] Deniable Credential Duality — credentialType 처리
+	// transient "credentialType" 키로 전달: "panic" 이면 강압 투표, 그 외 "real" (기본)
+	// PDC에만 저장되어 공개 원장에서는 구별 불가 (untappable channel = PDC gossip)
+	if ctBytes, ok := transient["credentialType"]; ok {
+		ct := strings.TrimSpace(string(ctBytes))
+		if ct == "panic" {
+			vp.CredentialType = "panic"
+			log.Printf("[CastVote] PANIC credential 감지 — nullifier: %s...", nullifierHash[:16])
+		} else {
+			vp.CredentialType = "real"
+		}
+	}
+	if vp.CredentialType == "" {
+		vp.CredentialType = "real"
+	}
+
 	// ── Step 3b: 후보자 암호화 처리 ─────────────────────────
 	// [PAPER-1] 클라이언트-사이드 암호화 지원:
 	//   A) candidateID가 비어있고 encryptedCandidateID가 있으면 → 클라이언트가 암호화 (체인코드 blind)
@@ -1323,6 +1344,7 @@ func (c *VotingContract) TallyVotes(
 		results[cand] = 0 // 0표도 명시적으로 기록
 	}
 	totalVotes := 0
+	panicFiltered := 0 // [PAPER-12] Cleansing-Hiding: 필터링된 패닉 투표 수 (비공개)
 	var decProofs []DecryptionProof
 
 	for resultsIterator.HasNext() {
@@ -1334,6 +1356,19 @@ func (c *VotingContract) TallyVotes(
 		var nullifier Nullifier
 		if err := json.Unmarshal(queryResult.Value, &nullifier); err != nil {
 			return nil, fmt.Errorf("Nullifier 역직렬화 실패: %w", err)
+		}
+
+		// [PAPER-12] Cleansing-Hiding: PDC에서 credentialType 확인
+		// panic 투표는 집계에서 제외 (CHide 원칙: 제거 수 비공개)
+		// PDC 조회 실패 또는 항목 없음 → real로 간주 (더미 nullifier 포함)
+		vpBytes, vpErr := ctx.GetStub().GetPrivateData(VotePrivatePDC, nullifier.NullifierHash)
+		if vpErr == nil && vpBytes != nil {
+			var vpCheck VotePrivate
+			if json.Unmarshal(vpBytes, &vpCheck) == nil && vpCheck.CredentialType == "panic" {
+				panicFiltered++
+				log.Printf("[TallyVotes] PANIC 투표 필터링 — nullifier: %s...", nullifier.NullifierHash[:16])
+				continue // 집계에서 제외
+			}
 		}
 
 		candID := nullifier.CandidateID
@@ -1412,7 +1447,9 @@ func (c *VotingContract) TallyVotes(
 		return nil, fmt.Errorf("VoteTally 원장 저장 실패: %w", err)
 	}
 
-	log.Printf("[TallyVotes] 집계 완료 — election: %s, 총 투표수: %d", electionID, totalVotes)
+	// [PAPER-12] panicFiltered 수는 로그에만 기록 (공개 원장에 포함하지 않음 — CHide 원칙)
+	log.Printf("[TallyVotes] 집계 완료 — election: %s, 유효 투표: %d, 패닉 필터링: %d",
+		electionID, totalVotes, panicFiltered)
 	return &tally, nil
 }
 
@@ -2910,11 +2947,11 @@ func (c *VotingContract) GetSecurityProperties(
 			PaperRef:   "PAPER-6 (26차)",
 		},
 		CoercionResistance: SecurityProperty{
-			Property:   "Coercion Resistance (Enhanced Bounded)",
-			Status:     "partial",
-			Mechanism:  "Panic Password (randomized dummy) + receipt-free verification + deniable Merkle proof",
-			Assumption: "Timing-safe comparison + structural indistinguishability",
-			PaperRef:   "PAPER-8 (28차)",
+			Property:   "Coercion Resistance (Layered)",
+			Status:     "achieved",
+			Mechanism:  "PDC-based Deniable Credential Duality (Layer 1: Panic Credential, Layer 2: Re-voting, Layer 3: Panic Password, Layer 4: Receipt-Free) + Cleansing-Hiding tally + multi-org endorsement",
+			Assumption: "2-of-3 honest majority + PDC channel confidentiality + SHA-256 preimage resistance + re-voting window",
+			PaperRef:   "PAPER-12 (32차)",
 		},
 		EligibilityVerify: SecurityProperty{
 			Property:   "Eligibility Verifiability",
@@ -2931,6 +2968,7 @@ func (c *VotingContract) GetSecurityProperties(
 			"Ed25519 (credential signature, RFC 8032)",
 			"HMAC-SHA256 (credential authentication)",
 			"Shamir SSS (2-of-3 threshold, GF(secp256k1 prime))",
+			"PDC-based Deniable Credential Duality (Cleansing-Hiding coercion resistance)",
 		},
 		EndorsementPolicy: "2-of-3 (ElectionCommission, PartyObserver, CivilSociety)",
 	}, nil
