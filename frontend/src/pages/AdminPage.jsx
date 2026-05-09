@@ -236,6 +236,59 @@ export default function AdminPage() {
           </div>
         )}
       </Section>
+
+      {/* ─── 8. Bulletin Board 공개 (PAPER-6) ─────── */}
+      <Section title="8. Bulletin Board 공개 (Universal Verifiability)">
+        <p className="text-xs text-gray-500">
+          선거 종료 + 키 복원 완료 후, 암호화 키와 모든 투표를 공개하여 누구나 독립 검증 가능하게 합니다.
+          공개 후에는 검증 탭의 "Bulletin Board" 모드에서 누구나 집계를 검증할 수 있습니다.
+        </p>
+        <Btn loading={busy.publishAudit} onClick={run('publishAudit', () => apiPost(`${API}/elections/${eid}/publish-audit`, { electionID: eid }))}>
+          Audit Data 공개
+        </Btn>
+        <Msg data={res.publishAudit} error={err.publishAudit} />
+      </Section>
+
+      {/* ─── 9. 보안 속성 대시보드 (PAPER-5) ─────── */}
+      <Section title="9. Security Properties (보안 속성 진단)">
+        <p className="text-xs text-gray-500">
+          체인코드에서 자가 진단한 보안 속성 현황입니다. 논문 Section 5 (Security Analysis)에 대응합니다.
+        </p>
+        <Btn color="gray" loading={busy.secProps} onClick={run('secProps', () => apiGet(`${API}/elections/security-properties`))}>
+          보안 속성 조회
+        </Btn>
+        {err.secProps && <p className="text-red-600 text-sm">{err.secProps}</p>}
+        {res.secProps && (
+          <div className="space-y-2">
+            {Object.entries(res.secProps).filter(([k]) =>
+              !['electionID', 'verifiedAt', 'docType'].includes(k)
+            ).map(([key, prop]) => {
+              if (!prop || typeof prop !== 'object') return null;
+              const isAchieved = prop.status === 'ACHIEVED' || prop.status === 'PARTIAL';
+              return (
+                <div key={key} className={`border rounded p-3 text-sm ${
+                  prop.status === 'ACHIEVED' ? 'bg-green-50 border-green-200' :
+                  prop.status === 'PARTIAL'  ? 'bg-yellow-50 border-yellow-200' :
+                  'bg-gray-50 border-gray-200'
+                }`}>
+                  <div className="flex justify-between items-center">
+                    <span className="font-medium">{key}</span>
+                    <span className={`text-xs font-bold px-2 py-0.5 rounded ${
+                      prop.status === 'ACHIEVED' ? 'bg-green-200 text-green-800' :
+                      prop.status === 'PARTIAL'  ? 'bg-yellow-200 text-yellow-800' :
+                      'bg-gray-200 text-gray-600'
+                    }`}>{prop.status}</span>
+                  </div>
+                  <p className="text-xs text-gray-600 mt-1">{prop.mechanism}</p>
+                  {prop.assumption && (
+                    <p className="text-xs text-gray-400 mt-0.5">assumption: {prop.assumption}</p>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </Section>
     </div>
   );
 }

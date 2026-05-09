@@ -3,13 +3,21 @@
  *
  * 핵심 프라이버시 원칙:
  *   - voterSecret은 이 컴포넌트에서만 생성·보관, 절대 서버 전송 안 함
- *   - nullifierHash = SHA256(voterSecret + electionID) — 브라우저에서 계산
+ *   - nullifierHash = SHA256(voterSecret + electionID + blindingFactor) — 브라우저에서 계산
  *   - Idemix credential: 서버에서 발급, voterID 미포함 → 익명 자격 증명
  *   - 강압 상황을 위한 Panic Password 지원
+ *   - [PAPER-1] Blind Mode: 클라이언트 AES-256-GCM 암호화 → 서버가 평문 후보 볼 수 없음
+ *   - [PAPER-3] Benaloh Challenge: 투표 암호화 정확성 독립 검증
  */
 
 import { useState, useEffect, useRef } from 'react';
-import { computeNullifier, computePasswordHash, generateVoterSecret } from '../utils/crypto.js';
+import {
+  computeNullifier,
+  computePasswordHash,
+  generateVoterSecret,
+  encryptCandidateID,
+  verifyBenalohAudit,
+} from '../utils/crypto.js';
 
 const API = '/api';
 
@@ -31,6 +39,15 @@ export default function VoterPage() {
   const [panicPassword,  setPanicPassword]  = useState('');
   const [panicCandidate, setPanicCandidate] = useState('');
 
+  // ── [PAPER-1] Blind Mode ───────────────────────────
+  const [blindMode, setBlindMode] = useState(false);
+  const [encryptionKey, setEncryptionKey] = useState('');
+
+  // ── [PAPER-3] Benaloh Challenge ────────────────────
+  const [benalohStep, setBenalohStep] = useState('idle'); // 'idle' | 'prepared' | 'audited'
+  const [benalohBallot, setBenalohBallot] = useState(null);
+  const [benalohAuditResult, setBenalohAudit] = useState(null);
+
   // ── UI 상태 ─────────────────────────────────────────
   const [loading, setLoading] = useState(false);
   const [result,  setResult]  = useState(null);
@@ -44,6 +61,15 @@ export default function VoterPage() {
       .then(d => setCredMode(d.idemix?.mode || ''))
       .catch(() => {});
   }, []);
+
+  // ── [PAPER-1] Blind Mode: 선거 암호화 키 조회 ─────
+  useEffect(() => {
+    if (!blindMode || !election || !electionID) { setEncryptionKey(''); return; }
+    fetch(`${API}/elections/${electionID}/encryption-key`)
+      .then(r => r.json())
+      .then(d => setEncryptionKey(d.encryptionKeyHex || ''))
+      .catch(() => setEncryptionKey(''));
+  }, [blindMode, election, electionID]);
 
   // ── Idemix 자격증명 사전 발급 ─────────────────────
   // 선거 조회 후 백그라운드에서 자동 발급 (ZKP 사전 생성 최적화)
@@ -83,17 +109,25 @@ export default function VoterPage() {
     if (!voterSecret || !candidateID) {
       return setError('유권자 비밀값과 후보자를 선택하세요.');
     }
+    if (blindMode && !encryptionKey) {
+      return setError('Blind Mode: 암호화 키를 불러오지 못했습니다.');
+    }
     setLoading(true); setError(''); setResult(null);
     try {
-      // [CRIT-03 FIX] 블라인딩 팩터 조회 후 nullifier 계산
-      // 변경 전: SHA256(voterSecret + electionID) — 결정론적, 선거 간 연결 가능
-      // 변경 후: SHA256(voterSecret + electionID + blindingFactor) — 선거별 salt
       const bfRes = await fetch(`${API}/elections/${electionID}/blinding-factor`);
       if (!bfRes.ok) throw new Error('블라인딩 팩터 조회 실패');
       const { blindingFactor } = await bfRes.json();
       const nullifierHash = await computeNullifier(voterSecret, electionID, blindingFactor);
 
-      const body = { electionID, candidateID, nullifierHash };
+      const body = { electionID, nullifierHash };
+
+      // [PAPER-1] Blind Mode: 클라이언트에서 AES-256-GCM 암호화
+      if (blindMode) {
+        body.encryptedCandidateID = await encryptCandidateID(encryptionKey, candidateID);
+        // candidateID를 서버에 보내지 않음 — 체인코드가 복호화 후 유효 후보 검증
+      } else {
+        body.candidateID = candidateID;
+      }
 
       if (normalPassword && panicPassword) {
         body.normalPWHash     = await computePasswordHash(normalPassword, nullifierHash);
@@ -101,7 +135,6 @@ export default function VoterPage() {
         body.panicCandidateID = panicCandidate || candidateID;
       }
 
-      // Idemix credential 헤더 첨부 (사전 발급된 credential 재사용 → 체감 지연 0)
       const headers = { 'Content-Type': 'application/json' };
       if (idemixCredential) {
         headers['x-idemix-credential'] = idemixCredential;
@@ -114,9 +147,52 @@ export default function VoterPage() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || data.reason);
-      setResult({ nullifierHash, ...data });
+      setResult({ nullifierHash, blindMode, ...data });
     } catch (e) { setError(e.message); }
     finally { setLoading(false); }
+  }
+
+  // ── [PAPER-3] Benaloh Challenge ────────────────────
+  async function benalohPrepare() {
+    if (!candidateID) return setError('후보자를 먼저 선택하세요.');
+    setLoading(true); setError(''); setBenalohAudit(null);
+    try {
+      const res = await fetch(`${API}/vote/prepare`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ electionID, candidateID }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
+      setBenalohBallot(data);
+      setBenalohStep('prepared');
+    } catch (e) { setError(e.message); }
+    finally { setLoading(false); }
+  }
+
+  async function benalohAudit() {
+    if (!benalohBallot?.ballotID) return;
+    setLoading(true); setError('');
+    try {
+      const res = await fetch(`${API}/vote/audit`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ electionID, ballotID: benalohBallot.ballotID }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
+      // 브라우저에서 독립 검증
+      const verification = await verifyBenalohAudit(data);
+      setBenalohAudit({ ...data, clientVerified: verification.verified });
+      setBenalohStep('audited');
+    } catch (e) { setError(e.message); }
+    finally { setLoading(false); }
+  }
+
+  function benalohReset() {
+    setBenalohStep('idle');
+    setBenalohBallot(null);
+    setBenalohAudit(null);
   }
 
   async function activatePanicMode() {
@@ -192,6 +268,26 @@ export default function VoterPage() {
       {election?.status === 'ACTIVE' && (
         <section className="bg-white rounded-xl shadow p-5 space-y-4">
           <h2 className="font-bold text-gray-700">투표</h2>
+
+          {/* [PAPER-1] Blind Mode 토글 */}
+          <div className="flex items-center gap-3 p-3 bg-gray-50 rounded border">
+            <label className="flex items-center gap-2 cursor-pointer text-sm">
+              <input
+                type="checkbox"
+                checked={blindMode}
+                onChange={e => setBlindMode(e.target.checked)}
+                className="w-4 h-4"
+              />
+              <span className="font-medium">Blind Mode (PAPER-1)</span>
+            </label>
+            <span className="text-xs text-gray-500">
+              {blindMode
+                ? encryptionKey
+                  ? '클라이언트 AES-256-GCM 암호화 활성 — 서버가 평문 후보를 볼 수 없음'
+                  : '암호화 키 로딩 중...'
+                : '서버에 평문 후보 전달 (기본 모드)'}
+            </span>
+          </div>
 
           {/* voterSecret */}
           <div>
@@ -272,6 +368,79 @@ export default function VoterPage() {
             </div>
           </details>
 
+          {/* [PAPER-3] Benaloh Challenge */}
+          <details className="border rounded p-3">
+            <summary className="text-sm font-medium cursor-pointer text-gray-600">
+              Benaloh Challenge — 투표 암호화 검증 (PAPER-3, 선택)
+            </summary>
+            <div className="mt-3 space-y-3 text-sm">
+              <p className="text-xs text-gray-500">
+                투표를 제출하기 전에 암호화가 올바르게 수행되었는지 검증합니다.
+                Prepare → Audit(검증) → 검증 성공 확인 후 실제 투표를 제출하세요.
+                (Audit된 투표는 폐기되며, 새로운 투표를 제출해야 합니다.)
+              </p>
+
+              {benalohStep === 'idle' && (
+                <button
+                  className="px-4 py-2 rounded border border-purple-400 text-purple-600 text-sm hover:bg-purple-50"
+                  onClick={benalohPrepare}
+                  disabled={loading || !candidateID}
+                >
+                  1. Prepare (암호화 사전 검증)
+                </button>
+              )}
+
+              {benalohStep === 'prepared' && benalohBallot && (
+                <div className="space-y-2">
+                  <div className="bg-purple-50 border border-purple-200 rounded p-3 text-xs">
+                    <p className="font-medium text-purple-700 mb-1">Ballot 준비 완료</p>
+                    <p>Ballot ID: <code className="bg-white px-1 rounded">{benalohBallot.ballotID}</code></p>
+                    <p>Commitment: <code className="bg-white px-1 rounded break-all">{benalohBallot.commitment}</code></p>
+                  </div>
+                  <div className="flex gap-2">
+                    <button
+                      className="px-4 py-2 rounded border border-yellow-400 text-yellow-700 text-sm hover:bg-yellow-50"
+                      onClick={benalohAudit}
+                      disabled={loading}
+                    >
+                      2. Audit (암호화 검증)
+                    </button>
+                    <button
+                      className="px-3 py-2 rounded border border-gray-300 text-gray-500 text-xs hover:bg-gray-50"
+                      onClick={benalohReset}
+                    >
+                      취소
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {benalohStep === 'audited' && benalohAuditResult && (
+                <div className="space-y-2">
+                  <div className={`border rounded p-3 text-xs ${
+                    benalohAuditResult.clientVerified
+                      ? 'bg-green-50 border-green-200'
+                      : 'bg-red-50 border-red-200'
+                  }`}>
+                    <p className={`font-medium mb-1 ${benalohAuditResult.clientVerified ? 'text-green-700' : 'text-red-700'}`}>
+                      {benalohAuditResult.clientVerified
+                        ? '브라우저 독립 검증 성공 — 암호화가 정확합니다'
+                        : '검증 실패 — 암호화 불일치'}
+                    </p>
+                    <p>후보: <code className="bg-white px-1 rounded">{benalohAuditResult.candidateID}</code></p>
+                    <p className="text-gray-500 mt-1">이 투표는 폐기되었습니다. 아래 버튼으로 실제 투표를 제출하세요.</p>
+                  </div>
+                  <button
+                    className="px-3 py-2 rounded border border-gray-300 text-gray-500 text-xs hover:bg-gray-50"
+                    onClick={benalohReset}
+                  >
+                    초기화
+                  </button>
+                </div>
+              )}
+            </div>
+          </details>
+
           {/* 투표 제출 */}
           {!panicMode && (
             <div className="flex justify-between items-center">
@@ -282,7 +451,7 @@ export default function VoterPage() {
                 onClick={submitVote}
                 disabled={loading}
               >
-                {loading ? '처리 중...' : '투표 제출'}
+                {loading ? '처리 중...' : blindMode ? '투표 제출 (Blind Mode)' : '투표 제출'}
               </button>
               <button
                 className="ml-3 px-4 py-3 rounded-lg border border-red-300 text-red-500 text-xs hover:bg-red-50 whitespace-nowrap"
@@ -305,6 +474,11 @@ export default function VoterPage() {
       {result && (
         <div className="bg-green-50 border border-green-200 rounded p-4 text-sm space-y-2">
           <p className="font-bold text-green-700">{result.message}</p>
+          {result.blindMode && (
+            <p className="text-xs text-purple-600 font-medium">
+              Blind Mode 투표 — 서버는 평문 후보를 보지 못했습니다
+            </p>
+          )}
           {result.nullifierHash && (
             <div>
               <p className="text-xs text-gray-500 mb-1">Nullifier Hash (E2E 검증에 사용):</p>
