@@ -137,11 +137,11 @@ type Election struct {
 	// 클라이언트가 이 키로 candidateID를 암호화하여 제출.
 	// 체인코드는 암호문만 저장하고 평문을 보지 않음.
 	// 비밀키는 PDC에만 저장 → Shamir으로 분산 → threshold 복호화로 집계.
-	EncryptionPubKey string `json:"encryptionPubKey,omitempty"` // AES-256 키를 감싼 공개키 (hex)
+	EncryptionPubKey string `json:"encryptionPubKey,omitempty" metadata:",optional"` // AES-256 키를 감싼 공개키 (hex)
 	// [PAPER-11] 암호화 모드: "aes" (기본) 또는 "elgamal"
-	EncryptionMode string `json:"encryptionMode,omitempty"` // "aes" | "elgamal"
+	EncryptionMode string `json:"encryptionMode,omitempty" metadata:",optional"` // "aes" | "elgamal"
 	// [PAPER-11] ElGamal 공개키 (elgamal 모드일 때만 사용)
-	ElGamalPubKey *ElGamalPublicKey `json:"elgamalPubKey,omitempty"`
+	ElGamalPubKey *ElGamalPublicKey `json:"elgamalPubKey,omitempty" metadata:",optional"`
 }
 
 // Nullifier 익명 투표 증명 (공개 원장)
@@ -160,7 +160,7 @@ type Nullifier struct {
 	// [CRIT-01/02 FIX] 자격증명 감사 해시
 	CredentialHash string `json:"credentialHash"` // SHA256(credential token)
 	// [PAPER-4] 자격증명 검증 수준
-	CredVerifyLevel string `json:"credVerifyLevel,omitempty"` // "chaincode" | "metadata-only"
+	CredVerifyLevel string `json:"credVerifyLevel,omitempty" metadata:",optional"` // "chaincode" | "metadata-only"
 }
 
 // CredentialVerification [CRIT-01/02 FIX] 체인코드 독립 검증용 자격증명 메타데이터
@@ -199,7 +199,7 @@ type VotePrivate struct {
 	// "real" (기본): 유효 투표, 집계에 포함
 	// "panic": 강압 하 제출된 투표, 집계에서 제외 (Cleansing-Hiding)
 	// 공개 원장에서는 real/panic이 구조적으로 동일 (구별 불가)
-	CredentialType string `json:"credentialType,omitempty"` // "real" | "panic"
+	CredentialType string `json:"credentialType,omitempty" metadata:",optional"` // "real" | "panic"
 }
 
 // VoteTally 선거 집계 결과 (공개 원장, CloseElection 호출 시 기록)
@@ -210,8 +210,8 @@ type VoteTally struct {
 	TotalVotes     int            `json:"totalVotes"`
 	ClosedAt       int64          `json:"closedAt"`
 	// [PAPER-2] tallied-as-recorded 검증용 증명
-	TallyProofHash string              `json:"tallyProofHash,omitempty"` // 모든 복호화 기록의 해시
-	DecryptionProofs []DecryptionProof `json:"decryptionProofs,omitempty"` // 개별 투표 복호화 증명
+	TallyProofHash string              `json:"tallyProofHash,omitempty" metadata:",optional"` // 모든 복호화 기록의 해시
+	DecryptionProofs []DecryptionProof `json:"decryptionProofs,omitempty" metadata:",optional"` // 개별 투표 복호화 증명
 }
 
 // DecryptionProof [PAPER-2] 개별 투표의 복호화 정확성 증명
@@ -223,7 +223,7 @@ type DecryptionProof struct {
 	DecryptedHash        string `json:"decryptedHash"`        // SHA256(복호화된 candidateID)
 	CandidateCommitment  string `json:"candidateCommitment"`  // 투표 시 생성된 commitment
 	// [PAPER-11] ElGamal + Chaum-Pedersen ZKP 필드 (ElGamal 모드일 때만 사용)
-	ZKProof *ChaumPedersenProof `json:"zkProof,omitempty"`
+	ZKProof *ChaumPedersenProof `json:"zkProof,omitempty" metadata:",optional"`
 }
 
 // VoterPWPrivate PDC에 저장되는 유권자 비밀번호 해시 (비공개)
@@ -255,7 +255,7 @@ type HomomorphicTallyProof struct {
 	AccC1 string             `json:"accC1"` // 누적 c1 = Π c1_i mod p
 	AccC2 string             `json:"accC2"` // 누적 c2 = Π c2_i mod p
 	DecryptedSum int         `json:"decryptedSum"` // g^sum의 이산로그 복원 결과
-	ZKProof *ChaumPedersenProof `json:"zkProof,omitempty"` // 복호화 정확성 ZKP
+	ZKProof *ChaumPedersenProof `json:"zkProof,omitempty" metadata:",optional"` // 복호화 정확성 ZKP
 }
 
 // BallotPreparation [PAPER-3] Benaloh Challenge용 사전 암호화 투표
@@ -2626,19 +2626,19 @@ func (c *VotingContract) VerifyElGamalProofs(
 type BulletinBoard struct {
 	ObjectType       string             `json:"docType"`       // "bulletinBoard"
 	ElectionID       string             `json:"electionID"`
-	EncryptionKeyHex string             `json:"encryptionKeyHex,omitempty"` // 공개된 AES-256 키 (AES 모드)
+	EncryptionKeyHex string             `json:"encryptionKeyHex,omitempty" metadata:",optional"` // 공개된 AES-256 키 (AES 모드)
 	EncryptedBallots []EncryptedBallot  `json:"encryptedBallots"`          // 셔플된 암호화 투표
 	TallyResults     map[string]int     `json:"tallyResults"`              // 공식 집계 결과
 	TotalVotes       int                `json:"totalVotes"`
 	DecryptionProofs []DecryptionProof  `json:"decryptionProofs"`          // 복호화 증명 (AES: hash, ElGamal: ZKP)
 	TallyProofHash   string             `json:"tallyProofHash"`            // 집계 증명 해시
-	MerkleRoot       string             `json:"merkleRoot,omitempty"`      // Merkle tree root
-	ShuffleSeed      string             `json:"shuffleSeed,omitempty"`     // [PAPER-7] 셔플 시드 (hex)
-	ShuffleProofHash string             `json:"shuffleProofHash,omitempty"` // [PAPER-7] 셔플 정확성 증명
+	MerkleRoot       string             `json:"merkleRoot,omitempty" metadata:",optional"`      // Merkle tree root
+	ShuffleSeed      string             `json:"shuffleSeed,omitempty" metadata:",optional"`     // [PAPER-7] 셔플 시드 (hex)
+	ShuffleProofHash string             `json:"shuffleProofHash,omitempty" metadata:",optional"` // [PAPER-7] 셔플 정확성 증명
 	PublishedAt      int64              `json:"publishedAt"`
 	// [PAPER-11] ElGamal 모드 전용 필드
-	EncryptionMode   string             `json:"encryptionMode,omitempty"`  // "aes" | "elgamal"
-	ElGamalPubKey    *ElGamalPublicKey   `json:"elgamalPubKey,omitempty"`   // ElGamal 공개키 (ZKP 검증용)
+	EncryptionMode   string             `json:"encryptionMode,omitempty" metadata:",optional"`  // "aes" | "elgamal"
+	ElGamalPubKey    *ElGamalPublicKey   `json:"elgamalPubKey,omitempty" metadata:",optional"`   // ElGamal 공개키 (ZKP 검증용)
 }
 
 // EncryptedBallot 공개 원장의 개별 암호화 투표

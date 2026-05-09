@@ -199,20 +199,20 @@ router.post('/', async (req, res) => {
   const { gateway, contract } = await connectGateway();
   try {
     // [PAPER-11] encryptionMode를 transient data로 전달
-    const tx = contract.createTransaction('CreateElection');
+    const args = [electionID, title, description || '', JSON.stringify(candidates), String(actualStartTime), String(endTime)];
+    const proposalOpts = { arguments: args };
     if (mode === 'elgamal') {
-      tx.setTransient({
+      proposalOpts.transientData = {
         encryptionMode: Buffer.from('elgamal'),
-      });
+      };
     }
-    await tx.submit(
-      electionID,
-      title,
-      description || '',
-      JSON.stringify(candidates),
-      String(actualStartTime),
-      String(endTime),
-    );
+    const proposal = contract.newProposal('CreateElection', proposalOpts);
+    const transaction = await proposal.endorse();
+    const submitted = await transaction.submit();
+    const status = await submitted.getStatus();
+    if (!status.successful) {
+      throw new Error(`CreateElection 트랜잭션 실패: ${status.code}`);
+    }
     res.status(201).json({ message: '선거가 생성되었습니다.', electionID, encryptionMode: mode });
   } catch (err) {
     console.error('[elections] CreateElection error:', err.message);
