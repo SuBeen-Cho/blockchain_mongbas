@@ -1585,10 +1585,8 @@ func (c *VotingContract) GetMerkleProofWithPassword(
 	if isPanic {
 		panicMode = true
 		// ── Panic Mode: 더미 nullifier 반환 ─────────────────
-		// panicCandidateID에 해당하는 더미 nullifier 중 0번째 사용
 		dummyCandID := pw.PanicCandidateID
 		if dummyCandID == "" {
-			// panicCandidateID 미지정 시 임의의 더미 사용 (첫 번째 후보 첫 번째 더미)
 			election, err := c.GetElection(ctx, electionID)
 			if err != nil {
 				return nil, err
@@ -1597,13 +1595,25 @@ func (c *VotingContract) GetMerkleProofWithPassword(
 				dummyCandID = election.Candidates[0]
 			}
 		}
-		dummyIdxKey := fmt.Sprintf("DUMMY_IDX_%s_%s_0", electionID, dummyCandID)
+		// [PAPER-8] 결정론적 랜덤 더미 선택: 매번 동일 요청에 동일 더미 반환하되,
+		// passwordHash에 따라 다른 더미 선택 → 강압자의 반복 요청 시 일관성 유지
+		dummySelector := sha256.Sum256([]byte(passwordHash + nullifierHash + electionID))
+		dummyIdx := int(new(big.Int).SetBytes(dummySelector[:]).Int64()) % PanicDummyCount
+		if dummyIdx < 0 {
+			dummyIdx = -dummyIdx
+		}
+		dummyIdxKey := fmt.Sprintf("DUMMY_IDX_%s_%s_%d", electionID, dummyCandID, dummyIdx)
 		dummyHashBytes, err := ctx.GetStub().GetState(dummyIdxKey)
 		if err != nil || dummyHashBytes == nil {
-			return nil, fmt.Errorf("더미 Nullifier를 찾을 수 없습니다 (candidate: %s)", dummyCandID)
+			// 폴백: index 0
+			dummyIdxKey = fmt.Sprintf("DUMMY_IDX_%s_%s_0", electionID, dummyCandID)
+			dummyHashBytes, err = ctx.GetStub().GetState(dummyIdxKey)
+			if err != nil || dummyHashBytes == nil {
+				return nil, fmt.Errorf("더미 Nullifier를 찾을 수 없습니다 (candidate: %s)", dummyCandID)
+			}
 		}
 		targetHash = string(dummyHashBytes)
-		log.Printf("[GetMerkleProofWithPassword] Panic Mode — dummy: %s", targetHash[:16])
+		log.Printf("[GetMerkleProofWithPassword] Panic Mode — dummy idx: %d, hash: %s", dummyIdx, targetHash[:16])
 	} else if !isNormal {
 		// 두 비밀번호 모두 불일치 (상수시간 비교 완료 후 판정)
 		return nil, fmt.Errorf("비밀번호가 일치하지 않습니다")
@@ -1630,6 +1640,52 @@ func (c *VotingContract) GetMerkleProofWithPassword(
 		LeafHash:             computeMerkleLeafHash(n),
 		Proof:                proof,
 	}, nil
+}
+
+// VerifyVoteCounted [PAPER-8] Receipt-Free 검증: 투표 포함 여부만 반환, 증명 데이터 없음.
+// 유권자가 "내 투표가 집계되었는지"만 확인하고, 강압자에게 보여줄 receipt가 생성되지 않음.
+// 반환값: JSON {"included": true/false, "electionID": "...", "totalVotes": N}
+func (c *VotingContract) VerifyVoteCounted(
+	ctx contractapi.TransactionContextInterface,
+	electionID string,
+	nullifierHash string,
+) (string, error) {
+	// 선거 존재 확인
+	election, err := c.GetElection(ctx, electionID)
+	if err != nil {
+		return "", err
+	}
+
+	// nullifier 존재 확인
+	nBytes, err := ctx.GetStub().GetState(nullifierHash)
+	if err != nil {
+		return "", fmt.Errorf("nullifier 조회 실패: %w", err)
+	}
+
+	included := false
+	if nBytes != nil {
+		var nul Nullifier
+		if err := json.Unmarshal(nBytes, &nul); err == nil {
+			included = nul.ElectionID == electionID
+		}
+	}
+
+	// 집계 결과의 총 투표수 (receipt 아닌 공개 정보)
+	totalVotes := 0
+	if election.Status == "CLOSED" {
+		if tally, err := c.GetTally(ctx, electionID); err == nil {
+			totalVotes = tally.TotalVotes
+		}
+	}
+
+	// 최소한의 정보만 반환 — 후보자 정보, 증명 경로 없음
+	result := map[string]interface{}{
+		"included":   included,
+		"electionID": electionID,
+		"totalVotes": totalVotes,
+	}
+	b, _ := json.Marshal(result)
+	return string(b), nil
 }
 
 // ============================================================
@@ -2526,11 +2582,11 @@ func (c *VotingContract) GetSecurityProperties(
 			PaperRef:   "PAPER-6 (26차)",
 		},
 		CoercionResistance: SecurityProperty{
-			Property:   "Coercion Resistance (Bounded)",
+			Property:   "Coercion Resistance (Enhanced Bounded)",
 			Status:     "partial",
-			Mechanism:  "Panic Password + deniable Merkle proof + dummy nullifiers",
+			Mechanism:  "Panic Password (randomized dummy) + receipt-free verification + deniable Merkle proof",
 			Assumption: "Timing-safe comparison + structural indistinguishability",
-			PaperRef:   "Panic Password (기존)",
+			PaperRef:   "PAPER-8 (28차)",
 		},
 		EligibilityVerify: SecurityProperty{
 			Property:   "Eligibility Verifiability",

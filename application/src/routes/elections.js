@@ -9,6 +9,7 @@
  * POST /api/elections/:id/publish-audit 감사 데이터 공개 게시 (PAPER-6)
  * GET  /api/elections/:id/bulletin-board 공개 감사 데이터 조회 (PAPER-6)
  * POST /api/elections/:id/verify-public  공개 독립 검증 (PAPER-6, 키 불필요)
+ * GET  /api/elections/:id/vote-counted/:nullifier  Receipt-free 투표 포함 확인 (PAPER-8)
  */
 
 'use strict';
@@ -461,6 +462,25 @@ router.get('/:id/decryption', async (req, res) => {
   try {
     const result = await contract.evaluateTransaction('GetKeyDecryptionStatus', id);
     res.json(JSON.parse(Buffer.from(result).toString('utf8')));
+  } catch (err) {
+    res.status(500).json({ error: sanitizeError(err) });
+  } finally {
+    gateway.close();
+  }
+});
+
+// ── GET /:id/vote-counted/:nullifier ──────────────────────────
+// [PAPER-8] Receipt-free 투표 포함 확인 (증명 데이터 없음)
+router.get('/:id/vote-counted/:nullifier', requireValidElectionID, async (req, res) => {
+  const { id, nullifier } = req.params;
+  if (!nullifier || !/^[a-f0-9]{64}$/.test(nullifier)) {
+    return res.status(400).json({ error: 'nullifierHash 형식이 올바르지 않습니다 (64자 hex)' });
+  }
+  const { gateway, contract } = await connectGateway();
+  try {
+    const result = await contract.evaluateTransaction('VerifyVoteCounted', id, nullifier);
+    const parsed = JSON.parse(Buffer.from(result).toString('utf8'));
+    res.json(parsed);
   } catch (err) {
     res.status(500).json({ error: sanitizeError(err) });
   } finally {

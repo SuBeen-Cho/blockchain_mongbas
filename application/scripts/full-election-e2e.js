@@ -391,6 +391,26 @@ async function main() {
 
   const universalVerified = publicVerify.isValid;
 
+  // ── Phase 13: Receipt-Free Verification (PAPER-8) ─────────
+  console.log('\n── Phase 13: Receipt-Free Verification ──');
+
+  // 13a. 실제 투표의 receipt-free 확인 (증명 데이터 없이 포함 여부만)
+  const voteCounted = await assertOk('receipt-free vote check',
+    requestJson(`/api/elections/${ELECTION_ID}/vote-counted/${nullifiers[0]}`)
+  );
+  console.log(`[INFO] Vote counted: included=${voteCounted.included}, totalVotes=${voteCounted.totalVotes}`);
+  if (!voteCounted.included) throw new Error('Receipt-free check failed: vote not included');
+
+  // 13b. 존재하지 않는 nullifier 확인
+  const fakeNullifier = sha256Hex('nonexistent-voter-secret' + ELECTION_ID + 'fake-blinding');
+  const fakeCheck = await assertOk('receipt-free fake nullifier',
+    requestJson(`/api/elections/${ELECTION_ID}/vote-counted/${fakeNullifier}`)
+  );
+  console.log(`[INFO] Fake nullifier: included=${fakeCheck.included}`);
+  if (fakeCheck.included) throw new Error('Receipt-free check failed: fake nullifier was included');
+
+  const receiptFreeOk = voteCounted.included && !fakeCheck.included;
+
   // ── 최종 요약 ──────────────────────────────────────────────
   console.log('\n═══════════════════════════════════════════════════');
   console.log(' SUMMARY');
@@ -406,9 +426,10 @@ async function main() {
   console.log(`  Blind Mode:   voter4 -> ${blindVoter.candidate} (client-side encryption)`);
   console.log(`  Benaloh:      audit verified=${benalohVerified} (cast-as-intended)`);
   console.log(`  Universal:    public verify=${universalVerified} (PAPER-6)`);
+  console.log(`  ReceiptFree:  ${receiptFreeOk} (PAPER-8)`);
   console.log(`  Security:     ${achieved}/5 achieved, ${partial}/1 partial`);
   console.log('═══════════════════════════════════════════════════');
-  console.log('[DONE] Full Election E2E Integration Test completed (12 phases)');
+  console.log('[DONE] Full Election E2E Integration Test completed (13 phases)');
 }
 
 main().catch((err) => {
