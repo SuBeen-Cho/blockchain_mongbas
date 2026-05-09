@@ -2502,16 +2502,19 @@ func (c *VotingContract) VerifyElGamalProofs(
 type BulletinBoard struct {
 	ObjectType       string             `json:"docType"`       // "bulletinBoard"
 	ElectionID       string             `json:"electionID"`
-	EncryptionKeyHex string             `json:"encryptionKeyHex"` // 공개된 AES-256 키 (hex)
-	EncryptedBallots []EncryptedBallot  `json:"encryptedBallots"` // 셔플된 암호화 투표
-	TallyResults     map[string]int     `json:"tallyResults"`     // 공식 집계 결과
+	EncryptionKeyHex string             `json:"encryptionKeyHex,omitempty"` // 공개된 AES-256 키 (AES 모드)
+	EncryptedBallots []EncryptedBallot  `json:"encryptedBallots"`          // 셔플된 암호화 투표
+	TallyResults     map[string]int     `json:"tallyResults"`              // 공식 집계 결과
 	TotalVotes       int                `json:"totalVotes"`
-	DecryptionProofs []DecryptionProof  `json:"decryptionProofs"` // 복호화 증명 (동일 순서로 셔플)
-	TallyProofHash   string             `json:"tallyProofHash"`   // 집계 증명 해시
-	MerkleRoot       string             `json:"merkleRoot,omitempty"` // Merkle tree root
-	ShuffleSeed      string             `json:"shuffleSeed,omitempty"`  // [PAPER-7] 셔플 시드 (hex)
+	DecryptionProofs []DecryptionProof  `json:"decryptionProofs"`          // 복호화 증명 (AES: hash, ElGamal: ZKP)
+	TallyProofHash   string             `json:"tallyProofHash"`            // 집계 증명 해시
+	MerkleRoot       string             `json:"merkleRoot,omitempty"`      // Merkle tree root
+	ShuffleSeed      string             `json:"shuffleSeed,omitempty"`     // [PAPER-7] 셔플 시드 (hex)
 	ShuffleProofHash string             `json:"shuffleProofHash,omitempty"` // [PAPER-7] 셔플 정확성 증명
 	PublishedAt      int64              `json:"publishedAt"`
+	// [PAPER-11] ElGamal 모드 전용 필드
+	EncryptionMode   string             `json:"encryptionMode,omitempty"`  // "aes" | "elgamal"
+	ElGamalPubKey    *ElGamalPublicKey   `json:"elgamalPubKey,omitempty"`   // ElGamal 공개키 (ZKP 검증용)
 }
 
 // EncryptedBallot 공개 원장의 개별 암호화 투표
@@ -2568,12 +2571,27 @@ func (c *VotingContract) PublishAuditData(
 		return nil, fmt.Errorf("집계 결과 조회 실패: %w", err)
 	}
 
-	// 암호화 키 조회 (Shamir 복원 후 PDC에 저장됨)
-	encKey, err := getEncryptionKey(ctx, electionID)
-	if err != nil {
-		return nil, fmt.Errorf("암호화 키 조회 실패 — Shamir 복원이 완료되었는지 확인하세요: %w", err)
+	// 암호화 키 / ElGamal 공개키 조회
+	isElGamal := election.EncryptionMode == "elgamal"
+	var encKey []byte
+	var encKeyHex string
+	if !isElGamal {
+		var ekErr error
+		encKey, ekErr = getEncryptionKey(ctx, electionID)
+		if ekErr != nil {
+			return nil, fmt.Errorf("암호화 키 조회 실패 — Shamir 복원이 완료되었는지 확인하세요: %w", ekErr)
+		}
+		encKeyHex = hex.EncodeToString(encKey)
+	} else {
+		// ElGamal 모드: AES 키도 셔플 시드 유도에 필요
+		var ekErr error
+		encKey, ekErr = getEncryptionKey(ctx, electionID)
+		if ekErr != nil {
+			return nil, fmt.Errorf("셔플 시드용 키 조회 실패: %w", ekErr)
+		}
+		// ElGamal 모드에서는 AES 키를 공개하지 않음
+		encKeyHex = ""
 	}
-	encKeyHex := hex.EncodeToString(encKey)
 
 	// 모든 nullifier (암호화된 투표) 조회
 	queryString := fmt.Sprintf(
@@ -2631,7 +2649,7 @@ func (c *VotingContract) PublishAuditData(
 	bb := BulletinBoard{
 		ObjectType:       "bulletinBoard",
 		ElectionID:       electionID,
-		EncryptionKeyHex: encKeyHex,
+		EncryptionKeyHex: encKeyHex, // AES 모드에서만 공개, ElGamal 모드에서는 빈 문자열
 		EncryptedBallots: shuffledBallots,
 		TallyResults:     tally.Results,
 		TotalVotes:       tally.TotalVotes,
@@ -2641,6 +2659,11 @@ func (c *VotingContract) PublishAuditData(
 		ShuffleSeed:      hex.EncodeToString(shuffleSeed),
 		ShuffleProofHash: shuffleProofHash,
 		PublishedAt:       now,
+		EncryptionMode:   election.EncryptionMode,
+		ElGamalPubKey:    election.ElGamalPubKey, // ElGamal 모드에서만 포함
+	}
+	if bb.EncryptionMode == "" {
+		bb.EncryptionMode = "aes"
 	}
 
 	b, err := json.Marshal(bb)
@@ -2651,7 +2674,11 @@ func (c *VotingContract) PublishAuditData(
 		return nil, fmt.Errorf("BulletinBoard 저장 실패: %w", err)
 	}
 
-	log.Printf("[PublishAuditData] 게시 완료 — election: %s, ballots: %d, key published", electionID, len(ballots))
+	if isElGamal {
+		log.Printf("[PublishAuditData] 게시 완료 — election: %s, ballots: %d, mode: elgamal (ZKP, 키 비공개)", electionID, len(ballots))
+	} else {
+		log.Printf("[PublishAuditData] 게시 완료 — election: %s, ballots: %d, mode: aes (키 공개)", electionID, len(ballots))
+	}
 	return &bb, nil
 }
 
@@ -2687,28 +2714,74 @@ func (c *VotingContract) VerifyTallyPublic(
 		return nil, err
 	}
 
-	// 2. 공개된 키로 모든 암호화 투표 복호화 + 재집계
-	encKey, err := hex.DecodeString(bb.EncryptionKeyHex)
-	if err != nil {
-		return nil, fmt.Errorf("공개 키 디코딩 실패: %w", err)
+	// 2. 선거 정보 조회 (후보자 목록 필요)
+	election, elErr := c.GetElection(ctx, electionID)
+	if elErr != nil {
+		return nil, fmt.Errorf("선거 정보 조회 실패: %w", elErr)
 	}
 
 	recomputed := make(map[string]int)
 	verified := 0
 	failed := 0
+	isElGamal := bb.EncryptionMode == "elgamal"
 
-	for _, ballot := range bb.EncryptedBallots {
-		if ballot.EncryptedCandidateID == "" {
-			failed++
-			continue
+	if isElGamal && bb.ElGamalPubKey != nil {
+		// [PAPER-11] ElGamal 모드: ZKP로 검증 (비밀키 불필요)
+		for _, proof := range bb.DecryptionProofs {
+			if proof.ZKProof == nil {
+				failed++
+				continue
+			}
+			// decryptedHash에서 후보자 역추적 (후보 목록 대조)
+			var matchedCandidate string
+			for _, cand := range election.Candidates {
+				dh := sha256.Sum256([]byte(cand))
+				if hex.EncodeToString(dh[:]) == proof.DecryptedHash {
+					matchedCandidate = cand
+					break
+				}
+			}
+			if matchedCandidate == "" {
+				failed++
+				continue
+			}
+			if chaumPedersenVerify(bb.ElGamalPubKey, proof.ZKProof, matchedCandidate) {
+				recomputed[matchedCandidate]++
+				verified++
+			} else {
+				failed++
+			}
 		}
-		decrypted, decErr := decryptAESGCM(encKey, ballot.EncryptedCandidateID)
-		if decErr != nil {
-			failed++
-			continue
+	} else {
+		// AES 모드: 공개 키로 복호화 + 재집계
+		encKey, ekErr := hex.DecodeString(bb.EncryptionKeyHex)
+		if ekErr != nil {
+			return nil, fmt.Errorf("공개 키 디코딩 실패: %w", ekErr)
 		}
-		recomputed[decrypted]++
-		verified++
+		for _, ballot := range bb.EncryptedBallots {
+			if ballot.EncryptedCandidateID == "" {
+				failed++
+				continue
+			}
+			decrypted, decErr := decryptAESGCM(encKey, ballot.EncryptedCandidateID)
+			if decErr != nil {
+				failed++
+				continue
+			}
+			recomputed[decrypted]++
+			verified++
+		}
+		// 개별 DecryptionProof 검증
+		for _, proof := range bb.DecryptionProofs {
+			decrypted, decErr := decryptAESGCM(encKey, proof.EncryptedCandidateID)
+			if decErr != nil {
+				continue
+			}
+			dh := sha256.Sum256([]byte(decrypted))
+			if hex.EncodeToString(dh[:]) != proof.DecryptedHash {
+				failed++
+			}
+		}
 	}
 
 	// 3. 재집계 결과와 원본 비교
@@ -2725,18 +2798,6 @@ func (c *VotingContract) VerifyTallyPublic(
 	// 4. DecryptionProof 해시 재계산 및 비교
 	recomputedProofHash := computeTallyProofHash(bb.DecryptionProofs)
 	proofHashMatch := recomputedProofHash == bb.TallyProofHash
-
-	// 5. 개별 DecryptionProof 검증 (decryptedHash 확인)
-	for _, proof := range bb.DecryptionProofs {
-		decrypted, decErr := decryptAESGCM(encKey, proof.EncryptedCandidateID)
-		if decErr != nil {
-			continue
-		}
-		dh := sha256.Sum256([]byte(decrypted))
-		if hex.EncodeToString(dh[:]) != proof.DecryptedHash {
-			resultsMatch = false
-		}
-	}
 
 	now, err := getTxTime(ctx)
 	if err != nil {

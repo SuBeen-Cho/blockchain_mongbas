@@ -50,6 +50,26 @@ function encryptAESGCM(keyHex, plaintext) {
   return Buffer.concat([nonce, encrypted, tag]).toString('hex');
 }
 
+// [PAPER-11] ElGamal 암호화용 BigInt 헬퍼
+function bufToBigInt(buf) {
+  let result = 0n;
+  for (const byte of buf) {
+    result = (result << 8n) | BigInt(byte);
+  }
+  return result;
+}
+
+function modPow(base, exp, mod) {
+  base = ((base % mod) + mod) % mod;
+  let result = 1n;
+  while (exp > 0n) {
+    if (exp & 1n) result = (result * base) % mod;
+    exp >>= 1n;
+    base = (base * base) % mod;
+  }
+  return result;
+}
+
 function mutateTokenSignature(token) {
   const parts = token.split('.');
   const sigBuf = Buffer.from(parts[2], 'base64url');
@@ -411,6 +431,96 @@ async function main() {
 
   const receiptFreeOk = voteCounted.included && !fakeCheck.included;
 
+  // ── Phase 14: ElGamal Full Pipeline (PAPER-11) ─────────
+  console.log('\n── Phase 14: ElGamal Full Pipeline ──');
+
+  const EG_ELECTION_ID = `elgamal-e2e-${Date.now()}`;
+  const EG_CANDIDATES = ['ALICE', 'BOB'];
+  const egEndTime = Math.floor(Date.now() / 1000) + 3600;
+  const egStartTime = Math.floor(Date.now() / 1000) - 60;
+
+  // 14a. ElGamal 모드 선거 생성
+  await assertOk('create ElGamal election',
+    requestJson('/api/elections', {
+      method: 'POST',
+      body: JSON.stringify({
+        electionID: EG_ELECTION_ID,
+        title: 'ElGamal E2E Test',
+        description: 'Chaum-Pedersen ZKP test',
+        candidates: EG_CANDIDATES,
+        startTime: egStartTime,
+        endTime: egEndTime,
+        encryptionMode: 'elgamal',
+      }),
+    })
+  );
+
+  // 14b. 선거 활성화
+  await assertOk('activate ElGamal election',
+    requestJson(`/api/elections/${EG_ELECTION_ID}/activate`, { method: 'POST' })
+  );
+
+  // 14c. 선거 정보 확인 (encryptionMode == elgamal)
+  const egElection = await assertOk('get ElGamal election',
+    requestJson(`/api/elections/${EG_ELECTION_ID}`)
+  );
+  console.log(`[INFO] ElGamal election mode: ${egElection.encryptionMode}`);
+  if (egElection.encryptionMode !== 'elgamal') throw new Error('Election mode is not elgamal');
+
+  // 14d. ElGamal 공개키 조회
+  const egPubKey = await assertOk('get ElGamal public key',
+    requestJson(`/api/elections/${EG_ELECTION_ID}/elgamal-pubkey`)
+  );
+  console.log(`[INFO] ElGamal pubKey.Y: ${egPubKey.pubKey.y.substring(0, 32)}...`);
+
+  // 14e. ElGamal 암호화 투표 (BigInt 기반)
+  const egBf = await assertOk('get ElGamal blinding factor',
+    requestJson(`/api/elections/${EG_ELECTION_ID}/blinding-factor`)
+  );
+  const egVoterSecret = crypto.randomBytes(32).toString('hex');
+  const egNullifier = sha256Hex(egVoterSecret + EG_ELECTION_ID + egBf.blindingFactor);
+
+  // ElGamal 암호화 (Node.js BigInt)
+  const p = BigInt('0x' + egPubKey.pubKey.p);
+  const g = BigInt('0x' + egPubKey.pubKey.g);
+  const y = BigInt('0x' + egPubKey.pubKey.y);
+  const candidateBytes = Buffer.concat([Buffer.from([0x01]), Buffer.from('ALICE')]);
+  const m = bufToBigInt(candidateBytes);
+  const rBytes = crypto.randomBytes(32);
+  let r = bufToBigInt(rBytes) % (p - 2n);
+  if (r === 0n) r = 1n;
+  const c1 = modPow(g, r, p);
+  const c2 = (m * modPow(y, r, p)) % p;
+  const egEncrypted = `${c1.toString(16)}:${c2.toString(16)}`;
+
+  await assertOk('cast ElGamal vote',
+    requestJson('/api/vote', {
+      method: 'POST',
+      body: JSON.stringify({
+        electionID: EG_ELECTION_ID,
+        encryptedCandidateID: egEncrypted,
+        nullifierHash: egNullifier,
+      }),
+    })
+  );
+  console.log('[INFO] ElGamal blind vote cast successfully');
+
+  // 14f. 선거 종료 + 집계
+  await assertOk('close ElGamal election',
+    requestJson(`/api/elections/${EG_ELECTION_ID}/close`, { method: 'POST' })
+  );
+  const egTally = await assertOk('get ElGamal tally',
+    requestJson(`/api/elections/${EG_ELECTION_ID}/tally`)
+  );
+  console.log(`[INFO] ElGamal tally: ${JSON.stringify(egTally.results)}`);
+
+  // 14g. ZKP 검증
+  const egZkp = await assertOk('verify ElGamal ZKP',
+    requestJson(`/api/elections/${EG_ELECTION_ID}/verify-elgamal`, { method: 'POST' })
+  );
+  console.log(`[INFO] ElGamal ZKP: valid=${egZkp.isValid}, verified=${egZkp.verified}/${egZkp.totalProofs}`);
+  const elgamalZkpOk = egZkp.isValid;
+
   // ── 최종 요약 ──────────────────────────────────────────────
   console.log('\n═══════════════════════════════════════════════════');
   console.log(' SUMMARY');
@@ -428,8 +538,9 @@ async function main() {
   console.log(`  Universal:    public verify=${universalVerified} (PAPER-6)`);
   console.log(`  ReceiptFree:  ${receiptFreeOk} (PAPER-8)`);
   console.log(`  Security:     ${achieved}/5 achieved, ${partial}/1 partial`);
+  console.log(`  ElGamal ZKP:  ${elgamalZkpOk} (Chaum-Pedersen, PAPER-11)`);
   console.log('═══════════════════════════════════════════════════');
-  console.log('[DONE] Full Election E2E Integration Test completed (13 phases)');
+  console.log('[DONE] Full Election E2E Integration Test completed (14 phases)');
 }
 
 main().catch((err) => {
