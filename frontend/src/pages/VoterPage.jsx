@@ -18,6 +18,7 @@ import {
   encryptCandidateID,
   verifyBenalohAudit,
   elgamalEncrypt,
+  generateBallotValidityProof,
 } from '../utils/crypto.js';
 
 const API = '/api';
@@ -139,12 +140,19 @@ export default function VoterPage() {
 
       const body = { electionID, nullifierHash };
 
-      // [PAPER-1/11] Blind Mode 암호화
+      // [PAPER-1/13] Blind Mode 암호화
       if (blindMode) {
         if (isElGamal && elgamalPubKey) {
-          // [PAPER-11] ElGamal 공개키 암호화 (비결정론적, 랜덤 r)
-          const { c1, c2 } = elgamalEncrypt(elgamalPubKey, candidateID);
+          // [PAPER-13] Exponential ElGamal + Ballot Validity ZKP
+          const candidateIndex = (election?.candidates || []).indexOf(candidateID);
+          if (candidateIndex < 0) throw new Error('후보자를 선택해주세요');
+          const { c1, c2, _r } = elgamalEncrypt(elgamalPubKey, candidateID, candidateIndex);
           body.encryptedCandidateID = `${c1}:${c2}`;
+          // Disjunctive Chaum-Pedersen ZKP 생성
+          const bvp = generateBallotValidityProof(
+            elgamalPubKey, c1, c2, _r, candidateIndex, election.candidates.length
+          );
+          body.ballotValidityProof = JSON.stringify(bvp);
         } else {
           // AES-256-GCM 대칭키 암호화 (결정론적 nonce)
           body.encryptedCandidateID = await encryptCandidateID(encryptionKey, candidateID);

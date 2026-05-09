@@ -238,6 +238,26 @@ type VoterPWPrivate struct {
 	PanicCandidateID string `json:"panicCandidateID"` // 강압자에게 보여줄 가짜 후보
 }
 
+// BallotValidityProof [PAPER-13] Disjunctive Chaum-Pedersen ZKP
+// 투표 암호문이 유효한 후보 인코딩 {g^(B^0), g^(B^1), ..., g^(B^(k-1))} 중 하나임을 증명
+// Cramer-Damgård-Schoenmakers (1994) OR-proof 기법
+type BallotValidityProof struct {
+	// 각 후보 j에 대한 시뮬레이션/실제 증명 컴포넌트
+	A1s []string `json:"a1s"` // g^k_j mod p (각 후보)
+	A2s []string `json:"a2s"` // c1^k_j mod p (각 후보)
+	Es  []string `json:"es"`  // challenge e_j (hex)
+	Zs  []string `json:"zs"`  // response z_j (hex)
+}
+
+// HomomorphicTallyProof [PAPER-13] 동형 집계 정확성 증명
+// 암호문 곱의 복호화가 올바름을 증명하는 Chaum-Pedersen ZKP
+type HomomorphicTallyProof struct {
+	AccC1 string             `json:"accC1"` // 누적 c1 = Π c1_i mod p
+	AccC2 string             `json:"accC2"` // 누적 c2 = Π c2_i mod p
+	DecryptedSum int         `json:"decryptedSum"` // g^sum의 이산로그 복원 결과
+	ZKProof *ChaumPedersenProof `json:"zkProof,omitempty"` // 복호화 정확성 ZKP
+}
+
 // BallotPreparation [PAPER-3] Benaloh Challenge용 사전 암호화 투표
 // PDC에 임시 저장되며, audit 또는 cast 중 하나만 수행 가능
 type BallotPreparation struct {
@@ -267,6 +287,12 @@ const (
 	// Panic Mode에서 유권자는 이 더미 레코드 중 하나를 실제 투표처럼 보여줍니다.
 	// 더미도 실제 Nullifier로 저장되어 Merkle Tree에 포함 → 수학적으로 검증 가능
 	PanicDummyCount = 3
+
+	// [PAPER-13] HomomorphicBase 동형 집계용 base encoding
+	// 후보 i → 메시지 m = B^i (0-indexed)
+	// 집계: Σm_i = c_0*B^0 + c_1*B^1 + ... (base-B 자릿수 분해로 후보별 득표수 복원)
+	// B=10000 → 후보당 최대 9999표 지원
+	HomomorphicBase = 10000
 )
 
 const (
@@ -1021,27 +1047,33 @@ func (c *VotingContract) CastVote(
 		// [PAPER-1] 클라이언트-사이드 암호화 모드 (blind mode)
 
 		if election.EncryptionMode == "elgamal" {
-			// [PAPER-11] ElGamal blind mode: 클라이언트가 공개키로 암호화
-			// 체인코드는 비밀키로 복호화하여 유효 후보 검증
-			privKey, pkErr := getElGamalPrivateKey(ctx, electionID)
-			if pkErr != nil {
-				return fmt.Errorf("ElGamal 비밀키 조회 실패: %w", pkErr)
-			}
-			// ElGamal 암호문 파싱: "c1_hex:c2_hex" 형식
+			// [PAPER-13] Exponential ElGamal: ZKP로 후보 유효성 검증 (복호화 없음!)
+			// 클라이언트가 disjunctive Chaum-Pedersen ZKP를 제출
+			// → 체인코드는 암호문이 유효 후보 인코딩 중 하나임을 검증
+			// → 개별 투표 복호화 불필요 → ballot secrecy 강화
 			parts := strings.SplitN(vp.EncryptedCandidateID, ":", 2)
 			if len(parts) != 2 {
 				return fmt.Errorf("ElGamal 암호문 형식 오류 (c1:c2 형식 필요)")
 			}
-			decrypted, decErr := elgamalDecrypt(privKey, parts[0], parts[1])
-			if decErr != nil {
-				return fmt.Errorf("ElGamal 복호화 실패: %w", decErr)
+
+			// transient에서 BallotValidityProof 파싱
+			bvpBytes, bvpOk := transient["ballotValidityProof"]
+			if !bvpOk || bvpBytes == nil {
+				return fmt.Errorf("ElGamal 모드에서 ballotValidityProof가 필요합니다")
 			}
-			if !contains(election.Candidates, decrypted) {
-				return fmt.Errorf("유효하지 않은 후보자입니다")
+			var bvp BallotValidityProof
+			if err := json.Unmarshal(bvpBytes, &bvp); err != nil {
+				return fmt.Errorf("BallotValidityProof 파싱 실패: %w", err)
 			}
+
+			// Disjunctive Chaum-Pedersen ZKP 검증
+			if !verifyBallotValidityZKP(election.ElGamalPubKey, parts[0], parts[1], len(election.Candidates), &bvp) {
+				return fmt.Errorf("투표 유효성 ZKP 검증 실패: 유효하지 않은 후보 인코딩")
+			}
+
 			encryptedCandID = vp.EncryptedCandidateID
 			candidateCommitment = computeCandidateCommitment(electionID, nullifierHash, encryptedCandID)
-			log.Printf("[CastVote] ElGamal blind mode — election: %s", electionID)
+			log.Printf("[CastVote] ElGamal exponential blind mode + ZKP — election: %s", electionID)
 		} else {
 			// AES blind mode (기존)
 			if ekErr != nil {
@@ -1347,6 +1379,11 @@ func (c *VotingContract) TallyVotes(
 	panicFiltered := 0 // [PAPER-12] Cleansing-Hiding: 필터링된 패닉 투표 수 (비공개)
 	var decProofs []DecryptionProof
 
+	// [PAPER-13] 동형 집계를 위한 암호문 누적기 (ElGamal 모드)
+	accC1 := big.NewInt(1) // Π c1_i mod p
+	accC2 := big.NewInt(1) // Π c2_i mod p
+	homomorphicCount := 0  // 동형 누적에 포함된 투표 수
+
 	for resultsIterator.HasNext() {
 		queryResult, err := resultsIterator.Next()
 		if err != nil {
@@ -1371,43 +1408,39 @@ func (c *VotingContract) TallyVotes(
 			}
 		}
 
-		candID := nullifier.CandidateID
+		// 더미 nullifier (PDC 항목 없음, EncryptedCandidateID 없음) → 동형 누적에서 제외
+		if nullifier.EncryptedCandidateID == "" {
+			// 레거시 평문 또는 더미 nullifier
+			candID := nullifier.CandidateID
+			if candID != "" {
+				results[candID]++
+				totalVotes++
+			}
+			continue
+		}
 
-		if useElGamal && nullifier.EncryptedCandidateID != "" {
-			// [PAPER-11] ElGamal 복호화 + Chaum-Pedersen ZKP 생성
+		if useElGamal {
+			// [PAPER-13] Exponential ElGamal 동형 집계
+			// 개별 복호화 없이 암호문을 곱셈으로 누적
+			// Π E(g^m_i) = E(g^(Σm_i)) → 한 번만 복호화
 			parts := strings.SplitN(nullifier.EncryptedCandidateID, ":", 2)
 			if len(parts) == 2 {
-				decrypted, decErr := elgamalDecrypt(elgamalPrivKey, parts[0], parts[1])
-				if decErr == nil {
-					candID = decrypted
-					// 평문의 BigInt 표현
-					m := elgamalEncodePlaintext(decrypted)
-					// Chaum-Pedersen ZKP 생성
-					zkProof, _, zpErr := chaumPedersenProve(
-						elgamalPrivKey, parts[0], parts[1], m.Text(16),
-						nullifier.NullifierHash, electionID,
-					)
-					dh := sha256.Sum256([]byte(decrypted))
-					dp := DecryptionProof{
-						NullifierHash:        nullifier.NullifierHash,
-						EncryptedCandidateID: nullifier.EncryptedCandidateID,
-						DecryptedHash:        hex.EncodeToString(dh[:]),
-						CandidateCommitment:  nullifier.CandidateCommitment,
-					}
-					if zpErr == nil {
-						zkProof.CandidateCommitment = nullifier.CandidateCommitment
-						dp.ZKProof = zkProof
-					}
-					decProofs = append(decProofs, dp)
-				} else {
-					log.Printf("[TallyVotes] ElGamal 복호화 실패 — %v", decErr)
+				c1i, ok1 := new(big.Int).SetString(parts[0], 16)
+				c2i, ok2 := new(big.Int).SetString(parts[1], 16)
+				if ok1 && ok2 {
+					accC1.Mul(accC1, c1i)
+					accC1.Mod(accC1, elgamalP)
+					accC2.Mul(accC2, c2i)
+					accC2.Mod(accC2, elgamalP)
+					homomorphicCount++
 				}
 			}
-		} else if useAES && nullifier.EncryptedCandidateID != "" {
-			// AES 복호화 (기존)
+			totalVotes++
+		} else if useAES {
+			// AES 복호화 (기존 — 개별 복호화)
 			decrypted, decErr := decryptAESGCM(encKey, nullifier.EncryptedCandidateID)
 			if decErr == nil {
-				candID = decrypted
+				candID := decrypted
 				dh := sha256.Sum256([]byte(decrypted))
 				decProofs = append(decProofs, DecryptionProof{
 					NullifierHash:        nullifier.NullifierHash,
@@ -1415,13 +1448,67 @@ func (c *VotingContract) TallyVotes(
 					DecryptedHash:        hex.EncodeToString(dh[:]),
 					CandidateCommitment:  nullifier.CandidateCommitment,
 				})
+				results[candID]++
 			} else {
 				log.Printf("[TallyVotes] AES 복호화 실패 (평문 폴백) — %v", decErr)
+				results[nullifier.CandidateID]++
 			}
+			totalVotes++
+		}
+	}
+
+	// [PAPER-13] ElGamal 동형 집계 완료 — 누적 암호문 한 번만 복호화
+	if useElGamal && homomorphicCount > 0 {
+		// g^sum = accC2 * accC1^(-x) mod p
+		gSum, decErr := expElGamalDecryptToGm(elgamalPrivKey, accC1.Text(16), accC2.Text(16))
+		if decErr != nil {
+			return nil, fmt.Errorf("동형 집계 복호화 실패: %w", decErr)
 		}
 
-		results[candID]++
-		totalVotes++
+		// BSGS로 이산로그 복원: sum = log_g(gSum)
+		numCands := len(election.Candidates)
+		maxSum := int64(1)
+		for i := 0; i < numCands; i++ {
+			maxSum *= HomomorphicBase
+		}
+		if maxSum > 100000000 { // 안전 상한 (메모리 보호)
+			maxSum = 100000000
+		}
+
+		sum, bsgsErr := babyStepGiantStep(gSum, elgamalG, elgamalP, maxSum)
+		if bsgsErr != nil {
+			return nil, fmt.Errorf("BSGS 이산로그 복원 실패: %w", bsgsErr)
+		}
+
+		// base-B 자릿수 분해 → 후보별 득표수
+		counts := decomposeBaseB(sum, numCands)
+		for i, cand := range election.Candidates {
+			results[cand] = counts[i]
+		}
+
+		// 동형 집계 Chaum-Pedersen ZKP 생성 (누적 암호문의 복호화 정확성 증명)
+		sumStr := fmt.Sprintf("homomorphic_sum:%d", sum)
+		dh := sha256.Sum256([]byte(sumStr))
+		dhHex := hex.EncodeToString(dh[:])
+
+		zkProof, zpErr := chaumPedersenProveRaw(
+			elgamalPrivKey, accC1.Text(16), accC2.Text(16), gSum.Text(16),
+			"homomorphic_tally", electionID, dhHex,
+		)
+
+		dp := DecryptionProof{
+			NullifierHash:        "HOMOMORPHIC_TALLY",
+			EncryptedCandidateID: accC1.Text(16) + ":" + accC2.Text(16),
+			DecryptedHash:        dhHex,
+		}
+		if zpErr == nil {
+			zkProof.CandidateCommitment = fmt.Sprintf("sum=%d,counts=%v", sum, counts)
+			dp.ZKProof = zkProof
+		}
+		decProofs = append(decProofs, dp)
+
+		log.Printf("[TallyVotes] 동형 집계 완료 — sum=%d, counts=%v, 투표수=%d",
+			sum, counts, homomorphicCount)
 	}
 
 	// [PAPER-2] 전체 집계 증명 해시 계산: 모든 DecryptionProof의 정렬된 해시
@@ -2935,16 +3022,16 @@ func (c *VotingContract) GetSecurityProperties(
 		TalliedAsRecorded: SecurityProperty{
 			Property:   "Tallied-as-Recorded",
 			Status:     "achieved",
-			Mechanism:  "DecryptionProof per-vote + tallyProofHash aggregate",
-			Assumption: "SHA-256 preimage resistance + AES-256 correctness",
-			PaperRef:   "PAPER-2 (22차)",
+			Mechanism:  "Homomorphic tally (ElGamal) with Chaum-Pedersen ZKP / DecryptionProof per-vote (AES)",
+			Assumption: "DDH assumption (ElGamal) + SHA-256 preimage resistance",
+			PaperRef:   "PAPER-2 (22차), PAPER-13 (33차)",
 		},
 		UniversalVerifiability: SecurityProperty{
 			Property:   "Universal Verifiability",
 			Status:     "achieved",
-			Mechanism:  "Bulletin Board + post-election key publication + independent re-tally",
-			Assumption: "AES-256-GCM correctness + SHA-256 collision resistance",
-			PaperRef:   "PAPER-6 (26차)",
+			Mechanism:  "Homomorphic tally ZKP (ElGamal) / Bulletin Board + key publication (AES)",
+			Assumption: "DDH assumption + SHA-256 collision resistance",
+			PaperRef:   "PAPER-6 (26차), PAPER-13 (33차)",
 		},
 		CoercionResistance: SecurityProperty{
 			Property:   "Coercion Resistance (Layered)",
@@ -2962,8 +3049,10 @@ func (c *VotingContract) GetSecurityProperties(
 		},
 		CryptoPrimitives: []string{
 			"AES-256-GCM (symmetric encryption, deterministic nonce)",
-			"ElGamal (public-key encryption, RFC 3526 Group 14, 2048-bit MODP)",
+			"Exponential ElGamal (additive homomorphic encryption, RFC 3526 Group 14)",
+			"Disjunctive Chaum-Pedersen ZKP (ballot validity proof, Cramer-Damgård-Schoenmakers 1994)",
 			"Chaum-Pedersen ZKP (non-interactive decryption correctness proof)",
+			"Baby-Step Giant-Step (discrete log recovery for homomorphic tally)",
 			"SHA-256 (hash, commitment, Merkle tree)",
 			"Ed25519 (credential signature, RFC 8032)",
 			"HMAC-SHA256 (credential authentication)",
@@ -3272,6 +3361,56 @@ func chaumPedersenProve(x *big.Int, c1Hex, c2Hex, mHex, nullifierHash, electionI
 	return proof, plaintext, nil
 }
 
+// chaumPedersenProveRaw [PAPER-13] Chaum-Pedersen ZKP 생성 (raw BigInt 평문)
+// 동형 집계용: 복호화 결과가 g^sum (0x01 prefix 없음)이므로 elgamalDecodePlaintext 호출 불가
+// 대신 decryptedHash를 외부에서 직접 제공
+func chaumPedersenProveRaw(x *big.Int, c1Hex, c2Hex, mHex, nullifierHash, electionID, decryptedHashHex string) (*ChaumPedersenProof, error) {
+	c1, _ := new(big.Int).SetString(c1Hex, 16)
+	c2, _ := new(big.Int).SetString(c2Hex, 16)
+	m, _ := new(big.Int).SetString(mHex, 16)
+	y := new(big.Int).Exp(elgamalG, x, elgamalP)
+
+	mInv := new(big.Int).ModInverse(m, elgamalP)
+	if mInv == nil {
+		return nil, fmt.Errorf("모듈러 역원 계산 실패")
+	}
+	s := new(big.Int).Mul(c2, mInv)
+	s.Mod(s, elgamalP)
+
+	kInput := append(x.Bytes(), []byte(c1Hex+c2Hex+electionID+nullifierHash)...)
+	kHash := sha256.Sum256(kInput)
+	k := new(big.Int).SetBytes(kHash[:])
+	k.Mod(k, elgamalQ)
+	if k.Sign() == 0 {
+		k.SetInt64(1)
+	}
+
+	a1 := new(big.Int).Exp(elgamalG, k, elgamalP)
+	a2 := new(big.Int).Exp(c1, k, elgamalP)
+
+	eInput := fmt.Sprintf("%s|%s|%s|%s|%s|%s",
+		elgamalG.Text(16), y.Text(16), c1.Text(16), s.Text(16), a1.Text(16), a2.Text(16))
+	eHash := sha256.Sum256([]byte(eInput))
+	e := new(big.Int).SetBytes(eHash[:])
+	e.Mod(e, elgamalQ)
+
+	z := new(big.Int).Mul(e, x)
+	z.Add(z, k)
+	z.Mod(z, elgamalQ)
+
+	proof := &ChaumPedersenProof{
+		NullifierHash: nullifierHash,
+		C1:            c1Hex,
+		C2:            c2Hex,
+		DecryptedHash: decryptedHashHex,
+		A1:            a1.Text(16),
+		A2:            a2.Text(16),
+		E:             e.Text(16),
+		Z:             z.Text(16),
+	}
+	return proof, nil
+}
+
 // chaumPedersenVerify Chaum-Pedersen ZKP 검증 (누구나 공개키로 검증 가능)
 // 검증: g^z == a1 * y^e mod p AND c1^z == a2 * s^e mod p
 func chaumPedersenVerify(pubKey *ElGamalPublicKey, proof *ChaumPedersenProof, decryptedPlaintext string) bool {
@@ -3321,6 +3460,157 @@ func getElGamalPrivateKey(ctx contractapi.TransactionContextInterface, electionI
 		return nil, fmt.Errorf("ElGamal 비밀키 파싱 실패")
 	}
 	return x, nil
+}
+
+// ============================================================
+// [PAPER-13] Exponential ElGamal 동형 집계 헬퍼
+// ============================================================
+
+// expElGamalEncodeCandidate 후보 인덱스를 Exponential ElGamal 메시지로 인코딩
+// candidate index i → g^(B^i) mod p (0-indexed)
+// 동형 성질: Π E(B^i_j) = E(Σ B^i_j) → base-B 자릿수 분해로 후보별 득표수 복원
+func expElGamalEncodeCandidate(candidateIndex int) *big.Int {
+	// m = B^candidateIndex
+	base := big.NewInt(HomomorphicBase)
+	exp := big.NewInt(int64(candidateIndex))
+	m := new(big.Int).Exp(base, exp, nil) // B^i (작은 수, mod 불필요)
+	// g^m mod p
+	gm := new(big.Int).Exp(elgamalG, m, elgamalP)
+	return gm
+}
+
+// expElGamalDecryptToGm ElGamal 복호화하되 평문이 아닌 g^m을 반환
+// 일반 ElGamal: c2 * c1^(-x) = m (직접 평문)
+// Exponential ElGamal: c2 * c1^(-x) = g^m (이산로그 필요)
+func expElGamalDecryptToGm(x *big.Int, c1Hex, c2Hex string) (*big.Int, error) {
+	c1, ok1 := new(big.Int).SetString(c1Hex, 16)
+	c2, ok2 := new(big.Int).SetString(c2Hex, 16)
+	if !ok1 || !ok2 {
+		return nil, fmt.Errorf("ElGamal 암호문 파싱 실패")
+	}
+	s := new(big.Int).Exp(c1, x, elgamalP)
+	sInv := new(big.Int).ModInverse(s, elgamalP)
+	if sInv == nil {
+		return nil, fmt.Errorf("모듈러 역원 계산 실패")
+	}
+	gm := new(big.Int).Mul(c2, sInv)
+	gm.Mod(gm, elgamalP)
+	return gm, nil
+}
+
+// babyStepGiantStep g^m mod p에서 m을 복원 (Baby-Step Giant-Step)
+// O(√maxValue) 시간/공간 복잡도
+// maxValue: m의 최대값 (= HomomorphicBase^numCandidates 이내)
+func babyStepGiantStep(target, g, p *big.Int, maxValue int64) (int64, error) {
+	// m = ceil(√maxValue)
+	mStep := int64(1)
+	for mStep*mStep < maxValue {
+		mStep++
+	}
+
+	// Baby step: table[g^j mod p] = j, for j = 0..mStep-1
+	table := make(map[string]int64, mStep)
+	gj := big.NewInt(1)
+	for j := int64(0); j < mStep; j++ {
+		table[gj.Text(16)] = j
+		gj.Mul(gj, g)
+		gj.Mod(gj, p)
+	}
+
+	// Giant step factor: g^(-mStep) mod p
+	gm := new(big.Int).Exp(g, big.NewInt(mStep), p)
+	gmInv := new(big.Int).ModInverse(gm, p)
+	if gmInv == nil {
+		return 0, fmt.Errorf("BSGS: giant step 역원 계산 실패")
+	}
+
+	// Giant step: gamma = target * (g^(-mStep))^i mod p
+	gamma := new(big.Int).Set(target)
+	for i := int64(0); i < mStep; i++ {
+		if j, found := table[gamma.Text(16)]; found {
+			result := i*mStep + j
+			return result, nil
+		}
+		gamma.Mul(gamma, gmInv)
+		gamma.Mod(gamma, p)
+	}
+	return 0, fmt.Errorf("BSGS: 이산로그 복원 실패 (maxValue=%d 초과)", maxValue)
+}
+
+// decomposeBaseB 합산 값을 base-B로 자릿수 분해 → 후보별 득표수 복원
+// sum = c_0 + c_1*B + c_2*B^2 + ...
+func decomposeBaseB(sum int64, numCandidates int) []int {
+	counts := make([]int, numCandidates)
+	for i := 0; i < numCandidates; i++ {
+		counts[i] = int(sum % HomomorphicBase)
+		sum /= HomomorphicBase
+	}
+	return counts
+}
+
+// verifyBallotValidityZKP [PAPER-13] Disjunctive Chaum-Pedersen ZKP 검증
+// 투표 암호문 (c1, c2)가 {g^(B^0), g^(B^1), ..., g^(B^(k-1))} 중 하나를 암호화했음을 검증
+// Cramer-Damgård-Schoenmakers (1994) OR-proof
+func verifyBallotValidityZKP(pubKey *ElGamalPublicKey, c1Hex, c2Hex string, numCandidates int, proof *BallotValidityProof) bool {
+	if proof == nil || len(proof.A1s) != numCandidates || len(proof.A2s) != numCandidates ||
+		len(proof.Es) != numCandidates || len(proof.Zs) != numCandidates {
+		return false
+	}
+
+	p, _ := new(big.Int).SetString(pubKey.P, 16)
+	g, _ := new(big.Int).SetString(pubKey.G, 16)
+	y, _ := new(big.Int).SetString(pubKey.Y, 16)
+	c1, _ := new(big.Int).SetString(c1Hex, 16)
+	c2, _ := new(big.Int).SetString(c2Hex, 16)
+	q := new(big.Int).Rsh(new(big.Int).Sub(p, big.NewInt(1)), 1)
+
+	// 각 후보 j에 대해 검증
+	eSum := big.NewInt(0)
+	for j := 0; j < numCandidates; j++ {
+		a1j, _ := new(big.Int).SetString(proof.A1s[j], 16)
+		a2j, _ := new(big.Int).SetString(proof.A2s[j], 16)
+		ej, _ := new(big.Int).SetString(proof.Es[j], 16)
+		zj, _ := new(big.Int).SetString(proof.Zs[j], 16)
+
+		// 후보 j의 메시지: g^(B^j) mod p
+		mj := expElGamalEncodeCandidate(j)
+		// c2/mj mod p = c2 * mj^(-1) mod p
+		mjInv := new(big.Int).ModInverse(mj, p)
+		c2DivMj := new(big.Int).Mul(c2, mjInv)
+		c2DivMj.Mod(c2DivMj, p)
+
+		// 검증 1: g^zj == a1j * c1^ej mod p
+		lhs1 := new(big.Int).Exp(g, zj, p)
+		rhs1 := new(big.Int).Exp(c1, ej, p)
+		rhs1.Mul(rhs1, a1j)
+		rhs1.Mod(rhs1, p)
+		if lhs1.Cmp(rhs1) != 0 {
+			return false
+		}
+
+		// 검증 2: y^zj == a2j * (c2/mj)^ej mod p
+		lhs2 := new(big.Int).Exp(y, zj, p)
+		rhs2 := new(big.Int).Exp(c2DivMj, ej, p)
+		rhs2.Mul(rhs2, a2j)
+		rhs2.Mod(rhs2, p)
+		if lhs2.Cmp(rhs2) != 0 {
+			return false
+		}
+
+		eSum.Add(eSum, ej)
+	}
+
+	// 전체 challenge 합산 검증: Σe_j == SHA256(c1 || c2 || a1_0 || a2_0 || ... || a1_{k-1} || a2_{k-1}) mod q
+	hashInput := c1Hex + "|" + c2Hex
+	for j := 0; j < numCandidates; j++ {
+		hashInput += "|" + proof.A1s[j] + "|" + proof.A2s[j]
+	}
+	eHash := sha256.Sum256([]byte(hashInput))
+	expectedE := new(big.Int).SetBytes(eHash[:])
+	expectedE.Mod(expectedE, q)
+
+	eSum.Mod(eSum, q)
+	return eSum.Cmp(expectedE) == 0
 }
 
 // ============================================================

@@ -225,33 +225,34 @@ export async function verifyBenalohAudit(auditResult) {
 }
 
 // ============================================================
-// [PAPER-11] ElGamal 암호화 — BigInt 기반 (RFC 3526 Group 14)
+// [PAPER-13] Exponential ElGamal 암호화 — 동형 집계 지원
 // ============================================================
 
+const HOMOMORPHIC_BASE = 10000n;
+
 /**
- * [PAPER-11] ElGamal 암호화: candidateID를 공개키 (p, g, y)로 암호화합니다.
+ * [PAPER-13] Exponential ElGamal 암호화: 후보 인덱스를 공개키로 암호화합니다.
  *
- * 브라우저에서 랜덤 r을 생성하여 비결정론적 암호화를 수행합니다.
- * 체인코드에서는 비밀키 x로 결정론적 복호화만 수행 → Fabric 결정론성 유지.
+ * Exponential ElGamal: E(m) = (g^r, g^m * y^r) — 메시지가 지수에 위치
+ * → 동형 성질: Π E(m_i) = E(Σm_i) — 암호문 곱 = 합의 암호화
  *
- * 학술적 의의: AES 대칭키와 달리 공개키 암호화 → 키 공개 없이 ZKP로 검증 가능
+ * Base encoding: 후보 i → m = B^i (B=10000)
+ * → 합산: Σ B^i_j = c_0 + c_1*B + c_2*B^2 + ...
+ * → base-B 자릿수 분해로 후보별 득표수 복원
  *
  * @param {Object} pubKey - ElGamal 공개키 { p, g, y } (hex strings)
- * @param {string} candidateID - 암호화할 후보자 ID
- * @returns {{c1: string, c2: string}} 암호문 (hex strings)
+ * @param {string} candidateID - 후보자 ID
+ * @param {number} candidateIndex - 후보자 인덱스 (0-based, candidates 배열 순서)
+ * @returns {{c1: string, c2: string, r: bigint}} 암호문 + r (ZKP 생성용)
  */
-export function elgamalEncrypt(pubKey, candidateID) {
+export function elgamalEncrypt(pubKey, candidateID, candidateIndex = 0) {
   const p = BigInt('0x' + pubKey.p);
   const g = BigInt('0x' + pubKey.g);
   const y = BigInt('0x' + pubKey.y);
 
-  // candidateID를 BigInt로 인코딩 (0x01 prefix → 0이 되지 않도록 보장)
-  const encoder = new TextEncoder();
-  const bytes = encoder.encode(candidateID);
-  const mBytes = new Uint8Array(bytes.length + 1);
-  mBytes[0] = 0x01;
-  mBytes.set(bytes, 1);
-  const m = bytesToBigInt(mBytes);
+  // [PAPER-13] Exponential encoding: m = B^candidateIndex, 메시지 = g^m
+  const m = HOMOMORPHIC_BASE ** BigInt(candidateIndex); // B^i
+  const gm = modPow(g, m, p); // g^(B^i) mod p
 
   // 랜덤 r 생성 (256비트, r < p-2)
   const rBytes = new Uint8Array(32);
@@ -263,14 +264,109 @@ export function elgamalEncrypt(pubKey, candidateID) {
 
   // c1 = g^r mod p
   const c1 = modPow(g, r, p);
-  // c2 = m * y^r mod p
+  // c2 = g^m * y^r mod p (Exponential ElGamal)
   const yr = modPow(y, r, p);
-  const c2 = (m * yr) % p;
+  const c2 = (gm * yr) % p;
 
   return {
     c1: c1.toString(16),
     c2: c2.toString(16),
+    _r: r, // ZKP 생성에 필요 (외부로 노출하지 않음)
   };
+}
+
+/**
+ * [PAPER-13] Disjunctive Chaum-Pedersen ZKP 생성 (Ballot Validity Proof)
+ *
+ * 암호문 (c1, c2)가 {g^(B^0), g^(B^1), ..., g^(B^(k-1))} 중 하나를 암호화했음을 증명
+ * 실제 후보 인덱스를 공개하지 않는 OR-proof (Cramer-Damgård-Schoenmakers 1994)
+ *
+ * @param {Object} pubKey - ElGamal 공개키 { p, g, y }
+ * @param {string} c1Hex - 암호문 c1 (hex)
+ * @param {string} c2Hex - 암호문 c2 (hex)
+ * @param {bigint} r - 암호화에 사용된 랜덤 값
+ * @param {number} actualIndex - 실제 투표한 후보 인덱스
+ * @param {number} numCandidates - 전체 후보 수
+ * @returns {Object} BallotValidityProof { a1s, a2s, es, zs }
+ */
+export function generateBallotValidityProof(pubKey, c1Hex, c2Hex, r, actualIndex, numCandidates) {
+  const p = BigInt('0x' + pubKey.p);
+  const g = BigInt('0x' + pubKey.g);
+  const y = BigInt('0x' + pubKey.y);
+  const q = (p - 1n) / 2n;
+  const c1 = BigInt('0x' + c1Hex);
+  const c2 = BigInt('0x' + c2Hex);
+
+  const a1s = new Array(numCandidates);
+  const a2s = new Array(numCandidates);
+  const es = new Array(numCandidates);
+  const zs = new Array(numCandidates);
+
+  // 실제 후보에 대한 랜덤 k 생성
+  const kBytes = new Uint8Array(32);
+  crypto.getRandomValues(kBytes);
+  let k = bytesToBigInt(kBytes) % q;
+  if (k === 0n) k = 1n;
+
+  // 시뮬레이션된 후보들에 대해 랜덤 e_j, z_j 생성
+  let eSum = 0n;
+  for (let j = 0; j < numCandidates; j++) {
+    if (j === actualIndex) continue;
+
+    // 후보 j의 메시지: g^(B^j) mod p
+    const mj = modPow(g, HOMOMORPHIC_BASE ** BigInt(j), p);
+    // c2/mj mod p
+    const mjInv = modInverse(mj, p);
+    const c2DivMj = (c2 * mjInv) % p;
+
+    // 랜덤 e_j, z_j
+    const ejBytes = new Uint8Array(32);
+    crypto.getRandomValues(ejBytes);
+    const ej = bytesToBigInt(ejBytes) % q;
+    const zjBytes = new Uint8Array(32);
+    crypto.getRandomValues(zjBytes);
+    const zj = bytesToBigInt(zjBytes) % q;
+
+    // a1_j = g^z_j * c1^(-e_j) mod p
+    const gzj = modPow(g, zj, p);
+    const c1InvEj = modPow(modInverse(c1, p), ej, p);
+    a1s[j] = ((gzj * c1InvEj) % p).toString(16);
+
+    // a2_j = y^z_j * (c2/mj)^(-e_j) mod p
+    const yzj = modPow(y, zj, p);
+    const c2DivMjInvEj = modPow(modInverse(c2DivMj, p), ej, p);
+    a2s[j] = ((yzj * c2DivMjInvEj) % p).toString(16);
+
+    es[j] = ej.toString(16);
+    zs[j] = zj.toString(16);
+    eSum = (eSum + ej) % q;
+  }
+
+  // 실제 후보에 대한 commitment
+  // a1_actual = g^k mod p
+  a1s[actualIndex] = modPow(g, k, p).toString(16);
+  // a2_actual = y^k mod p
+  a2s[actualIndex] = modPow(y, k, p).toString(16);
+
+  // 전체 challenge 계산: e_total = SHA256(c1 || c2 || a1_0 || a2_0 || ... ) mod q
+  // (비동기 SHA256 대신 동기 해시 — Fiat-Shamir)
+  let hashInput = c1Hex + '|' + c2Hex;
+  for (let j = 0; j < numCandidates; j++) {
+    hashInput += '|' + a1s[j] + '|' + a2s[j];
+  }
+
+  // 동기 SHA-256 (Web Crypto는 비동기이므로 간단한 구현 사용)
+  const eTotal = syncSha256ToBigInt(hashInput) % q;
+
+  // e_actual = e_total - Σe_j mod q
+  let eActual = ((eTotal - eSum) % q + q) % q;
+  es[actualIndex] = eActual.toString(16);
+
+  // z_actual = k + e_actual * r mod q
+  const zActual = (k + eActual * r) % q;
+  zs[actualIndex] = zActual.toString(16);
+
+  return { a1s, a2s, es, zs };
 }
 
 /**
@@ -354,6 +450,62 @@ function bytesToBigInt(bytes) {
     result = (result << 8n) | BigInt(b);
   }
   return result;
+}
+
+// [PAPER-13] 동기 SHA-256 → BigInt (Fiat-Shamir challenge용)
+// Web Crypto API는 비동기이므로 동기 JS 구현 사용 (보안 수준: Fiat-Shamir oracle)
+function syncSha256ToBigInt(input) {
+  const data = new TextEncoder().encode(input);
+  // 간단한 SHA-256 동기 구현 (Fiat-Shamir 해시용)
+  // 참고: 이 해시는 ZKP challenge 유도에만 사용되며, 비밀 데이터 보호에는 사용되지 않음
+  const K = [
+    0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
+    0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
+    0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
+    0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,
+    0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85,
+    0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
+    0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
+    0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2,
+  ];
+  let h0 = 0x6a09e667, h1 = 0xbb67ae85, h2 = 0x3c6ef372, h3 = 0xa54ff53a;
+  let h4 = 0x510e527f, h5 = 0x9b05688c, h6 = 0x1f83d9ab, h7 = 0x5be0cd19;
+
+  const bitLen = data.length * 8;
+  const padLen = (((data.length + 8) >> 6) + 1) << 6;
+  const padded = new Uint8Array(padLen);
+  padded.set(data);
+  padded[data.length] = 0x80;
+  const view = new DataView(padded.buffer);
+  view.setUint32(padLen - 4, bitLen, false);
+
+  const rotr = (x, n) => ((x >>> n) | (x << (32 - n))) >>> 0;
+
+  for (let off = 0; off < padLen; off += 64) {
+    const w = new Uint32Array(64);
+    for (let i = 0; i < 16; i++) w[i] = view.getUint32(off + i * 4, false);
+    for (let i = 16; i < 64; i++) {
+      const s0 = rotr(w[i-15], 7) ^ rotr(w[i-15], 18) ^ (w[i-15] >>> 3);
+      const s1 = rotr(w[i-2], 17) ^ rotr(w[i-2], 19) ^ (w[i-2] >>> 10);
+      w[i] = (w[i-16] + s0 + w[i-7] + s1) >>> 0;
+    }
+    let [a,b,c,d,e,f,gg,h] = [h0,h1,h2,h3,h4,h5,h6,h7];
+    for (let i = 0; i < 64; i++) {
+      const S1 = rotr(e, 6) ^ rotr(e, 11) ^ rotr(e, 25);
+      const ch = (e & f) ^ (~e & gg);
+      const t1 = (h + S1 + ch + K[i] + w[i]) >>> 0;
+      const S0 = rotr(a, 2) ^ rotr(a, 13) ^ rotr(a, 22);
+      const maj = (a & b) ^ (a & c) ^ (b & c);
+      const t2 = (S0 + maj) >>> 0;
+      h = gg; gg = f; f = e; e = (d + t1) >>> 0;
+      d = c; c = b; b = a; a = (t1 + t2) >>> 0;
+    }
+    h0 = (h0 + a) >>> 0; h1 = (h1 + b) >>> 0; h2 = (h2 + c) >>> 0; h3 = (h3 + d) >>> 0;
+    h4 = (h4 + e) >>> 0; h5 = (h5 + f) >>> 0; h6 = (h6 + gg) >>> 0; h7 = (h7 + h) >>> 0;
+  }
+
+  const hex = [h0,h1,h2,h3,h4,h5,h6,h7].map(v => v.toString(16).padStart(8,'0')).join('');
+  return BigInt('0x' + hex);
 }
 
 /**
