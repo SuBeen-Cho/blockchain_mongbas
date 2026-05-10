@@ -194,9 +194,11 @@ export default function VoterPage() {
     if (!candidateID) return setError('후보자를 먼저 선택하세요.');
     setLoading(true); setError(''); setBenalohAudit(null);
     try {
+      const hdrs = { 'Content-Type': 'application/json' };
+      if (idemixCredential) hdrs['x-idemix-credential'] = idemixCredential;
       const res = await fetch(`${API}/vote/prepare`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: hdrs,
         body: JSON.stringify({ electionID, candidateID }),
       });
       const data = await res.json();
@@ -211,9 +213,11 @@ export default function VoterPage() {
     if (!benalohBallot?.ballotID) return;
     setLoading(true); setError('');
     try {
+      const hdrs2 = { 'Content-Type': 'application/json' };
+      if (idemixCredential) hdrs2['x-idemix-credential'] = idemixCredential;
       const res = await fetch(`${API}/vote/audit`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: hdrs2,
         body: JSON.stringify({ electionID, ballotID: benalohBallot.ballotID }),
       });
       const data = await res.json();

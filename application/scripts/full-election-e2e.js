@@ -212,6 +212,7 @@ async function main() {
   console.log('\n── Phase 5c: Benaloh Challenge (PAPER-3) ──');
   const prepResult = await assertOk('prepare ballot (Benaloh)', requestJson('/api/vote/prepare', {
     method: 'POST',
+    headers: { 'x-idemix-credential': credentials[0] },
     body: JSON.stringify({ electionID: ELECTION_ID, candidateID: 'CANDIDATE_B' }),
   }));
   console.log(`[INFO] ballot prepared: ballotID=${prepResult.ballotID.substring(0, 16)}..., commitment=${prepResult.commitment.substring(0, 16)}...`);
@@ -219,6 +220,7 @@ async function main() {
   // audit (spoil) — 암호화 키와 평문 공개
   const auditResult = await assertOk('audit ballot (Benaloh spoil)', requestJson('/api/vote/audit', {
     method: 'POST',
+    headers: { 'x-idemix-credential': credentials[0] },
     body: JSON.stringify({ electionID: ELECTION_ID, ballotID: prepResult.ballotID }),
   }));
   console.log(`[INFO] audit result: candidateID=${auditResult.candidateID}, status=${auditResult.status}`);
@@ -231,6 +233,7 @@ async function main() {
   // audit된 ballot 재사용 확인 (체인코드 구현에 따라 거부 또는 동일 결과 반환)
   const reAudit = await requestJson('/api/vote/audit', {
     method: 'POST',
+    headers: { 'x-idemix-credential': credentials[0] },
     body: JSON.stringify({ electionID: ELECTION_ID, ballotID: prepResult.ballotID }),
   });
   if (!reAudit.ok) {
@@ -582,6 +585,16 @@ async function main() {
     };
   }
 
+  // 14e-1. ElGamal 투표용 credential 발급
+  const egCredentials = [];
+  for (const v of voters.slice(0, 2)) {
+    const cred = await assertOk(`issue ElGamal credential (${v.id})`, requestJson('/api/credential/idemix', {
+      method: 'POST',
+      body: JSON.stringify({ enrollmentID: v.id, enrollmentSecret: v.secret, electionID: EG_ELECTION_ID }),
+    }));
+    egCredentials.push(cred.credential);
+  }
+
   // 투표 1: ALICE (index=0)
   const egVoterSecret1 = crypto.randomBytes(32).toString('hex');
   const egNullifier1 = sha256Hex(egVoterSecret1 + EG_ELECTION_ID + egBf.blindingFactor);
@@ -590,6 +603,7 @@ async function main() {
   await assertOk('cast ElGamal vote (ALICE)',
     requestJson('/api/vote', {
       method: 'POST',
+      headers: { 'x-idemix-credential': egCredentials[0] },
       body: JSON.stringify({
         electionID: EG_ELECTION_ID,
         encryptedCandidateID: vote1.encrypted,
@@ -608,6 +622,7 @@ async function main() {
   await assertOk('cast ElGamal vote (BOB)',
     requestJson('/api/vote', {
       method: 'POST',
+      headers: { 'x-idemix-credential': egCredentials[1] },
       body: JSON.stringify({
         electionID: EG_ELECTION_ID,
         encryptedCandidateID: vote2.encrypted,
@@ -677,12 +692,23 @@ async function main() {
     requestJson(`/api/elections/${CR_ELECTION_ID}/blinding-factor`)
   );
 
+  // 15c-1. Coercion 테스트용 credential 발급
+  const crCredentials = [];
+  for (const v of voters) {
+    const cred = await assertOk(`issue coercion credential (${v.id})`, requestJson('/api/credential/idemix', {
+      method: 'POST',
+      body: JSON.stringify({ enrollmentID: v.id, enrollmentSecret: v.secret, electionID: CR_ELECTION_ID }),
+    }));
+    crCredentials.push(cred.credential);
+  }
+
   // 15d. 정상 투표 (real credential)
   const crRealSecret = crypto.randomBytes(32).toString('hex');
   const crRealNullifier = sha256Hex(crRealSecret + CR_ELECTION_ID + crBf.blindingFactor);
   await assertOk('cast REAL vote (HONEST)',
     requestJson('/api/vote', {
       method: 'POST',
+      headers: { 'x-idemix-credential': crCredentials[0] },
       body: JSON.stringify({
         electionID: CR_ELECTION_ID,
         candidateID: 'HONEST',
@@ -697,6 +723,7 @@ async function main() {
   await assertOk('cast PANIC vote (COERCED)',
     requestJson('/api/vote', {
       method: 'POST',
+      headers: { 'x-idemix-credential': crCredentials[1] },
       body: JSON.stringify({
         electionID: CR_ELECTION_ID,
         candidateID: 'COERCED',
@@ -712,6 +739,7 @@ async function main() {
   await assertOk('cast REAL vote 2 (COERCED)',
     requestJson('/api/vote', {
       method: 'POST',
+      headers: { 'x-idemix-credential': crCredentials[2] },
       body: JSON.stringify({
         electionID: CR_ELECTION_ID,
         candidateID: 'COERCED',

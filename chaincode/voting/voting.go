@@ -2568,8 +2568,42 @@ func (c *VotingContract) VerifyElGamalProofs(
 			continue
 		}
 
-		// decryptedHash로부터 평문을 직접 알 수 없으므로,
-		// 모든 후보를 시도하여 decryptedHash와 일치하는 후보를 찾음
+		// [PAPER-13] 동형 집계 증명: g^sum을 직접 검증
+		if proof.NullifierHash == "HOMOMORPHIC_TALLY" {
+			// tally.Results에서 sum을 재계산: sum = Σ(count_i * B^i)
+			recomputedSum := int64(0)
+			for i, cand := range election.Candidates {
+				count := int64(tally.Results[cand])
+				base := int64(1)
+				for j := 0; j < i; j++ {
+					base *= HomomorphicBase
+				}
+				recomputedSum += count * base
+			}
+			// g^sum 계산
+			gSum := new(big.Int).Exp(elgamalG, big.NewInt(recomputedSum), elgamalP)
+			// decryptedHash 재계산: SHA256("homomorphic_sum:<sum>")
+			sumStr := fmt.Sprintf("homomorphic_sum:%d", recomputedSum)
+			dh := sha256.Sum256([]byte(sumStr))
+			dhHex := hex.EncodeToString(dh[:])
+			if dhHex != proof.DecryptedHash {
+				failed++
+				continue
+			}
+			// raw ZKP 검증: m = g^sum
+			if chaumPedersenVerifyRaw(election.ElGamalPubKey, proof.ZKProof, gSum) {
+				verified++
+				// 동형 집계 검증 성공 — 결과를 recount에 반영
+				for _, cand := range election.Candidates {
+					recount[cand] = tally.Results[cand]
+				}
+			} else {
+				failed++
+			}
+			continue
+		}
+
+		// 개별 투표 ZKP 검증 (AES 모드 호환)
 		var matchedCandidate string
 		for _, cand := range election.Candidates {
 			dh := sha256.Sum256([]byte(cand))
@@ -3428,6 +3462,44 @@ func chaumPedersenVerify(pubKey *ElGamalPublicKey, proof *ChaumPedersenProof, de
 	m := elgamalEncodePlaintext(decryptedPlaintext)
 	// s = c2 * m^(-1) mod p
 	mInv := new(big.Int).ModInverse(m, p)
+	s := new(big.Int).Mul(c2, mInv)
+	s.Mod(s, p)
+
+	// 검증 1: g^z == a1 * y^e mod p
+	lhs1 := new(big.Int).Exp(g, z, p)
+	rhs1 := new(big.Int).Exp(y, e, p)
+	rhs1.Mul(rhs1, a1)
+	rhs1.Mod(rhs1, p)
+	if lhs1.Cmp(rhs1) != 0 {
+		return false
+	}
+
+	// 검증 2: c1^z == a2 * s^e mod p
+	lhs2 := new(big.Int).Exp(c1, z, p)
+	rhs2 := new(big.Int).Exp(s, e, p)
+	rhs2.Mul(rhs2, a2)
+	rhs2.Mod(rhs2, p)
+	return lhs2.Cmp(rhs2) == 0
+}
+
+// chaumPedersenVerifyRaw [PAPER-13] Chaum-Pedersen ZKP 검증 (raw BigInt 평문)
+// 동형 집계용: m = g^sum (elgamalEncodePlaintext 호출 불가)
+func chaumPedersenVerifyRaw(pubKey *ElGamalPublicKey, proof *ChaumPedersenProof, m *big.Int) bool {
+	p, _ := new(big.Int).SetString(pubKey.P, 16)
+	g, _ := new(big.Int).SetString(pubKey.G, 16)
+	y, _ := new(big.Int).SetString(pubKey.Y, 16)
+	c1, _ := new(big.Int).SetString(proof.C1, 16)
+	c2, _ := new(big.Int).SetString(proof.C2, 16)
+	a1, _ := new(big.Int).SetString(proof.A1, 16)
+	a2, _ := new(big.Int).SetString(proof.A2, 16)
+	e, _ := new(big.Int).SetString(proof.E, 16)
+	z, _ := new(big.Int).SetString(proof.Z, 16)
+
+	// s = c2 * m^(-1) mod p
+	mInv := new(big.Int).ModInverse(m, p)
+	if mInv == nil {
+		return false
+	}
 	s := new(big.Int).Mul(c2, mInv)
 	s.Mod(s, p)
 
