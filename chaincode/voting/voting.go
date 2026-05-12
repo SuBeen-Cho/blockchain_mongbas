@@ -31,7 +31,9 @@ import (
 	"strconv"
 	"strings"
 
+	ml "github.com/IBM/mathlib"
 	bn256 "github.com/ethereum/go-ethereum/crypto/bn256/cloudflare"
+	ariesbbs "github.com/hyperledger/aries-bbs-go/bbs"
 	"github.com/hyperledger/fabric-chaincode-go/shim"
 	"github.com/hyperledger/fabric-contract-api-go/contractapi"
 )
@@ -197,6 +199,13 @@ type PSCredentialToken struct {
 	Type  string   `json:"type"`
 	H     string   `json:"h"`
 	S     string   `json:"s"`
+	Attrs []string `json:"attrs"`
+	ExpMs float64  `json:"expMs"`
+}
+
+type BBSCredentialToken struct {
+	Type  string   `json:"type"`
+	Sig   string   `json:"sig"`
 	Attrs []string `json:"attrs"`
 	ExpMs float64  `json:"expMs"`
 }
@@ -526,6 +535,74 @@ func verifyPSCredentialToken(ctx contractapi.TransactionContextInterface, cv Cre
 	return nil
 }
 
+func verifyBBSCredentialToken(ctx contractapi.TransactionContextInterface, cv CredentialVerification, electionID string, txNow int64) error {
+	pubKeyB64 := os.Getenv("BBS_PUBLIC_KEY_B64")
+	if pubKeyB64 == "" {
+		return fmt.Errorf("BBS_PUBLIC_KEY_B64 환경변수가 설정되지 않았습니다")
+	}
+	pubKey, err := decodeBase64Flexible(pubKeyB64)
+	if err != nil {
+		return fmt.Errorf("BBS 공개키 base64 디코딩 실패: %w", err)
+	}
+
+	transient, err := ctx.GetStub().GetTransient()
+	if err != nil {
+		return fmt.Errorf("transient 읽기 실패: %w", err)
+	}
+	tokenBytes, ok := transient["credentialToken"]
+	if !ok || len(tokenBytes) == 0 {
+		return fmt.Errorf("BBS credentialToken 누락")
+	}
+	token := string(tokenBytes)
+	if !strings.HasPrefix(token, "bbs.") {
+		return fmt.Errorf("BBS credential 형식 오류")
+	}
+	credJSON, err := decodeBase64Flexible(strings.TrimPrefix(token, "bbs."))
+	if err != nil {
+		return fmt.Errorf("BBS credential 디코딩 실패: %w", err)
+	}
+	var cred BBSCredentialToken
+	if err := json.Unmarshal(credJSON, &cred); err != nil {
+		return fmt.Errorf("BBS credential JSON 파싱 실패: %w", err)
+	}
+	if cred.Type != "bbs" || len(cred.Attrs) < 3 {
+		return fmt.Errorf("BBS credential 속성 형식 오류")
+	}
+	if cred.Attrs[0] != "1" {
+		return fmt.Errorf("투표 자격 속성 없음")
+	}
+	if cred.Attrs[1] != electionID || cred.Attrs[1] != cv.ElectionID {
+		return fmt.Errorf("BBS credential 선거ID 불일치: payload=%s, cred=%s, req=%s", cred.Attrs[1], cv.ElectionID, electionID)
+	}
+	attrExpMs, err := strconv.ParseInt(cred.Attrs[2], 10, 64)
+	if err != nil {
+		return fmt.Errorf("BBS credential exp 속성 파싱 실패: %w", err)
+	}
+	expUnix := attrExpMs / 1000
+	if txNow > expUnix || expUnix != cv.ExpUnix {
+		return fmt.Errorf("BBS credential 만료 또는 exp 불일치")
+	}
+	if txNow > int64(cred.ExpMs/1000) {
+		return fmt.Errorf("BBS credential expMs 만료")
+	}
+	sig, err := decodeBase64Flexible(cred.Sig)
+	if err != nil {
+		return fmt.Errorf("BBS signature 디코딩 실패: %w", err)
+	}
+	messages := make([][]byte, len(cred.Attrs))
+	for i, attr := range cred.Attrs {
+		messages[i] = []byte(attr)
+	}
+	if err := ariesbbs.New(ml.Curves[ml.BLS12_381_BBS]).Verify(messages, sig, pubKey); err != nil {
+		return fmt.Errorf("BBS+ signature 검증 실패: %w", err)
+	}
+	hashRaw := sha256.Sum256([]byte(token))
+	if hex.EncodeToString(hashRaw[:]) != cv.CredHash {
+		return fmt.Errorf("BBS credential hash 불일치")
+	}
+	return nil
+}
+
 func verifyEd25519CredentialToken(ctx contractapi.TransactionContextInterface, cv CredentialVerification, electionID string, txNow int64) error {
 	pubKeyB64 := os.Getenv("ED25519_PUBLIC_KEY_DER_B64")
 	if pubKeyB64 == "" {
@@ -705,6 +782,11 @@ func getCredVerifyLevel(ctx contractapi.TransactionContextInterface) string {
 	case "ps":
 		if os.Getenv("PS_ISSUER_PUBLIC_KEY_B64") != "" {
 			return "chaincode-ps"
+		}
+		return "metadata-only"
+	case "bbs":
+		if os.Getenv("BBS_PUBLIC_KEY_B64") != "" {
+			return "chaincode-bbs"
 		}
 		return "metadata-only"
 	case "bypass":
@@ -1020,6 +1102,11 @@ func verifyCredentialTransient(
 	}
 	if cv.CredType == "ps" {
 		if err := verifyPSCredentialToken(ctx, cv, electionID, txNow); err != nil {
+			return "", err
+		}
+	}
+	if cv.CredType == "bbs" {
+		if err := verifyBBSCredentialToken(ctx, cv, electionID, txNow); err != nil {
 			return "", err
 		}
 	}

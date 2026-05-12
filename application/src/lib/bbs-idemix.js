@@ -23,7 +23,7 @@ const {
   blsCreateProof,
   blsVerifyProof,
 } = require('@mattrglobal/bbs-signatures');
-const { randomBytes } = require('crypto');
+const { randomBytes, createHash } = require('crypto');
 
 // 속성 순서: [voterEligible, electionID, exp]
 const ATTR_INDICES = { voterEligible: 0, electionID: 1, exp: 2 };
@@ -38,8 +38,16 @@ let _keyPair = null;
  */
 async function generateIssuerKeys() {
   if (_keyPair) return _keyPair;
-  _keyPair = await generateBls12381G2KeyPair();
+  const seed = process.env.BBS_ISSUER_SEED
+    ? createHash('sha256').update(process.env.BBS_ISSUER_SEED).digest()
+    : undefined;
+  _keyPair = await generateBls12381G2KeyPair(seed);
   return _keyPair;
+}
+
+async function exportPublicKeyB64() {
+  const kp = await generateIssuerKeys();
+  return Buffer.from(kp.publicKey).toString('base64url');
 }
 
 /**
@@ -129,6 +137,8 @@ async function verifyCredential(credObj) {
     return {
       valid:      true,
       electionID: attrs[ATTR_INDICES.electionID],
+      expUnix:    Math.floor(Number(attrs[ATTR_INDICES.exp]) / 1000),
+      credType:   'bbs',
     };
   } catch (e) {
     return { valid: false, reason: `BBS+ 오류: ${e.message}` };
@@ -154,4 +164,11 @@ function tokenToCred(token) {
   }
 }
 
-module.exports = { issueCredential, verifyCredential, credToToken, tokenToCred, generateIssuerKeys };
+module.exports = {
+  issueCredential,
+  verifyCredential,
+  credToToken,
+  tokenToCred,
+  generateIssuerKeys,
+  exportPublicKeyB64,
+};

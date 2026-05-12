@@ -300,7 +300,9 @@ function idemixStatus() {
       : '익명 credential — PS_ISSUER_SEED/PS_ISSUER_PUBLIC_KEY_B64 미설정 시 체인코드 직접 검증 불가';
   } else if (IDEMIX_IMPL === 'bbs') {
     impl = 'BBS+-BLS12381 (C단계: 개선 Idemix)';
-    securityNote = '익명 credential (ZKP 기반 선택적 공개) — 체인코드 직접 검증 미완';
+    securityNote = process.env.BBS_ISSUER_SEED
+      ? '익명 credential — BBS_PUBLIC_KEY_B64를 체인코드에 주입하면 BLS12-381 BBS+ 체인코드 직접 검증'
+      : '익명 credential (ZKP 기반 선택적 공개) — BBS_ISSUER_SEED/BBS_PUBLIC_KEY_B64 미설정 시 체인코드 직접 검증 불가';
   } else if (ASYM_CRED_ENABLED) {
     impl = 'Ed25519-asymmetric';
     securityNote = '공개키 서명 credential — 체인코드 직접 검증 완료, 익명 credential은 아님';
