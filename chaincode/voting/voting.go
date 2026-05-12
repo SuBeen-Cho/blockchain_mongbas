@@ -31,6 +31,7 @@ import (
 	"strconv"
 	"strings"
 
+	bn256 "github.com/ethereum/go-ethereum/crypto/bn256/cloudflare"
 	"github.com/hyperledger/fabric-chaincode-go/shim"
 	"github.com/hyperledger/fabric-contract-api-go/contractapi"
 )
@@ -88,15 +89,15 @@ type ElGamalCiphertext struct {
 // 증명: "나는 x를 알고 있으며, y = g^x 이고 s = c1^x 이다"
 // → c2/m = c1^x = s 가 올바른 복호화임을 키 공개 없이 증명
 type ChaumPedersenProof struct {
-	NullifierHash        string `json:"nullifierHash"`
-	C1                   string `json:"c1"`                   // ElGamal 암호문 c1
-	C2                   string `json:"c2"`                   // ElGamal 암호문 c2
-	DecryptedHash        string `json:"decryptedHash"`        // SHA256(복호화된 평문)
-	A1                   string `json:"a1"`                   // g^k mod p
-	A2                   string `json:"a2"`                   // c1^k mod p
-	E                    string `json:"e"`                    // Fiat-Shamir challenge
-	Z                    string `json:"z"`                    // k + e*x mod q
-	CandidateCommitment  string `json:"candidateCommitment"`
+	NullifierHash       string `json:"nullifierHash"`
+	C1                  string `json:"c1"`            // ElGamal 암호문 c1
+	C2                  string `json:"c2"`            // ElGamal 암호문 c2
+	DecryptedHash       string `json:"decryptedHash"` // SHA256(복호화된 평문)
+	A1                  string `json:"a1"`            // g^k mod p
+	A2                  string `json:"a2"`            // c1^k mod p
+	E                   string `json:"e"`             // Fiat-Shamir challenge
+	Z                   string `json:"z"`             // k + e*x mod q
+	CandidateCommitment string `json:"candidateCommitment"`
 }
 
 // getTxTime 트랜잭션 타임스탬프를 Unix seconds로 반환합니다.
@@ -152,8 +153,8 @@ type Nullifier struct {
 	NullifierHash        string `json:"nullifierHash"` // 최종 1표만 유효 키 (재투표 시 덮어쓰기, 원장 Key로도 사용)
 	ElectionID           string `json:"electionID"`
 	CandidateID          string `json:"candidateID" metadata:",optional"` // 레거시 호환 전용. 신규 투표에서는 평문 후보자를 저장하지 않음.
-	CandidateCommitment  string `json:"candidateCommitment"`   // SHA256(electionID|nullifierHash|encryptedCandidateID)
-	EncryptedCandidateID string `json:"encryptedCandidateID"`  // [C-4] AES-GCM 암호화된 후보자 ID
+	CandidateCommitment  string `json:"candidateCommitment"`              // SHA256(electionID|nullifierHash|encryptedCandidateID)
+	EncryptedCandidateID string `json:"encryptedCandidateID"`             // [C-4] AES-GCM 암호화된 후보자 ID
 	Timestamp            int64  `json:"timestamp"`
 	EvictCount           int    `json:"evictCount"`    // 재투표 횟수 (0 = 최초 투표)
 	LastEvictedAt        int64  `json:"lastEvictedAt"` // 마지막 재투표 시각
@@ -184,6 +185,22 @@ type Ed25519CredentialPayload struct {
 	Exp           float64 `json:"exp"`
 }
 
+type PSPublicKey struct {
+	Curve     string   `json:"curve"`
+	Scheme    string   `json:"scheme"`
+	AttrCount int      `json:"attrCount"`
+	X         string   `json:"X"`
+	Ys        []string `json:"Ys"`
+}
+
+type PSCredentialToken struct {
+	Type  string   `json:"type"`
+	H     string   `json:"h"`
+	S     string   `json:"s"`
+	Attrs []string `json:"attrs"`
+	ExpMs float64  `json:"expMs"`
+}
+
 // VotePrivate PDC에 저장되는 원본 투표 데이터 (비공개)
 // 오더러에게 전달되지 않고 피어의 사이드 DB에만 저장됨.
 // 클라이언트는 이 구조체를 JSON으로 직렬화하여 트랜잭션 Transient Map에 넣어서 전달.
@@ -204,13 +221,13 @@ type VotePrivate struct {
 
 // VoteTally 선거 집계 결과 (공개 원장, CloseElection 호출 시 기록)
 type VoteTally struct {
-	ObjectType     string         `json:"docType"` // "tally"
-	ElectionID     string         `json:"electionID"`
-	Results        map[string]int `json:"results"` // candidateID → 득표수
-	TotalVotes     int            `json:"totalVotes"`
-	ClosedAt       int64          `json:"closedAt"`
+	ObjectType string         `json:"docType"` // "tally"
+	ElectionID string         `json:"electionID"`
+	Results    map[string]int `json:"results"` // candidateID → 득표수
+	TotalVotes int            `json:"totalVotes"`
+	ClosedAt   int64          `json:"closedAt"`
 	// [PAPER-2] tallied-as-recorded 검증용 증명
-	TallyProofHash string              `json:"tallyProofHash,omitempty" metadata:",optional"` // 모든 복호화 기록의 해시
+	TallyProofHash   string            `json:"tallyProofHash,omitempty" metadata:",optional"`   // 모든 복호화 기록의 해시
 	DecryptionProofs []DecryptionProof `json:"decryptionProofs,omitempty" metadata:",optional"` // 개별 투표 복호화 증명
 }
 
@@ -252,16 +269,16 @@ type BallotValidityProof struct {
 // HomomorphicTallyProof [PAPER-13] 동형 집계 정확성 증명
 // 암호문 곱의 복호화가 올바름을 증명하는 Chaum-Pedersen ZKP
 type HomomorphicTallyProof struct {
-	AccC1 string             `json:"accC1"` // 누적 c1 = Π c1_i mod p
-	AccC2 string             `json:"accC2"` // 누적 c2 = Π c2_i mod p
-	DecryptedSum int         `json:"decryptedSum"` // g^sum의 이산로그 복원 결과
-	ZKProof *ChaumPedersenProof `json:"zkProof,omitempty" metadata:",optional"` // 복호화 정확성 ZKP
+	AccC1        string              `json:"accC1"`                                  // 누적 c1 = Π c1_i mod p
+	AccC2        string              `json:"accC2"`                                  // 누적 c2 = Π c2_i mod p
+	DecryptedSum int                 `json:"decryptedSum"`                           // g^sum의 이산로그 복원 결과
+	ZKProof      *ChaumPedersenProof `json:"zkProof,omitempty" metadata:",optional"` // 복호화 정확성 ZKP
 }
 
 // BallotPreparation [PAPER-3] Benaloh Challenge용 사전 암호화 투표
 // PDC에 임시 저장되며, audit 또는 cast 중 하나만 수행 가능
 type BallotPreparation struct {
-	BallotID             string `json:"ballotID"`             // 고유 ID (SHA256 유도)
+	BallotID             string `json:"ballotID"` // 고유 ID (SHA256 유도)
 	ElectionID           string `json:"electionID"`
 	CandidateID          string `json:"candidateID"`          // 평문 (audit 시에만 공개)
 	EncryptedCandidateID string `json:"encryptedCandidateID"` // AES-GCM 암호문
@@ -375,6 +392,138 @@ func decodeBase64Flexible(s string) ([]byte, error) {
 		return b, nil
 	}
 	return base64.RawURLEncoding.DecodeString(s)
+}
+
+func psMsgToScalar(msg string) *big.Int {
+	sum := sha256.Sum256([]byte(msg))
+	x := new(big.Int).SetBytes(sum[:])
+	x.Mod(x, bn256.Order)
+	if x.Sign() == 0 {
+		return big.NewInt(1)
+	}
+	return x
+}
+
+func decodePSG1(s string) (*bn256.G1, error) {
+	raw, err := decodeBase64Flexible(s)
+	if err != nil {
+		return nil, err
+	}
+	p := new(bn256.G1)
+	if rest, err := p.Unmarshal(raw); err != nil {
+		return nil, err
+	} else if len(rest) != 0 {
+		return nil, fmt.Errorf("G1 trailing bytes: %d", len(rest))
+	}
+	return p, nil
+}
+
+func decodePSG2(s string) (*bn256.G2, error) {
+	raw, err := decodeBase64Flexible(s)
+	if err != nil {
+		return nil, err
+	}
+	p := new(bn256.G2)
+	if rest, err := p.Unmarshal(raw); err != nil {
+		return nil, err
+	} else if len(rest) != 0 {
+		return nil, fmt.Errorf("G2 trailing bytes: %d", len(rest))
+	}
+	return p, nil
+}
+
+func verifyPSCredentialToken(ctx contractapi.TransactionContextInterface, cv CredentialVerification, electionID string, txNow int64) error {
+	pubKeyB64 := os.Getenv("PS_ISSUER_PUBLIC_KEY_B64")
+	if pubKeyB64 == "" {
+		return fmt.Errorf("PS_ISSUER_PUBLIC_KEY_B64 환경변수가 설정되지 않았습니다")
+	}
+	pubKeyJSON, err := decodeBase64Flexible(pubKeyB64)
+	if err != nil {
+		return fmt.Errorf("PS 공개키 base64 디코딩 실패: %w", err)
+	}
+	var pk PSPublicKey
+	if err := json.Unmarshal(pubKeyJSON, &pk); err != nil {
+		return fmt.Errorf("PS 공개키 JSON 파싱 실패: %w", err)
+	}
+	if pk.Curve != "bn254" || pk.Scheme != "ps" || pk.AttrCount != 3 || len(pk.Ys) != 3 {
+		return fmt.Errorf("PS 공개키 메타데이터 불일치")
+	}
+	X, err := decodePSG2(pk.X)
+	if err != nil {
+		return fmt.Errorf("PS 공개키 X 디코딩 실패: %w", err)
+	}
+	Ys := make([]*bn256.G2, len(pk.Ys))
+	for i, yRaw := range pk.Ys {
+		Ys[i], err = decodePSG2(yRaw)
+		if err != nil {
+			return fmt.Errorf("PS 공개키 Y%d 디코딩 실패: %w", i, err)
+		}
+	}
+
+	transient, err := ctx.GetStub().GetTransient()
+	if err != nil {
+		return fmt.Errorf("transient 읽기 실패: %w", err)
+	}
+	tokenBytes, ok := transient["credentialToken"]
+	if !ok || len(tokenBytes) == 0 {
+		return fmt.Errorf("PS credentialToken 누락")
+	}
+	token := string(tokenBytes)
+	if !strings.HasPrefix(token, "ps.") {
+		return fmt.Errorf("PS credential 형식 오류")
+	}
+	credJSON, err := decodeBase64Flexible(strings.TrimPrefix(token, "ps."))
+	if err != nil {
+		return fmt.Errorf("PS credential 디코딩 실패: %w", err)
+	}
+	var cred PSCredentialToken
+	if err := json.Unmarshal(credJSON, &cred); err != nil {
+		return fmt.Errorf("PS credential JSON 파싱 실패: %w", err)
+	}
+	if cred.Type != "ps" || len(cred.Attrs) != 3 {
+		return fmt.Errorf("PS credential 속성 형식 오류")
+	}
+	if cred.Attrs[0] != "1" {
+		return fmt.Errorf("투표 자격 속성 없음")
+	}
+	if cred.Attrs[1] != electionID || cred.Attrs[1] != cv.ElectionID {
+		return fmt.Errorf("PS credential 선거ID 불일치: payload=%s, cred=%s, req=%s", cred.Attrs[1], cv.ElectionID, electionID)
+	}
+	attrExpMs, err := strconv.ParseInt(cred.Attrs[2], 10, 64)
+	if err != nil {
+		return fmt.Errorf("PS credential exp 속성 파싱 실패: %w", err)
+	}
+	expUnix := attrExpMs / 1000
+	if txNow > expUnix || expUnix != cv.ExpUnix {
+		return fmt.Errorf("PS credential 만료 또는 exp 불일치")
+	}
+	if txNow > int64(cred.ExpMs/1000) {
+		return fmt.Errorf("PS credential expMs 만료")
+	}
+
+	hPoint, err := decodePSG1(cred.H)
+	if err != nil {
+		return fmt.Errorf("PS h 디코딩 실패: %w", err)
+	}
+	sPoint, err := decodePSG1(cred.S)
+	if err != nil {
+		return fmt.Errorf("PS sigma 디코딩 실패: %w", err)
+	}
+
+	pkAgg := new(bn256.G2).Set(X)
+	for i, attr := range cred.Attrs {
+		term := new(bn256.G2).ScalarMult(Ys[i], psMsgToScalar(attr))
+		pkAgg.Add(pkAgg, term)
+	}
+	negSigma := new(bn256.G1).Neg(sPoint)
+	if !bn256.PairingCheck([]*bn256.G1{hPoint, negSigma}, []*bn256.G2{pkAgg, new(bn256.G2).ScalarBaseMult(big.NewInt(1))}) {
+		return fmt.Errorf("PS 서명 pairing 검증 실패")
+	}
+	hashRaw := sha256.Sum256([]byte(token))
+	if hex.EncodeToString(hashRaw[:]) != cv.CredHash {
+		return fmt.Errorf("PS credential hash 불일치")
+	}
+	return nil
 }
 
 func verifyEd25519CredentialToken(ctx contractapi.TransactionContextInterface, cv CredentialVerification, electionID string, txNow int64) error {
@@ -551,6 +700,11 @@ func getCredVerifyLevel(ctx contractapi.TransactionContextInterface) string {
 	case "hmac":
 		if os.Getenv("CREDENTIAL_SECRET") != "" {
 			return "chaincode-hmac"
+		}
+		return "metadata-only"
+	case "ps":
+		if os.Getenv("PS_ISSUER_PUBLIC_KEY_B64") != "" {
+			return "chaincode-ps"
 		}
 		return "metadata-only"
 	case "bypass":
@@ -861,6 +1015,11 @@ func verifyCredentialTransient(
 	}
 	if cv.CredType == "ed25519" {
 		if err := verifyEd25519CredentialToken(ctx, cv, electionID, txNow); err != nil {
+			return "", err
+		}
+	}
+	if cv.CredType == "ps" {
+		if err := verifyPSCredentialToken(ctx, cv, electionID, txNow); err != nil {
 			return "", err
 		}
 	}
@@ -2635,15 +2794,15 @@ func (c *VotingContract) VerifyElGamalProofs(
 	}
 
 	result := map[string]interface{}{
-		"electionID":     electionID,
-		"encryptionMode": "elgamal",
-		"totalProofs":    len(tally.DecryptionProofs),
-		"verified":       verified,
-		"failed":         failed,
-		"resultsMatch":   resultsMatch,
-		"recount":        recount,
+		"electionID":      electionID,
+		"encryptionMode":  "elgamal",
+		"totalProofs":     len(tally.DecryptionProofs),
+		"verified":        verified,
+		"failed":          failed,
+		"resultsMatch":    resultsMatch,
+		"recount":         recount,
 		"originalResults": tally.Results,
-		"isValid":        failed == 0 && resultsMatch,
+		"isValid":         failed == 0 && resultsMatch,
 	}
 
 	resultJSON, _ := json.Marshal(result)
@@ -2658,21 +2817,21 @@ func (c *VotingContract) VerifyElGamalProofs(
 // Helios 모델: 집계 후 암호화 키를 공개하여 누구나 독립 검증 가능
 // [PAPER-7] 투표 순서를 결정론적으로 셔플하여 시간 분석 공격 방지
 type BulletinBoard struct {
-	ObjectType       string             `json:"docType"`       // "bulletinBoard"
-	ElectionID       string             `json:"electionID"`
-	EncryptionKeyHex string             `json:"encryptionKeyHex,omitempty" metadata:",optional"` // 공개된 AES-256 키 (AES 모드)
-	EncryptedBallots []EncryptedBallot  `json:"encryptedBallots"`          // 셔플된 암호화 투표
-	TallyResults     map[string]int     `json:"tallyResults"`              // 공식 집계 결과
-	TotalVotes       int                `json:"totalVotes"`
-	DecryptionProofs []DecryptionProof  `json:"decryptionProofs"`          // 복호화 증명 (AES: hash, ElGamal: ZKP)
-	TallyProofHash   string             `json:"tallyProofHash"`            // 집계 증명 해시
-	MerkleRoot       string             `json:"merkleRoot,omitempty" metadata:",optional"`      // Merkle tree root
-	ShuffleSeed      string             `json:"shuffleSeed,omitempty" metadata:",optional"`     // [PAPER-7] 셔플 시드 (hex)
-	ShuffleProofHash string             `json:"shuffleProofHash,omitempty" metadata:",optional"` // [PAPER-7] 셔플 정확성 증명
-	PublishedAt      int64              `json:"publishedAt"`
+	ObjectType       string            `json:"docType"` // "bulletinBoard"
+	ElectionID       string            `json:"electionID"`
+	EncryptionKeyHex string            `json:"encryptionKeyHex,omitempty" metadata:",optional"` // 공개된 AES-256 키 (AES 모드)
+	EncryptedBallots []EncryptedBallot `json:"encryptedBallots"`                                // 셔플된 암호화 투표
+	TallyResults     map[string]int    `json:"tallyResults"`                                    // 공식 집계 결과
+	TotalVotes       int               `json:"totalVotes"`
+	DecryptionProofs []DecryptionProof `json:"decryptionProofs"`                                // 복호화 증명 (AES: hash, ElGamal: ZKP)
+	TallyProofHash   string            `json:"tallyProofHash"`                                  // 집계 증명 해시
+	MerkleRoot       string            `json:"merkleRoot,omitempty" metadata:",optional"`       // Merkle tree root
+	ShuffleSeed      string            `json:"shuffleSeed,omitempty" metadata:",optional"`      // [PAPER-7] 셔플 시드 (hex)
+	ShuffleProofHash string            `json:"shuffleProofHash,omitempty" metadata:",optional"` // [PAPER-7] 셔플 정확성 증명
+	PublishedAt      int64             `json:"publishedAt"`
 	// [PAPER-11] ElGamal 모드 전용 필드
-	EncryptionMode   string             `json:"encryptionMode,omitempty" metadata:",optional"`  // "aes" | "elgamal"
-	ElGamalPubKey    *ElGamalPublicKey   `json:"elgamalPubKey,omitempty" metadata:",optional"`   // ElGamal 공개키 (ZKP 검증용)
+	EncryptionMode string            `json:"encryptionMode,omitempty" metadata:",optional"` // "aes" | "elgamal"
+	ElGamalPubKey  *ElGamalPublicKey `json:"elgamalPubKey,omitempty" metadata:",optional"`  // ElGamal 공개키 (ZKP 검증용)
 }
 
 // EncryptedBallot 공개 원장의 개별 암호화 투표
@@ -2684,17 +2843,17 @@ type EncryptedBallot struct {
 
 // PublicVerificationResult 공개 검증 결과
 type PublicVerificationResult struct {
-	ElectionID          string         `json:"electionID"`
-	IsValid             bool           `json:"isValid"`
-	RecomputedResults   map[string]int `json:"recomputedResults"`   // 독립 재집계 결과
-	OriginalResults     map[string]int `json:"originalResults"`     // 원본 집계 결과
-	ResultsMatch        bool           `json:"resultsMatch"`        // 결과 일치 여부
-	ProofHashMatch      bool           `json:"proofHashMatch"`      // tallyProofHash 일치 여부
-	ShuffleVerified     bool           `json:"shuffleVerified"`     // [PAPER-7] 셔플 정확성 검증
-	DecryptionVerified  int            `json:"decryptionVerified"`  // 검증 성공한 투표 수
-	DecryptionFailed    int            `json:"decryptionFailed"`    // 검증 실패한 투표 수
-	TotalBallots        int            `json:"totalBallots"`
-	VerifiedAt          int64          `json:"verifiedAt"`
+	ElectionID         string         `json:"electionID"`
+	IsValid            bool           `json:"isValid"`
+	RecomputedResults  map[string]int `json:"recomputedResults"`  // 독립 재집계 결과
+	OriginalResults    map[string]int `json:"originalResults"`    // 원본 집계 결과
+	ResultsMatch       bool           `json:"resultsMatch"`       // 결과 일치 여부
+	ProofHashMatch     bool           `json:"proofHashMatch"`     // tallyProofHash 일치 여부
+	ShuffleVerified    bool           `json:"shuffleVerified"`    // [PAPER-7] 셔플 정확성 검증
+	DecryptionVerified int            `json:"decryptionVerified"` // 검증 성공한 투표 수
+	DecryptionFailed   int            `json:"decryptionFailed"`   // 검증 실패한 투표 수
+	TotalBallots       int            `json:"totalBallots"`
+	VerifiedAt         int64          `json:"verifiedAt"`
 }
 
 // PublishAuditData [PAPER-6] 집계 완료 후 모든 감사 데이터를 공개 원장에 게시합니다.
@@ -2816,7 +2975,7 @@ func (c *VotingContract) PublishAuditData(
 		MerkleRoot:       merkleRoot,
 		ShuffleSeed:      hex.EncodeToString(shuffleSeed),
 		ShuffleProofHash: shuffleProofHash,
-		PublishedAt:       now,
+		PublishedAt:      now,
 		EncryptionMode:   election.EncryptionMode,
 		ElGamalPubKey:    election.ElGamalPubKey, // ElGamal 모드에서만 포함
 	}
@@ -3008,11 +3167,11 @@ type SecurityProperties struct {
 
 // SecurityProperty 개별 보안 속성
 type SecurityProperty struct {
-	Property    string `json:"property"`
-	Status      string `json:"status"`      // "achieved" | "partial" | "not-achieved"
-	Mechanism   string `json:"mechanism"`    // 구현 메커니즘
-	Assumption  string `json:"assumption"`   // 암호학적 가정
-	PaperRef    string `json:"paperRef"`     // 구현 보고서 참조
+	Property   string `json:"property"`
+	Status     string `json:"status"`     // "achieved" | "partial" | "not-achieved"
+	Mechanism  string `json:"mechanism"`  // 구현 메커니즘
+	Assumption string `json:"assumption"` // 암호학적 가정
+	PaperRef   string `json:"paperRef"`   // 구현 보고서 참조
 }
 
 // GetSecurityProperties [PAPER-5] 시스템의 보안 속성 요약을 반환합니다.

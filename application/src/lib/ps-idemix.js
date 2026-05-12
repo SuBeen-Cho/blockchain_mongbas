@@ -39,6 +39,22 @@ function g1FromBuffer(buf) {
   return bn254.G1.ProjectivePoint.fromAffine({ x, y });
 }
 
+function fpToBuffer(x) {
+  return Buffer.from(Fp.toBytes(x));
+}
+
+// github.com/ethereum/go-ethereum/crypto/bn256/cloudflare G2.Marshal 호환 순서:
+// x.c1 || x.c0 || y.c1 || y.c0
+function g2ToBuffer(P) {
+  const aff = P.toAffine();
+  return Buffer.concat([
+    fpToBuffer(aff.x.c1),
+    fpToBuffer(aff.x.c0),
+    fpToBuffer(aff.y.c1),
+    fpToBuffer(aff.y.c0),
+  ]);
+}
+
 // 속성 수: voterEligible, electionID, exp
 const ATTR_COUNT = 3;
 
@@ -50,6 +66,12 @@ let _issuerKeys = null;
  */
 function randScalar() {
   return bn254.G1.normPrivateKeyToScalar(randomBytes(32));
+}
+
+function scalarFromSeed(seed, label) {
+  return bn254.G1.normPrivateKeyToScalar(
+    createHash('sha256').update(`${seed}|${label}`).digest(),
+  );
 }
 
 /**
@@ -75,8 +97,11 @@ function mod(a, p) {
 function generateIssuerKeys() {
   if (_issuerKeys) return _issuerKeys;
 
-  const x  = randScalar();
-  const ys = Array.from({ length: ATTR_COUNT }, () => randScalar());
+  const seed = process.env.PS_ISSUER_SEED || '';
+  const x  = seed ? scalarFromSeed(seed, 'x') : randScalar();
+  const ys = Array.from({ length: ATTR_COUNT }, (_, i) => (
+    seed ? scalarFromSeed(seed, `y${i}`) : randScalar()
+  ));
 
   const X   = g2.multiply(x);
   const Ys  = ys.map(y => g2.multiply(y));
@@ -87,6 +112,21 @@ function generateIssuerKeys() {
     pk: { X, Ys },
   };
   return _issuerKeys;
+}
+
+function exportPublicKey() {
+  const { pk } = generateIssuerKeys();
+  return {
+    curve: 'bn254',
+    scheme: 'ps',
+    attrCount: ATTR_COUNT,
+    X: g2ToBuffer(pk.X).toString('base64url'),
+    Ys: pk.Ys.map(Y => g2ToBuffer(Y).toString('base64url')),
+  };
+}
+
+function exportPublicKeyB64() {
+  return Buffer.from(JSON.stringify(exportPublicKey())).toString('base64url');
 }
 
 /**
@@ -154,6 +194,9 @@ function verifyCredential(credObj) {
     if (attrs[0] !== '1') {
       return { valid: false, reason: '투표 자격 속성 없음' };
     }
+    if (Date.now() > Number(attrs[2])) {
+      return { valid: false, reason: '자격증명 속성 exp 만료' };
+    }
 
     // 역직렬화 (64-byte affine x||y 형식)
     const hBuf    = Buffer.from(credObj.h, 'base64url');
@@ -180,6 +223,8 @@ function verifyCredential(credObj) {
     return {
       valid:      true,
       electionID: attrs[1],
+      expUnix:    Math.floor(Number(attrs[2]) / 1000),
+      credType:   'ps',
     };
   } catch (e) {
     return { valid: false, reason: `PS 파싱 오류: ${e.message}` };
@@ -205,4 +250,12 @@ function tokenToCred(token) {
   }
 }
 
-module.exports = { issueCredential, verifyCredential, credToToken, tokenToCred, generateIssuerKeys };
+module.exports = {
+  issueCredential,
+  verifyCredential,
+  credToToken,
+  tokenToCred,
+  generateIssuerKeys,
+  exportPublicKey,
+  exportPublicKeyB64,
+};
