@@ -24,7 +24,7 @@ start_server() {
   local env_vars="$*"
   log "서버 기동: $mode"
   info "  env: $env_vars"
-  eval "env $env_vars node src/app.js > /tmp/mongbas-server.log 2>&1 &"
+  eval "env DISABLE_RATE_LIMITS=true SESSION_SECRET=bench-session-secret CREDENTIAL_SECRET=bench-credential-secret $env_vars node src/app.js > /tmp/mongbas-server.log 2>&1 &"
   SERVER_PID=$!
   local attempts=0
   until curl -s http://localhost:3000/health > /dev/null 2>&1; do
@@ -74,8 +74,32 @@ start_server "A단계" "IDEMIX_ENABLED=false"
 
 node benchmark/real-idemix-bench.js \
   --out "${REPORTS_DIR}/real-A-${TIMESTAMP}.json" \
-  --sec 8 \
+  --sec "${BENCH_STEP_SEC:-5}" \
   2>&1 | tee "${REPORTS_DIR}/real-A-${TIMESTAMP}.log"
+
+stop_server
+
+# HMAC: 대칭키 개발 기준
+echo ""
+log "========== HMAC: HMAC-SHA256 credential =========="
+start_server "HMAC" "IDEMIX_ENABLED=true ASYM_CRED_ENABLED=false IDEMIX_CACHE_ENABLED=false"
+
+node benchmark/real-idemix-bench.js \
+  --out "${REPORTS_DIR}/real-HMAC-${TIMESTAMP}.json" \
+  --sec "${BENCH_STEP_SEC:-5}" \
+  2>&1 | tee "${REPORTS_DIR}/real-HMAC-${TIMESTAMP}.log"
+
+stop_server
+
+# Ed25519: 최종 보안 기준선
+echo ""
+log "========== Ed25519: 체인코드 직접 검증 기준선 =========="
+start_server "Ed25519" "IDEMIX_ENABLED=true ASYM_CRED_ENABLED=true IDEMIX_CACHE_ENABLED=false"
+
+node benchmark/real-idemix-bench.js \
+  --out "${REPORTS_DIR}/real-Ed25519-${TIMESTAMP}.json" \
+  --sec "${BENCH_STEP_SEC:-5}" \
+  2>&1 | tee "${REPORTS_DIR}/real-Ed25519-${TIMESTAMP}.log"
 
 stop_server
 
@@ -94,7 +118,7 @@ start_server "B단계" "IDEMIX_ENABLED=true IDEMIX_IMPL=ps IDEMIX_CACHE_ENABLED=
 
 node benchmark/real-idemix-bench.js \
   --out "${REPORTS_DIR}/real-B-${TIMESTAMP}.json" \
-  --sec 8 \
+  --sec "${BENCH_STEP_SEC:-5}" \
   2>&1 | tee "${REPORTS_DIR}/real-B-${TIMESTAMP}.log"
 
 stop_server
@@ -116,7 +140,7 @@ start_server "C단계" "IDEMIX_ENABLED=true IDEMIX_IMPL=bbs IDEMIX_CACHE_ENABLED
 
 node benchmark/real-idemix-bench.js \
   --out "${REPORTS_DIR}/real-C-${TIMESTAMP}.json" \
-  --sec 8 \
+  --sec "${BENCH_STEP_SEC:-5}" \
   2>&1 | tee "${REPORTS_DIR}/real-C-${TIMESTAMP}.log"
 
 stop_server
@@ -141,8 +165,8 @@ function load(phase) {
   catch { return null; }
 }
 
-const A = load('A'), B = load('B'), C = load('C');
-const phases = [A, B, C].filter(Boolean);
+const A = load('A'), HMAC = load('HMAC'), Ed25519 = load('Ed25519'), B = load('B'), C = load('C');
+const phases = [A, HMAC, Ed25519, B, C].filter(Boolean);
 
 const fmt = (n) => n == null ? 'N/A' : n.toFixed(1);
 

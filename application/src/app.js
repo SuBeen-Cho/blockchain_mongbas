@@ -26,6 +26,8 @@ const { requireVoterAuth, measureAuthLatency, idemixStatus } = require('./middle
 
 const app  = express();
 const PORT = process.env.PORT || 3000;
+const DISABLE_RATE_LIMITS = process.env.DISABLE_RATE_LIMITS === 'true';
+const noRateLimit = (_req, _res, next) => next();
 
 // ── 운영 환경 필수 환경변수 검증 ──────────────────────────────────
 if (process.env.NODE_ENV === 'production') {
@@ -59,7 +61,9 @@ const globalLimiter = rateLimit({
   legacyHeaders: false,
   message: { error: '요청이 너무 많습니다. 잠시 후 다시 시도하세요.' },
 });
-app.use(globalLimiter);
+if (!DISABLE_RATE_LIMITS) {
+  app.use(globalLimiter);
+}
 
 // 보안 헤더
 app.use((_req, res, next) => {
@@ -106,8 +110,8 @@ const credentialLimiter = rateLimit({
 // ── 라우터 ──────────────────────────────────────────────────────
 app.use('/api/elections',  electionsRouter);
 app.use('/api/nullifier',  voteRouter);
-app.use('/api/credential', credentialLimiter, credentialRouter);    // Idemix 자격증명 발급
-app.use('/api/vote',       voteLimiter, requireVoterAuth, voteRouter); // Idemix 인증 미들웨어 적용
+app.use('/api/credential', DISABLE_RATE_LIMITS ? noRateLimit : credentialLimiter, credentialRouter);    // Idemix 자격증명 발급
+app.use('/api/vote',       DISABLE_RATE_LIMITS ? noRateLimit : voteLimiter, requireVoterAuth, voteRouter); // Idemix 인증 미들웨어 적용
 
 // ── 벤치마크 전용 엔드포인트 ────────────────────────────────────
 // 인증 레이턴시만 측정하기 위한 엔드포인트 (체인코드 호출 없음)

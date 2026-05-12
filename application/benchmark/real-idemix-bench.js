@@ -105,7 +105,7 @@ async function measureTPS(label, url, headers, concurrency, durationMs) {
             res.on('end', () => {
               total++;
               const ms = Number(process.hrtime.bigint() - t) / 1e6;
-              if (res.statusCode < 500) latencies.push(ms);
+              if (res.statusCode >= 200 && res.statusCode < 400) latencies.push(ms);
               else errors++;
               resolve();
             });
@@ -318,8 +318,10 @@ async function main() {
     phaseName = 'B'; note = 'PS-BN254 Idemix (Hyperledger Fabric Idemix와 동일 수학)';
   } else if (impl === 'bbs') {
     phaseName = 'C'; note = 'BBS+-BLS12381 (IRTF CFRG 표준, 선택적 공개 ZKP)';
+  } else if (idemix.asymEnabled) {
+    phaseName = 'Ed25519'; note = 'Ed25519 공개키 credential (체인코드 직접 검증 기준선)';
   } else {
-    phaseName = '?'; note = impl || idemix.mode;
+    phaseName = 'HMAC'; note = 'HMAC-SHA256 credential (대칭키 개발 기준)';
   }
 
   const phaseResult = await runPhase(phaseName, note);
