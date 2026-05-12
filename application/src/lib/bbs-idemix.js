@@ -27,8 +27,13 @@ const { randomBytes, createHash } = require('crypto');
 
 // 속성 순서: [voterEligible, electionID, exp]
 const ATTR_INDICES = { voterEligible: 0, electionID: 1, exp: 2 };
-// 선택적 공개: voterEligible(0) 만 공개
-const REVEALED_INDICES = [ATTR_INDICES.voterEligible];
+// 체인코드 검증용 공개 속성: voterEligible, electionID, exp
+// voterID는 credential 속성에 포함하지 않으므로 신원은 노출되지 않는다.
+const REVEALED_INDICES = [
+  ATTR_INDICES.voterEligible,
+  ATTR_INDICES.electionID,
+  ATTR_INDICES.exp,
+];
 
 // 발급자 키 싱글톤 (비동기 초기화)
 let _keyPair = null;
@@ -76,7 +81,7 @@ async function issueCredential(attributes) {
  * BBS+ 자격증명 검증
  *
  * 1. 만료 / 속성 사전 검사
- * 2. BBS+ Proof of Knowledge 생성 (voterEligible 선택적 공개)
+ * 2. BBS+ Proof of Knowledge 생성
  * 3. Proof 검증
  *
  * 비연결성: 매 호출마다 새로운 nonce → 매 proof 고유
@@ -139,6 +144,13 @@ async function verifyCredential(credObj) {
       electionID: attrs[ATTR_INDICES.electionID],
       expUnix:    Math.floor(Number(attrs[ATTR_INDICES.exp]) / 1000),
       credType:   'bbs',
+      bbsProof: {
+        type: 'bbs-proof',
+        proof: Buffer.from(proof).toString('base64url'),
+        nonce: Buffer.from(nonce).toString('base64url'),
+        revealedAttrs: REVEALED_INDICES.map(i => String(attrs[i])),
+        revealedIndices: REVEALED_INDICES,
+      },
     };
   } catch (e) {
     return { valid: false, reason: `BBS+ 오류: ${e.message}` };

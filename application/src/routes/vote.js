@@ -119,10 +119,14 @@ router.post('/', async (req, res) => {
     }
     transientData.credentialVerification = Buffer.from(JSON.stringify(credVerification));
     // [PAPER-4] 체인코드 직접 검증을 위해 credential 원문 전달
-    if (['ed25519', 'hmac', 'ps', 'bbs'].includes(credVerification.credType)) {
+    if (['ed25519', 'hmac', 'ps'].includes(credVerification.credType)) {
       const credHeader = req.headers['x-idemix-credential'] || '';
       if (!credHeader) return res.status(403).json({ error: 'credential 원문이 필요합니다.' });
       transientData.credentialToken = Buffer.from(credHeader);
+    }
+    if (credVerification.credType === 'bbs') {
+      if (!req.voter.bbsProof) return res.status(403).json({ error: 'BBS+ proof presentation이 필요합니다.' });
+      transientData.bbsProof = Buffer.from(JSON.stringify(req.voter.bbsProof));
     }
 
     // [PAPER-12] Deniable Credential Duality — credentialType을 transient로 전달

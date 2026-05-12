@@ -203,11 +203,12 @@ type PSCredentialToken struct {
 	ExpMs float64  `json:"expMs"`
 }
 
-type BBSCredentialToken struct {
-	Type  string   `json:"type"`
-	Sig   string   `json:"sig"`
-	Attrs []string `json:"attrs"`
-	ExpMs float64  `json:"expMs"`
+type BBSProofPresentation struct {
+	Type            string   `json:"type"`
+	Proof           string   `json:"proof"`
+	Nonce           string   `json:"nonce"`
+	RevealedAttrs   []string `json:"revealedAttrs"`
+	RevealedIndices []int    `json:"revealedIndices"`
 }
 
 // VotePrivate PDC에 저장되는 원본 투표 데이터 (비공개)
@@ -549,56 +550,63 @@ func verifyBBSCredentialToken(ctx contractapi.TransactionContextInterface, cv Cr
 	if err != nil {
 		return fmt.Errorf("transient 읽기 실패: %w", err)
 	}
-	tokenBytes, ok := transient["credentialToken"]
-	if !ok || len(tokenBytes) == 0 {
-		return fmt.Errorf("BBS credentialToken 누락")
+	proofBytes, ok := transient["bbsProof"]
+	if !ok || len(proofBytes) == 0 {
+		return fmt.Errorf("BBS proof presentation 누락")
 	}
-	token := string(tokenBytes)
-	if !strings.HasPrefix(token, "bbs.") {
-		return fmt.Errorf("BBS credential 형식 오류")
+	var presentation BBSProofPresentation
+	if err := json.Unmarshal(proofBytes, &presentation); err != nil {
+		return fmt.Errorf("BBS proof presentation JSON 파싱 실패: %w", err)
 	}
-	credJSON, err := decodeBase64Flexible(strings.TrimPrefix(token, "bbs."))
-	if err != nil {
-		return fmt.Errorf("BBS credential 디코딩 실패: %w", err)
+	if presentation.Type != "bbs-proof" || len(presentation.RevealedAttrs) != 3 {
+		return fmt.Errorf("BBS proof presentation 형식 오류")
 	}
-	var cred BBSCredentialToken
-	if err := json.Unmarshal(credJSON, &cred); err != nil {
-		return fmt.Errorf("BBS credential JSON 파싱 실패: %w", err)
+	if len(presentation.RevealedIndices) != 3 ||
+		presentation.RevealedIndices[0] != 0 ||
+		presentation.RevealedIndices[1] != 1 ||
+		presentation.RevealedIndices[2] != 2 {
+		return fmt.Errorf("BBS proof revealed index 불일치")
 	}
-	if cred.Type != "bbs" || len(cred.Attrs) < 3 {
-		return fmt.Errorf("BBS credential 속성 형식 오류")
-	}
-	if cred.Attrs[0] != "1" {
+	if presentation.RevealedAttrs[0] != "1" {
 		return fmt.Errorf("투표 자격 속성 없음")
 	}
-	if cred.Attrs[1] != electionID || cred.Attrs[1] != cv.ElectionID {
-		return fmt.Errorf("BBS credential 선거ID 불일치: payload=%s, cred=%s, req=%s", cred.Attrs[1], cv.ElectionID, electionID)
+	if presentation.RevealedAttrs[1] != electionID || presentation.RevealedAttrs[1] != cv.ElectionID {
+		return fmt.Errorf("BBS proof 선거ID 불일치: proof=%s, cred=%s, req=%s", presentation.RevealedAttrs[1], cv.ElectionID, electionID)
 	}
-	attrExpMs, err := strconv.ParseInt(cred.Attrs[2], 10, 64)
+	attrExpMs, err := strconv.ParseInt(presentation.RevealedAttrs[2], 10, 64)
 	if err != nil {
-		return fmt.Errorf("BBS credential exp 속성 파싱 실패: %w", err)
+		return fmt.Errorf("BBS proof exp 속성 파싱 실패: %w", err)
 	}
 	expUnix := attrExpMs / 1000
 	if txNow > expUnix || expUnix != cv.ExpUnix {
-		return fmt.Errorf("BBS credential 만료 또는 exp 불일치")
+		return fmt.Errorf("BBS proof 만료 또는 exp 불일치")
 	}
-	if txNow > int64(cred.ExpMs/1000) {
-		return fmt.Errorf("BBS credential expMs 만료")
-	}
-	sig, err := decodeBase64Flexible(cred.Sig)
+	proof, err := decodeBase64Flexible(presentation.Proof)
 	if err != nil {
-		return fmt.Errorf("BBS signature 디코딩 실패: %w", err)
+		return fmt.Errorf("BBS proof 디코딩 실패: %w", err)
 	}
-	messages := make([][]byte, len(cred.Attrs))
-	for i, attr := range cred.Attrs {
+	nonce, err := decodeBase64Flexible(presentation.Nonce)
+	if err != nil {
+		return fmt.Errorf("BBS nonce 디코딩 실패: %w", err)
+	}
+	payload, err := ariesbbs.ParsePoKPayload(proof)
+	if err != nil {
+		return fmt.Errorf("BBS proof payload 파싱 실패: %w", err)
+	}
+	if payload.MessagesCount != 3 || len(payload.Revealed) != 3 ||
+		payload.Revealed[0] != 0 || payload.Revealed[1] != 1 || payload.Revealed[2] != 2 {
+		return fmt.Errorf("BBS proof payload revealed 속성 불일치")
+	}
+	messages := make([][]byte, len(presentation.RevealedAttrs))
+	for i, attr := range presentation.RevealedAttrs {
 		messages[i] = []byte(attr)
 	}
-	if err := ariesbbs.New(ml.Curves[ml.BLS12_381_BBS]).Verify(messages, sig, pubKey); err != nil {
-		return fmt.Errorf("BBS+ signature 검증 실패: %w", err)
+	if err := ariesbbs.New(ml.Curves[ml.BLS12_381_BBS]).VerifyProof(messages, proof, nonce, pubKey); err != nil {
+		return fmt.Errorf("BBS+ proof 검증 실패: %w", err)
 	}
-	hashRaw := sha256.Sum256([]byte(token))
+	hashRaw := sha256.Sum256(proofBytes)
 	if hex.EncodeToString(hashRaw[:]) != cv.CredHash {
-		return fmt.Errorf("BBS credential hash 불일치")
+		return fmt.Errorf("BBS proof hash 불일치")
 	}
 	return nil
 }

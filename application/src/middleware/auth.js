@@ -216,6 +216,7 @@ async function verifyVoterEligibility(req) {
   if (IDEMIX_IMPL === 'bbs') {
     const verified = await verifyBbsCredential(credHeader);
     if (!verified.valid) return { eligible: false, reason: verified.reason };
+    const bbsProofJson = JSON.stringify(verified.bbsProof);
     // [CRIT-01/02 FIX] credType/expUnix/credHash 포함
     return {
       eligible:   true,
@@ -225,7 +226,8 @@ async function verifyVoterEligibility(req) {
       electionID: verified.electionID,
       credType:   'bbs',
       expUnix:    verified.expUnix || Math.floor(Date.now() / 1000) + 300,
-      credHash:   crypto.createHash('sha256').update(credHeader).digest('hex'),
+      credHash:   crypto.createHash('sha256').update(bbsProofJson).digest('hex'),
+      bbsProof:   verified.bbsProof,
     };
   }
 
@@ -301,7 +303,7 @@ function idemixStatus() {
   } else if (IDEMIX_IMPL === 'bbs') {
     impl = 'BBS+-BLS12381 (C단계: 개선 Idemix)';
     securityNote = process.env.BBS_ISSUER_SEED
-      ? '익명 credential — BBS_PUBLIC_KEY_B64를 체인코드에 주입하면 BLS12-381 BBS+ 체인코드 직접 검증'
+      ? '익명 credential — BBS_PUBLIC_KEY_B64를 체인코드에 주입하면 BLS12-381 BBS+ proof 체인코드 직접 검증'
       : '익명 credential (ZKP 기반 선택적 공개) — BBS_ISSUER_SEED/BBS_PUBLIC_KEY_B64 미설정 시 체인코드 직접 검증 불가';
   } else if (ASYM_CRED_ENABLED) {
     impl = 'Ed25519-asymmetric';
