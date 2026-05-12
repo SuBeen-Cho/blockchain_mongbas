@@ -253,33 +253,3 @@ cd network && ./scripts/network.sh down
 | D. 집계 키 단독 탈취 | 1-share 복원 실패 100%, 2-share 성공 100% |
 | E. 결과 조작 외부 주장 | Merkle 검증 정확도 100% |
 
----
-
-## Documentation
-
-| Document | Description |
-|----------|-------------|
-| [HANDOFF.md](./HANDOFF.md) | 개발자 인계 문서 |
-| [docs/performance/](./docs/performance/) | 성능 평가 (6 STEP 상세) |
-| [docs/security-eval/](./docs/security-eval/) | 보안 위협 시나리오 분석 |
-| [docs/server_run_guide.md](./docs/server_run_guide.md) | 서버 실행 가이드 |
-
----
-
-## Team
-
-**팀 몽바스** — 한양대학교 ERICA 융합보안 캡스톤디자인
-
-| Name | Student ID |
-|------|-----------|
-| 조수빈 | 2394025 |
-| 정윤녕 | 2394043 |
-| 윤서현 | 2394048 |
-
-**지도교수:** 서화정 교수님
-
----
-
-## License
-
-This project was developed as an academic capstone project. All rights reserved.
