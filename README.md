@@ -117,7 +117,7 @@
 |-------|-----------|
 | Blockchain | Hyperledger Fabric 2.5 (etcdraft CFT) |
 | State DB | CouchDB 3.4 |
-| Smart Contract | Go 1.21 — `chaincode/voting/voting.go` (~3600 lines) |
+| Smart Contract | Go 1.21 — `chaincode/voting/voting.go` (~3800 lines) |
 | Backend API | Node.js + Express + `@hyperledger/fabric-gateway` |
 | Frontend | React + Vite + Tailwind CSS |
 | Cryptography | Exponential ElGamal, Chaum-Pedersen ZKP, Shamir SSS, Merkle Tree, HMAC/Ed25519 |
@@ -131,7 +131,7 @@
 ```
 mongbas/
 ├── chaincode/voting/          # Go smart contract (single file)
-│   ├── voting.go              # 체인코드 전체 (~3600 lines)
+│   ├── voting.go              # 체인코드 전체 (~3800 lines)
 │   ├── collection_config.json # PDC 설정
 │   ├── Dockerfile             # CCAAS 배포용
 │   └── vendor/                # Go dependencies
@@ -210,14 +210,20 @@ cd network && ./scripts/network.sh down
 | `POST` | `/api/elections` | 선거 생성 |
 | `POST` | `/api/elections/:id/activate` | 선거 활성화 |
 | `GET` | `/api/elections/:id` | 선거 정보 조회 |
+| `GET` | `/api/elections/:id/elgamal-pubkey` | ElGamal 공개키 조회 |
 | `POST` | `/api/vote` | 투표 제출 (ElGamal + ZKP) |
+| `POST` | `/api/vote/prepare` | Benaloh Challenge 준비 |
+| `POST` | `/api/vote/audit` | Benaloh Challenge 검증 (spoil) |
 | `POST` | `/api/elections/:id/close` | 선거 종료 + 집계 |
 | `GET` | `/api/elections/:id/tally` | 개표 결과 |
+| `POST` | `/api/elections/:id/verify-elgamal` | ElGamal ZKP 검증 |
 | `POST` | `/api/elections/:id/merkle` | Merkle Tree 구축 |
 | `GET` | `/api/elections/:id/proof/:hash` | Merkle 포함 증명 |
 | `POST` | `/api/elections/:id/proof` | Deniable Verification |
 | `POST` | `/api/elections/:id/keysharing` | Shamir 키 분산 초기화 |
 | `POST` | `/api/elections/:id/shares` | Shamir share 제출 |
+| `GET` | `/api/elections/:id/bulletin-board` | Bulletin Board 조회 |
+| `POST` | `/api/credential/idemix` | Idemix 자격증명 발급 |
 | `GET` | `/api/nullifier/:hash` | Nullifier 조회 |
 | `GET` | `/health` | 서버 상태 확인 |
 

@@ -40,6 +40,9 @@ caliper/reports/*.png
 normal_times.txt
 panic_times.txt
 
+# ── AI 도구 설정 ───────────────────────────────────────────────
+CLAUDE.md
+
 # ── OS ─────────────────────────────────────────────────────────
 .DS_Store
 Thumbs.db
