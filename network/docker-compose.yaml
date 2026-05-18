@@ -576,6 +576,8 @@ services:
       - CHAINCODE_SERVER_ADDRESS=0.0.0.0:7052
       - CHAINCODE_ID=voting_1.0   # deploy 후 실제 패키지 ID로 교체 필요
       - ED25519_PUBLIC_KEY_DER_B64=${ED25519_PUBLIC_KEY_DER_B64:-}
+      - PS_ISSUER_PUBLIC_KEY_B64=${PS_ISSUER_PUBLIC_KEY_B64:-}
+      - BBS_PUBLIC_KEY_B64=${BBS_PUBLIC_KEY_B64:-}
       - ALLOW_BYPASS_CREDENTIAL=${ALLOW_BYPASS_CREDENTIAL:-false}
     depends_on:
       - peer0.ec.voting.example.com
