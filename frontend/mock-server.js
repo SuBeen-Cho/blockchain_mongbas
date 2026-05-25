@@ -70,6 +70,19 @@ const server = http.createServer(async (req, res) => {
     return json(res, { error: 'not found' }, 404);
   }
 
+  // Security properties (must be before getElMatch to avoid matching as election ID)
+  if (url === '/api/elections/security-properties') {
+    return json(res, {
+      ballotSecrecy: { status: 'ACHIEVED', mechanism: 'DDH assumption in ElGamal / AES-256-GCM', assumption: 'DDH' },
+      castAsIntended: { status: 'ACHIEVED', mechanism: 'Benaloh Challenge — client-side audit', assumption: 'none' },
+      recordedAsCast: { status: 'ACHIEVED', mechanism: 'Merkle proof inclusion', assumption: 'collision-resistant hash' },
+      talliedAsRecorded: { status: 'ACHIEVED', mechanism: 'Homomorphic ZKP (ElGamal) / DecryptionProof (AES)', assumption: 'DDH / CPA-secure AES' },
+      universalVerifiability: { status: 'ACHIEVED', mechanism: 'Bulletin Board + key publication / ZKP', assumption: 'none' },
+      eligibilityVerifiability: { status: 'ACHIEVED', mechanism: 'HMAC/Ed25519 chaincode verification', assumption: 'none' },
+      coercionResistance: { status: 'ACHIEVED', mechanism: 'Panic Credential + Re-voting + Receipt-Free', assumption: 'untappable channel (PDC)' },
+    });
+  }
+
   // Get election
   const getElMatch = url.match(/^\/api\/elections\/([^/]+)$/);
   if (getElMatch && method === 'GET') {
@@ -107,7 +120,8 @@ const server = http.createServer(async (req, res) => {
   // Vote audit (Benaloh)
   if (url === '/api/vote/audit' && method === 'POST') {
     const body = await parseBody(req);
-    return json(res, { candidateID: body.candidateID || 'A', encryptionKey: 'a'.repeat(64), encryptedCandidateID: 'mock-cipher', nonce: 'mock-nonce' });
+    const key = 'a'.repeat(64);
+    return json(res, { candidateID: body.candidateID || 'A', encryptionKeyHex: key, encryptedCandidateID: 'mock-cipher', nonce: 'mock-nonce' });
   }
 
   // Tally
@@ -158,19 +172,6 @@ const server = http.createServer(async (req, res) => {
   // Publish audit
   const paMatch = url.match(/^\/api\/elections\/(.+?)\/publish-audit$/);
   if (paMatch && method === 'POST') return json(res, { message: 'Audit data published' });
-
-  // Security properties
-  if (url === '/api/elections/security-properties') {
-    return json(res, {
-      ballotSecrecy: { status: 'ACHIEVED', mechanism: 'DDH assumption in ElGamal / AES-256-GCM', assumption: 'DDH' },
-      castAsIntended: { status: 'ACHIEVED', mechanism: 'Benaloh Challenge — client-side audit', assumption: 'none' },
-      recordedAsCast: { status: 'ACHIEVED', mechanism: 'Merkle proof inclusion', assumption: 'collision-resistant hash' },
-      talliedAsRecorded: { status: 'ACHIEVED', mechanism: 'Homomorphic ZKP (ElGamal) / DecryptionProof (AES)', assumption: 'DDH / CPA-secure AES' },
-      universalVerifiability: { status: 'ACHIEVED', mechanism: 'Bulletin Board + key publication / ZKP', assumption: 'none' },
-      eligibilityVerifiability: { status: 'ACHIEVED', mechanism: 'HMAC/Ed25519 chaincode verification', assumption: 'none' },
-      coercionResistance: { status: 'ACHIEVED', mechanism: 'Panic Credential + Re-voting + Receipt-Free', assumption: 'untappable channel (PDC)' },
-    });
-  }
 
   // Bulletin board
   const bbMatch = url.match(/^\/api\/elections\/(.+?)\/bulletin-board$/);

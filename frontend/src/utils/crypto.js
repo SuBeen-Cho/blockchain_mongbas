@@ -214,14 +214,23 @@ export async function verifyTallyProofs(encryptionKeyHex, decryptionProofs, orig
 export async function verifyBenalohAudit(auditResult) {
   const { candidateID, encryptedCandidateID, encryptionKeyHex } = auditResult;
 
-  // 동일한 키와 후보자로 재암호화 (결정론적 nonce → 동일 결과)
-  const reEncrypted = await encryptCandidateID(encryptionKeyHex, candidateID);
+  // 키 또는 암호문이 없으면 검증 불가 (mock 서버 등)
+  if (!encryptionKeyHex || !encryptedCandidateID || !candidateID) {
+    return { verified: false, reEncrypted: null, original: encryptedCandidateID };
+  }
 
-  return {
-    verified: reEncrypted === encryptedCandidateID,
-    reEncrypted,
-    original: encryptedCandidateID,
-  };
+  try {
+    // 동일한 키와 후보자로 재암호화 (결정론적 nonce → 동일 결과)
+    const reEncrypted = await encryptCandidateID(encryptionKeyHex, candidateID);
+
+    return {
+      verified: reEncrypted === encryptedCandidateID,
+      reEncrypted,
+      original: encryptedCandidateID,
+    };
+  } catch (e) {
+    return { verified: false, reEncrypted: null, original: encryptedCandidateID, error: e.message };
+  }
 }
 
 // ============================================================
