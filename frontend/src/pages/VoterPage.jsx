@@ -1,16 +1,15 @@
 /**
- * VoterPage.jsx — 유권자 투표 UI (Idemix 자격증명 연동)
+ * VoterPage.jsx — 유권자 투표 UI (스텝 기반 플로우)
  *
- * 핵심 프라이버시 원칙:
- *   - voterSecret은 이 컴포넌트에서만 생성·보관, 절대 서버 전송 안 함
- *   - nullifierHash = SHA256(voterSecret + electionID + blindingFactor) — 브라우저에서 계산
- *   - Idemix credential: 서버에서 발급, voterID 미포함 → 익명 자격 증명
- *   - 강압 상황을 위한 Panic Password 지원
- *   - [PAPER-1] Blind Mode: 클라이언트 AES-256-GCM 암호화 → 서버가 평문 후보 볼 수 없음
- *   - [PAPER-3] Benaloh Challenge: 투표 암호화 정확성 독립 검증
+ * Step 1: 유권자 인증 (Idemix)
+ * Step 2: 선거 선택
+ * Step 3: 투표 옵션 설정 (Blind Mode, Panic, voterSecret)
+ * Step 4: 후보 선택
+ * Step 5: 검증 & 제출 (Benaloh Challenge + 제출)
+ * Step 6: 완료 & 영수증
  */
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect } from 'react';
 import {
   computeNullifier,
   computePasswordHash,
@@ -20,10 +19,16 @@ import {
   elgamalEncrypt,
   generateBallotValidityProof,
 } from '../utils/crypto.js';
+import Stepper from '../components/Stepper.jsx';
+import HashDisplay from '../components/HashDisplay.jsx';
+import Alert from '../components/Alert.jsx';
 
 const API = '/api';
+const STEPS = ['인증', '선거 선택', '옵션 설정', '후보 선택', '검증 & 제출', '완료'];
 
 export default function VoterPage() {
+  const [step, setStep] = useState(0);
+
   // ── 선거 조회 ───────────────────────────────────────
   const [electionID, setElectionID] = useState('');
   const [election,   setElection]   = useState(null);
@@ -32,7 +37,7 @@ export default function VoterPage() {
   const [enrollmentID,     setEnrollmentID]     = useState('');
   const [enrollmentSecret, setEnrollmentSecret] = useState('');
   const [idemixCredential, setIdemixCredential] = useState('');
-  const [credStatus,       setCredStatus]       = useState('');  // 'fetching' | 'ok' | 'error' | ''
+  const [credStatus,       setCredStatus]       = useState('');
 
   // ── 투표 입력 ───────────────────────────────────────
   const [voterSecret,    setVoterSecret]    = useState('');
@@ -41,48 +46,48 @@ export default function VoterPage() {
   const [panicPassword,  setPanicPassword]  = useState('');
   const [panicCandidate, setPanicCandidate] = useState('');
 
-  // ── [PAPER-1] Blind Mode ───────────────────────────
+  // ── Blind Mode ────────────────────────────────────
   const [blindMode, setBlindMode] = useState(false);
   const [encryptionKey, setEncryptionKey] = useState('');
 
-  // ── [PAPER-3] Benaloh Challenge ────────────────────
-  const [benalohStep, setBenalohStep] = useState('idle'); // 'idle' | 'prepared' | 'audited'
+  // ── Benaloh Challenge ─────────────────────────────
+  const [benalohStep, setBenalohStep] = useState('idle');
   const [benalohBallot, setBenalohBallot] = useState(null);
   const [benalohAuditResult, setBenalohAudit] = useState(null);
 
-  // ── [PAPER-12] Deniable Credential Duality ─────────
-  const [panicCredential, setPanicCredential] = useState(false); // 패닉 투표 모드
+  // ── Panic Credential ──────────────────────────────
+  const [panicCredential, setPanicCredential] = useState(false);
 
-  // ── UI 상태 ─────────────────────────────────────────
+  // ── UI 상태 ────────────────────────────────────────
   const [loading, setLoading] = useState(false);
   const [result,  setResult]  = useState(null);
   const [error,   setError]   = useState('');
   const [panicMode, setPanicMode] = useState(false);
   const [credMode, setCredMode] = useState('');
 
-  // ── Credential 모드 확인 (health check) ────────────
+  // ── 암호화 진행 상태 ─────────────────────────────
+  const [encProgress, setEncProgress] = useState([]);
+
+  // ── ElGamal ────────────────────────────────────────
+  const [elgamalPubKey, setElgamalPubKey] = useState(null);
+  const isElGamal = election?.encryptionMode === 'elgamal';
+
   useEffect(() => {
     fetch('/health').then(r => r.json())
       .then(d => setCredMode(d.idemix?.mode || ''))
       .catch(() => {});
   }, []);
 
-  // ── [PAPER-1/11] Blind Mode: 선거 암호화 키 조회 ────
-  const [elgamalPubKey, setElgamalPubKey] = useState(null);
-  const isElGamal = election?.encryptionMode === 'elgamal';
-
   useEffect(() => {
     if (!blindMode || !election || !electionID) {
       setEncryptionKey(''); setElgamalPubKey(null); return;
     }
     if (isElGamal) {
-      // ElGamal 공개키 조회
       fetch(`${API}/elections/${electionID}/elgamal-pubkey`)
         .then(r => r.json())
         .then(d => { setElgamalPubKey(d.pubKey || null); setEncryptionKey('elgamal'); })
         .catch(() => { setElgamalPubKey(null); setEncryptionKey(''); });
     } else {
-      // AES 키 조회
       fetch(`${API}/elections/${electionID}/encryption-key`)
         .then(r => r.json())
         .then(d => setEncryptionKey(d.encryptionKeyHex || ''))
@@ -90,14 +95,10 @@ export default function VoterPage() {
     }
   }, [blindMode, election, electionID, isElGamal]);
 
-  // ── Idemix 자격증명 사전 발급 ─────────────────────
-  // 선거 조회 후 백그라운드에서 자동 발급 (ZKP 사전 생성 최적화)
   useEffect(() => {
     if (!election || !electionID || !enrollmentID || !enrollmentSecret) return;
-
     setCredStatus('fetching');
     setIdemixCredential('');
-
     fetch(`${API}/credential/idemix`, {
       method:  'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -105,12 +106,8 @@ export default function VoterPage() {
     })
       .then(res => res.json())
       .then(data => {
-        if (data.credential) {
-          setIdemixCredential(data.credential);
-          setCredStatus('ok');
-        } else {
-          setCredStatus('error');
-        }
+        if (data.credential) { setIdemixCredential(data.credential); setCredStatus('ok'); }
+        else setCredStatus('error');
       })
       .catch(() => setCredStatus('error'));
   }, [election, electionID, enrollmentID, enrollmentSecret]);
@@ -120,7 +117,13 @@ export default function VoterPage() {
     try {
       const res = await fetch(`${API}/elections/${electionID}`);
       if (!res.ok) throw new Error((await res.json()).error);
-      setElection(await res.json());
+      const data = await res.json();
+      setElection(data);
+      // 선거가 ACTIVE면 자동으로 다음 스텝으로 (voterSecret도 자동 생성)
+      if (data.status === 'ACTIVE') {
+        if (!voterSecret) setVoterSecret(generateVoterSecret());
+        setTimeout(() => setStep(2), 600);
+      }
     } catch (e) { setError(e.message); }
   }
 
@@ -132,33 +135,40 @@ export default function VoterPage() {
       return setError('Blind Mode: 암호화 키를 불러오지 못했습니다.');
     }
     setLoading(true); setError(''); setResult(null);
+    setEncProgress([]);
+
     try {
+      // Step 1: Nullifier
+      setEncProgress(['nullifier']);
       const bfRes = await fetch(`${API}/elections/${electionID}/blinding-factor`);
       if (!bfRes.ok) throw new Error('블라인딩 팩터 조회 실패');
       const { blindingFactor } = await bfRes.json();
       const nullifierHash = await computeNullifier(voterSecret, electionID, blindingFactor);
+      setEncProgress(p => [...p, 'nullifier_done']);
 
       const body = { electionID, nullifierHash };
 
-      // [PAPER-1/13] Blind Mode 암호화
+      // Step 2: Encrypt
+      setEncProgress(p => [...p, 'encrypt']);
       if (blindMode) {
         if (isElGamal && elgamalPubKey) {
-          // [PAPER-13] Exponential ElGamal + Ballot Validity ZKP
           const candidateIndex = (election?.candidates || []).indexOf(candidateID);
           if (candidateIndex < 0) throw new Error('후보자를 선택해주세요');
           const { c1, c2, _r } = elgamalEncrypt(elgamalPubKey, candidateID, candidateIndex);
           body.encryptedCandidateID = `${c1}:${c2}`;
-          // Disjunctive Chaum-Pedersen ZKP 생성
+          setEncProgress(p => [...p, 'encrypt_done', 'zkp']);
           const bvp = generateBallotValidityProof(
             elgamalPubKey, c1, c2, _r, candidateIndex, election.candidates.length
           );
           body.ballotValidityProof = JSON.stringify(bvp);
+          setEncProgress(p => [...p, 'zkp_done']);
         } else {
-          // AES-256-GCM 대칭키 암호화 (결정론적 nonce)
           body.encryptedCandidateID = await encryptCandidateID(encryptionKey, candidateID);
+          setEncProgress(p => [...p, 'encrypt_done']);
         }
       } else {
         body.candidateID = candidateID;
+        setEncProgress(p => [...p, 'encrypt_done']);
       }
 
       if (normalPassword && panicPassword) {
@@ -166,30 +176,27 @@ export default function VoterPage() {
         body.panicPWHash      = await computePasswordHash(panicPassword,  nullifierHash);
         body.panicCandidateID = panicCandidate || candidateID;
       }
+      if (panicCredential) body.credentialType = 'panic';
 
-      // [PAPER-12] Deniable Credential Duality — 패닉 투표 모드
-      if (panicCredential) {
-        body.credentialType = 'panic';
-      }
-
+      // Step 3: Submit to blockchain
+      setEncProgress(p => [...p, 'blockchain']);
       const headers = { 'Content-Type': 'application/json' };
-      if (idemixCredential) {
-        headers['x-idemix-credential'] = idemixCredential;
-      }
+      if (idemixCredential) headers['x-idemix-credential'] = idemixCredential;
 
       const res = await fetch(`${API}/vote`, {
-        method: 'POST',
-        headers,
-        body:   JSON.stringify(body),
+        method: 'POST', headers, body: JSON.stringify(body),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || data.reason);
+      setEncProgress(p => [...p, 'blockchain_done', 'receipt', 'receipt_done']);
+
       setResult({ nullifierHash, blindMode, ...data });
+      setStep(5); // 완료 단계로
     } catch (e) { setError(e.message); }
     finally { setLoading(false); }
   }
 
-  // ── [PAPER-3] Benaloh Challenge ────────────────────
+  // ── Benaloh Challenge ─────────────────────────────
   async function benalohPrepare() {
     if (!candidateID) return setError('후보자를 먼저 선택하세요.');
     setLoading(true); setError(''); setBenalohAudit(null);
@@ -197,8 +204,7 @@ export default function VoterPage() {
       const hdrs = { 'Content-Type': 'application/json' };
       if (idemixCredential) hdrs['x-idemix-credential'] = idemixCredential;
       const res = await fetch(`${API}/vote/prepare`, {
-        method: 'POST',
-        headers: hdrs,
+        method: 'POST', headers: hdrs,
         body: JSON.stringify({ electionID, candidateID }),
       });
       const data = await res.json();
@@ -216,13 +222,11 @@ export default function VoterPage() {
       const hdrs2 = { 'Content-Type': 'application/json' };
       if (idemixCredential) hdrs2['x-idemix-credential'] = idemixCredential;
       const res = await fetch(`${API}/vote/audit`, {
-        method: 'POST',
-        headers: hdrs2,
+        method: 'POST', headers: hdrs2,
         body: JSON.stringify({ electionID, ballotID: benalohBallot.ballotID }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
-      // 브라우저에서 독립 검증
       const verification = await verifyBenalohAudit(data);
       setBenalohAudit({ ...data, clientVerified: verification.verified });
       setBenalohStep('audited');
@@ -231,337 +235,594 @@ export default function VoterPage() {
   }
 
   function benalohReset() {
-    setBenalohStep('idle');
-    setBenalohBallot(null);
-    setBenalohAudit(null);
+    setBenalohStep('idle'); setBenalohBallot(null); setBenalohAudit(null);
   }
 
-  async function activatePanicMode() {
-    setPanicMode(true);
-    setResult({ message: '(Panic Mode 활성화됨) 강압자에게는 정상 화면처럼 보입니다.' });
-  }
+  // ── Navigation ────────────────────────────────────
+  const canNext = () => {
+    switch (step) {
+      case 0: return enrollmentID && enrollmentSecret;
+      case 1: return election?.status === 'ACTIVE';
+      case 2: return voterSecret;
+      case 3: return candidateID;
+      case 4: return true;
+      default: return false;
+    }
+  };
+
+  const next = () => { if (canNext()) { setError(''); setStep(s => Math.min(s + 1, 5)); } };
+  const prev = () => { setError(''); setStep(s => Math.max(s - 1, 0)); };
+
+  // ── Encryption Progress Steps ─────────────────────
+  const ENC_STEPS = [
+    { key: 'nullifier', label: 'Nullifier 생성', doneKey: 'nullifier_done' },
+    { key: 'encrypt', label: blindMode ? (isElGamal ? 'ElGamal 암호화' : 'AES-256-GCM 암호화') : '투표 데이터 준비', doneKey: 'encrypt_done' },
+    ...(isElGamal && blindMode ? [{ key: 'zkp', label: 'ZKP 증명 생성', doneKey: 'zkp_done' }] : []),
+    { key: 'blockchain', label: '블록체인 기록', doneKey: 'blockchain_done' },
+    { key: 'receipt', label: '영수증 생성', doneKey: 'receipt_done' },
+  ];
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-8">
+      {/* 스텝퍼 */}
+      <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6">
+        <Stepper steps={STEPS} current={step} />
+      </div>
 
-      {/* 유권자 로그인 (Idemix 자격증명 발급용) */}
-      <section className="bg-white rounded-xl shadow p-5 space-y-3">
-        <h2 className="font-bold text-gray-700">유권자 인증 (Idemix)</h2>
-        <p className="text-xs text-gray-400">
-          자격증명은 voterID를 포함하지 않습니다 — 블록체인에 신원이 기록되지 않습니다.
-        </p>
-        <div className="flex gap-2">
-          <input
-            className="border rounded px-3 py-2 flex-1 text-sm"
-            placeholder="유권자 ID (예: voter1)"
-            value={enrollmentID}
-            onChange={e => setEnrollmentID(e.target.value)}
-          />
-          <input
-            className="border rounded px-3 py-2 flex-1 text-sm"
-            placeholder="비밀번호 (예: voter1pw)"
-            type="password"
-            value={enrollmentSecret}
-            onChange={e => setEnrollmentSecret(e.target.value)}
-          />
-        </div>
-        {credStatus === 'ok'       && <p className="text-xs text-green-600">자격증명 발급 완료 (익명 자격 확인됨)</p>}
-        {credStatus === 'fetching' && <p className="text-xs text-blue-500">자격증명 발급 중...</p>}
-        {credStatus === 'error'    && <p className="text-xs text-red-500">자격증명 발급 실패 - 유권자 ID/비밀번호 확인</p>}
-        {credMode && (
-          <p className="text-xs text-gray-400">
-            인증 모드: <span className="font-mono font-medium text-gray-600">{credMode}</span>
-          </p>
-        )}
-      </section>
+      {/* 에러 */}
+      {error && <Alert variant="error">{error}</Alert>}
 
-      {/* 선거 조회 */}
-      <section className="bg-white rounded-xl shadow p-5">
-        <h2 className="font-bold text-gray-700 mb-3">선거 조회</h2>
-        <div className="flex gap-2">
-          <input
-            className="border rounded px-3 py-2 flex-1 text-sm"
-            placeholder="선거 ID (예: ELECTION_2026_PRESIDENT)"
-            value={electionID}
-            onChange={e => setElectionID(e.target.value)}
-          />
-          <button
-            className="bg-blue-600 text-white px-4 py-2 rounded text-sm hover:bg-blue-700"
-            onClick={fetchElection}
-          >조회</button>
-        </div>
-
-        {election && (
-          <div className="mt-3 p-3 bg-blue-50 rounded text-sm space-y-1">
-            <p className="font-semibold">{election.title}</p>
-            <p className="text-gray-500">{election.description}</p>
-            <p>
-              상태: <span className={`font-bold ${election.status === 'ACTIVE' ? 'text-green-600' : 'text-gray-500'}`}>
-                {election.status}
-              </span>
+      {/* ════════ Step 0: 유권자 인증 ════════ */}
+      {step === 0 && (
+        <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-8 space-y-6">
+          <div>
+            <h2 className="text-xl font-bold text-slate-900">유권자 인증</h2>
+            <p className="text-sm text-slate-500 mt-1">
+              Idemix 익명 자격 증명을 발급받습니다. 블록체인에 신원이 기록되지 않습니다.
             </p>
-            <p className="text-gray-500">후보: {election.candidates?.join(', ')}</p>
-          </div>
-        )}
-      </section>
-
-      {/* 투표 입력 */}
-      {election?.status === 'ACTIVE' && (
-        <section className="bg-white rounded-xl shadow p-5 space-y-4">
-          <h2 className="font-bold text-gray-700">투표</h2>
-
-          {/* [PAPER-1] Blind Mode 토글 */}
-          <div className="flex items-center gap-3 p-3 bg-gray-50 rounded border">
-            <label className="flex items-center gap-2 cursor-pointer text-sm">
-              <input
-                type="checkbox"
-                checked={blindMode}
-                onChange={e => setBlindMode(e.target.checked)}
-                className="w-4 h-4"
-              />
-              <span className="font-medium">Blind Mode (PAPER-1)</span>
-            </label>
-            <span className="text-xs text-gray-500">
-              {blindMode
-                ? encryptionKey
-                  ? isElGamal
-                    ? 'ElGamal 공개키 암호화 활성 (PAPER-11) — ZKP로 복호화 검증 가능'
-                    : 'AES-256-GCM 암호화 활성 (PAPER-1) — 서버가 평문 후보를 볼 수 없음'
-                  : '암호화 키 로딩 중...'
-                : '서버에 평문 후보 전달 (기본 모드)'}
-            </span>
-            {isElGamal && (
-              <span className="ml-2 text-xs font-bold text-purple-600 bg-purple-50 px-2 py-0.5 rounded">
-                ElGamal
-              </span>
-            )}
           </div>
 
-          {/* [PAPER-12] Panic Credential 토글 */}
-          <div className="flex items-center gap-3 p-3 bg-red-50 rounded border border-red-200">
-            <label className="flex items-center gap-2 cursor-pointer text-sm">
+          <div className="space-y-4">
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-1.5">유권자 ID</label>
               <input
-                type="checkbox"
-                checked={panicCredential}
-                onChange={e => setPanicCredential(e.target.checked)}
-                className="w-4 h-4 accent-red-500"
+                className="w-full h-11 px-4 border border-slate-200 rounded-lg text-sm bg-white
+                  focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none transition-colors duration-200"
+                placeholder="예: voter1"
+                value={enrollmentID}
+                onChange={e => setEnrollmentID(e.target.value)}
               />
-              <span className="font-medium text-red-700">Panic Credential (PAPER-12)</span>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-1.5">비밀번호</label>
+              <input
+                className="w-full h-11 px-4 border border-slate-200 rounded-lg text-sm bg-white
+                  focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none transition-colors duration-200"
+                placeholder="예: voter1pw"
+                type="password"
+                value={enrollmentSecret}
+                onChange={e => setEnrollmentSecret(e.target.value)}
+              />
+            </div>
+          </div>
+
+          {credStatus === 'ok' && (
+            <Alert variant="success">익명 자격증명이 발급되었습니다.</Alert>
+          )}
+          {credStatus === 'fetching' && (
+            <Alert variant="info">자격증명 발급 중...</Alert>
+          )}
+          {credStatus === 'error' && (
+            <Alert variant="error">자격증명 발급 실패 — 유권자 ID/비밀번호를 확인하세요.</Alert>
+          )}
+
+          <div className="flex justify-end">
+            <button
+              onClick={next}
+              disabled={!canNext()}
+              className="h-11 px-8 bg-blue-600 text-white rounded-lg text-sm font-semibold
+                hover:bg-blue-700 active:scale-[0.98] disabled:opacity-40 disabled:cursor-not-allowed
+                transition-all duration-200"
+            >
+              다음 단계
+              <svg className="inline-block w-4 h-4 ml-1.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" /></svg>
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* ════════ Step 1: 선거 선택 ════════ */}
+      {step === 1 && (
+        <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-8 space-y-6">
+          <div>
+            <h2 className="text-xl font-bold text-slate-900">선거 선택</h2>
+            <p className="text-sm text-slate-500 mt-1">참여할 선거의 ID를 입력하고 조회하세요.</p>
+          </div>
+
+          <div className="flex gap-3">
+            <input
+              className="flex-1 h-11 px-4 border border-slate-200 rounded-lg text-sm bg-white
+                focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none transition-colors duration-200"
+              placeholder="예: ELECTION_2026_PRESIDENT"
+              value={electionID}
+              onChange={e => setElectionID(e.target.value)}
+            />
+            <button
+              onClick={fetchElection}
+              className="h-11 px-6 bg-slate-800 text-white rounded-lg text-sm font-semibold
+                hover:bg-slate-900 active:scale-[0.98] transition-all duration-200"
+            >조회</button>
+          </div>
+
+          {election && (
+            <div className="bg-slate-50 rounded-xl border border-slate-200 p-5 space-y-3">
+              <div className="flex items-start justify-between">
+                <div>
+                  <h3 className="text-base font-bold text-slate-900">{election.title}</h3>
+                  <p className="text-sm text-slate-500 mt-0.5">{election.description}</p>
+                </div>
+                <span className={`
+                  px-3 py-1 rounded-full text-xs font-bold
+                  ${election.status === 'ACTIVE'
+                    ? 'bg-emerald-100 text-emerald-700'
+                    : election.status === 'CLOSED'
+                      ? 'bg-slate-200 text-slate-600'
+                      : 'bg-amber-100 text-amber-700'
+                  }
+                `}>{election.status}</span>
+              </div>
+              <div className="flex flex-wrap gap-2 pt-1">
+                {election.candidates?.map(c => (
+                  <span key={c} className="px-3 py-1 bg-white border border-slate-200 rounded-lg text-sm text-slate-700">{c}</span>
+                ))}
+              </div>
+              {isElGamal && (
+                <div className="flex items-center gap-2 pt-1">
+                  <span className="px-2 py-0.5 bg-purple-100 text-purple-700 rounded text-[11px] font-bold">ElGamal</span>
+                  <span className="text-xs text-slate-500">공개키 동형 암호화 모드</span>
+                </div>
+              )}
+            </div>
+          )}
+
+          <div className="flex justify-between">
+            <button onClick={prev} className="h-11 px-6 text-sm font-medium text-slate-600 hover:text-slate-900 transition-colors duration-200">
+              <svg className="inline-block w-4 h-4 mr-1.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" /></svg>
+              이전
+            </button>
+            <button
+              onClick={next}
+              disabled={!canNext()}
+              className="h-11 px-8 bg-blue-600 text-white rounded-lg text-sm font-semibold
+                hover:bg-blue-700 active:scale-[0.98] disabled:opacity-40 disabled:cursor-not-allowed
+                transition-all duration-200"
+            >
+              다음 단계
+              <svg className="inline-block w-4 h-4 ml-1.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" /></svg>
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* ════════ Step 2: 투표 옵션 설정 ════════ */}
+      {step === 2 && (
+        <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-8 space-y-6">
+          <div>
+            <h2 className="text-xl font-bold text-slate-900">투표 옵션 설정</h2>
+            <p className="text-sm text-slate-500 mt-1">암호화 모드와 보안 옵션을 설정하세요.</p>
+          </div>
+
+          {/* Blind Mode */}
+          <div className={`rounded-xl border p-4 transition-colors duration-200 ${blindMode ? 'border-blue-300 bg-blue-50/50' : 'border-slate-200 bg-slate-50'}`}>
+            <label className="flex items-center gap-3 cursor-pointer">
+              <div className={`w-10 h-6 rounded-full transition-colors duration-200 flex items-center ${blindMode ? 'bg-blue-600 justify-end' : 'bg-slate-300 justify-start'}`}>
+                <div className="w-5 h-5 bg-white rounded-full shadow-sm mx-0.5" />
+              </div>
+              <div className="flex-1">
+                <span className="text-sm font-semibold text-slate-800">Blind Mode</span>
+                <span className="text-xs text-slate-500 block mt-0.5">
+                  {blindMode
+                    ? encryptionKey
+                      ? isElGamal ? 'ElGamal 공개키 암호화 활성 — ZKP 검증 가능' : 'AES-256-GCM 암호화 활성 — 서버가 평문을 볼 수 없음'
+                      : '암호화 키 로딩 중...'
+                    : '서버에 평문 후보 전달 (기본 모드)'}
+                </span>
+              </div>
+              {isElGamal && blindMode && (
+                <span className="px-2 py-0.5 bg-purple-100 text-purple-700 rounded text-[11px] font-bold">ElGamal</span>
+              )}
             </label>
-            <span className="text-xs text-red-500">
-              {panicCredential
-                ? '강압 투표 모드 — 이 투표는 집계에서 제외됩니다 (PDC Cleansing-Hiding)'
-                : '정상 투표 모드 — 유효한 투표로 집계됩니다'}
-            </span>
+            <input type="checkbox" className="sr-only" checked={blindMode} onChange={e => setBlindMode(e.target.checked)} />
+          </div>
+
+          {/* Panic Credential */}
+          <div className={`rounded-xl border p-4 transition-colors duration-200 ${panicCredential ? 'border-red-300 bg-red-50/50' : 'border-slate-200 bg-slate-50'}`}>
+            <label className="flex items-center gap-3 cursor-pointer">
+              <div className={`w-10 h-6 rounded-full transition-colors duration-200 flex items-center ${panicCredential ? 'bg-red-500 justify-end' : 'bg-slate-300 justify-start'}`}>
+                <div className="w-5 h-5 bg-white rounded-full shadow-sm mx-0.5" />
+              </div>
+              <div className="flex-1">
+                <span className="text-sm font-semibold text-slate-800">Panic Credential</span>
+                <span className="text-xs text-slate-500 block mt-0.5">
+                  {panicCredential ? '강압 투표 모드 — 이 투표는 집계에서 제외됩니다' : '정상 투표 모드 — 유효한 투표로 집계됩니다'}
+                </span>
+              </div>
+            </label>
+            <input type="checkbox" className="sr-only" checked={panicCredential} onChange={e => setPanicCredential(e.target.checked)} />
           </div>
 
           {/* voterSecret */}
           <div>
-            <label className="block text-xs text-gray-500 mb-1 font-medium">
-              유권자 비밀값 <span className="text-red-500">(서버 미전송, 로컬 보관 필수)</span>
+            <label className="block text-sm font-medium text-slate-700 mb-1.5">
+              유권자 비밀값 <span className="text-red-500 text-xs font-normal">(서버 미전송, 로컬 보관 필수)</span>
             </label>
             <div className="flex gap-2">
               <input
-                className="border rounded px-3 py-2 flex-1 text-sm font-mono"
+                className="flex-1 h-11 px-4 border border-slate-200 rounded-lg text-sm font-mono bg-white
+                  focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none transition-colors duration-200"
                 placeholder="직접 입력하거나 자동 생성"
                 value={voterSecret}
                 onChange={e => setVoterSecret(e.target.value)}
               />
               <button
-                className="border border-gray-300 px-3 py-2 rounded text-xs hover:bg-gray-50"
                 onClick={() => setVoterSecret(generateVoterSecret())}
+                className="h-11 px-4 border border-slate-300 rounded-lg text-sm font-medium text-slate-700
+                  hover:bg-slate-50 active:scale-[0.98] transition-all duration-200"
               >자동 생성</button>
             </div>
-            <p className="text-xs text-gray-400 mt-1">이 값을 잃어버리면 E2E 검증 불가합니다.</p>
+            <p className="text-xs text-slate-400 mt-1.5">이 값을 잃어버리면 E2E 검증이 불가합니다.</p>
           </div>
 
-          {/* 후보 선택 */}
-          <div>
-            <label className="block text-xs text-gray-500 mb-1 font-medium">후보자 선택</label>
-            <div className="flex flex-wrap gap-2">
-              {election.candidates?.map(c => (
-                <button
-                  key={c}
-                  onClick={() => setCandidateID(c)}
-                  className={`px-4 py-2 rounded border text-sm font-medium transition-colors ${
-                    candidateID === c
-                      ? 'bg-blue-600 text-white border-blue-600'
-                      : 'border-gray-300 hover:border-blue-400'
-                  }`}
-                >{c}</button>
-              ))}
-            </div>
-          </div>
-
-          {/* Deniable Verification 비밀번호 (선택) */}
-          <details className="border rounded p-3">
-            <summary className="text-sm font-medium cursor-pointer text-gray-600">
+          {/* Deniable Passwords */}
+          <details className="rounded-xl border border-slate-200 overflow-hidden">
+            <summary className="px-4 py-3 cursor-pointer text-sm font-medium text-slate-600 hover:bg-slate-50 transition-colors duration-200">
               Deniable Verification 비밀번호 설정 (선택)
             </summary>
-            <div className="mt-3 space-y-2 text-sm">
-              <p className="text-xs text-gray-500">
-                강압 상황에서 가짜 증명을 제공하는 보호 기능.
-                Normal 비밀번호로는 실제 투표 증명, Panic 비밀번호로는 가짜 증명이 반환됩니다.
+            <div className="px-4 pb-4 space-y-3 border-t border-slate-100 pt-3">
+              <p className="text-xs text-slate-500">
+                강압 상황에서 가짜 증명을 제공하는 보호 기능. Normal 비밀번호로는 실제 투표 증명, Panic 비밀번호로는 가짜 증명이 반환됩니다.
               </p>
               <input
-                className="border rounded px-3 py-2 w-full"
+                className="w-full h-10 px-3 border border-slate-200 rounded-lg text-sm
+                  focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none transition-colors duration-200"
                 placeholder="Normal 비밀번호 (실제 검증용)"
-                type="password"
-                value={normalPassword}
-                onChange={e => setNormalPassword(e.target.value)}
+                type="password" value={normalPassword} onChange={e => setNormalPassword(e.target.value)}
               />
               <input
-                className="border rounded px-3 py-2 w-full"
+                className="w-full h-10 px-3 border border-slate-200 rounded-lg text-sm
+                  focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none transition-colors duration-200"
                 placeholder="Panic 비밀번호 (강압자에게 보여줄 가짜)"
-                type="password"
-                value={panicPassword}
-                onChange={e => setPanicPassword(e.target.value)}
+                type="password" value={panicPassword} onChange={e => setPanicPassword(e.target.value)}
               />
-              <div>
-                <label className="text-xs text-gray-500 block mb-1">강압자에게 보여줄 가짜 후보</label>
-                <div className="flex flex-wrap gap-2">
-                  {election.candidates?.filter(c => c !== candidateID).map(c => (
-                    <button
-                      key={c}
-                      onClick={() => setPanicCandidate(c)}
-                      className={`px-3 py-1 rounded border text-xs ${
-                        panicCandidate === c ? 'bg-red-100 border-red-400' : 'border-gray-300'
-                      }`}
-                    >{c}</button>
-                  ))}
+              {normalPassword && panicPassword && (
+                <div>
+                  <label className="text-xs text-slate-500 block mb-2">강압자에게 보여줄 가짜 후보</label>
+                  <div className="flex flex-wrap gap-2">
+                    {election?.candidates?.filter(c => c !== candidateID).map(c => (
+                      <button
+                        key={c}
+                        onClick={() => setPanicCandidate(c)}
+                        className={`px-3 py-1.5 rounded-lg border text-xs font-medium transition-all duration-200 ${
+                          panicCandidate === c ? 'bg-red-100 border-red-300 text-red-700' : 'border-slate-200 hover:border-red-300 text-slate-600'
+                        }`}
+                      >{c}</button>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          </details>
+
+          <div className="flex justify-between">
+            <button onClick={prev} className="h-11 px-6 text-sm font-medium text-slate-600 hover:text-slate-900 transition-colors duration-200">
+              <svg className="inline-block w-4 h-4 mr-1.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" /></svg>
+              이전
+            </button>
+            <button
+              onClick={next}
+              disabled={!canNext()}
+              className="h-11 px-8 bg-blue-600 text-white rounded-lg text-sm font-semibold
+                hover:bg-blue-700 active:scale-[0.98] disabled:opacity-40 disabled:cursor-not-allowed
+                transition-all duration-200"
+            >
+              다음 단계
+              <svg className="inline-block w-4 h-4 ml-1.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" /></svg>
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* ════════ Step 3: 후보 선택 ════════ */}
+      {step === 3 && (
+        <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-8 space-y-6">
+          <div>
+            <h2 className="text-xl font-bold text-slate-900">후보를 선택해주세요</h2>
+            <p className="text-sm text-slate-500 mt-1">{election?.title}</p>
+          </div>
+
+          <div className="space-y-3">
+            {election?.candidates?.map(c => (
+              <button
+                key={c}
+                onClick={() => setCandidateID(c)}
+                className={`
+                  w-full flex items-center gap-4 p-4 rounded-xl border-2 text-left
+                  transition-all duration-200 group
+                  ${candidateID === c
+                    ? 'border-blue-500 bg-blue-50 shadow-sm'
+                    : 'border-slate-200 hover:border-blue-300 hover:bg-blue-50/30'
+                  }
+                `}
+              >
+                {/* 라디오 인디케이터 */}
+                <div className={`
+                  w-6 h-6 rounded-full border-2 flex items-center justify-center shrink-0
+                  transition-all duration-200
+                  ${candidateID === c ? 'border-blue-500 bg-blue-500' : 'border-slate-300 group-hover:border-blue-300'}
+                `}>
+                  {candidateID === c && (
+                    <svg className="w-3.5 h-3.5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                    </svg>
+                  )}
+                </div>
+                <span className={`text-base font-semibold ${candidateID === c ? 'text-blue-700' : 'text-slate-800'}`}>
+                  {c}
+                </span>
+              </button>
+            ))}
+          </div>
+
+          <div className="flex justify-between">
+            <button onClick={prev} className="h-11 px-6 text-sm font-medium text-slate-600 hover:text-slate-900 transition-colors duration-200">
+              <svg className="inline-block w-4 h-4 mr-1.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" /></svg>
+              이전
+            </button>
+            <button
+              onClick={next}
+              disabled={!canNext()}
+              className="h-11 px-8 bg-blue-600 text-white rounded-lg text-sm font-semibold
+                hover:bg-blue-700 active:scale-[0.98] disabled:opacity-40 disabled:cursor-not-allowed
+                transition-all duration-200"
+            >
+              다음 단계
+              <svg className="inline-block w-4 h-4 ml-1.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" /></svg>
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* ════════ Step 4: 검증 & 제출 ════════ */}
+      {step === 4 && (
+        <div className="space-y-6">
+          {/* 투표 요약 */}
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-8 space-y-5">
+            <div>
+              <h2 className="text-xl font-bold text-slate-900">투표 확인 및 제출</h2>
+              <p className="text-sm text-slate-500 mt-1">선택을 확인하고 투표를 제출하세요.</p>
+            </div>
+
+            <div className="bg-slate-50 rounded-xl p-5 space-y-3">
+              <h3 className="text-sm font-semibold text-slate-700">투표 요약</h3>
+              <div className="grid grid-cols-2 gap-4 text-sm">
+                <div>
+                  <span className="text-slate-500">선거</span>
+                  <p className="font-medium text-slate-800 mt-0.5">{election?.title}</p>
+                </div>
+                <div>
+                  <span className="text-slate-500">선택 후보</span>
+                  <p className="font-semibold text-blue-700 mt-0.5">{candidateID}</p>
+                </div>
+                <div>
+                  <span className="text-slate-500">암호화 모드</span>
+                  <p className="font-medium text-slate-800 mt-0.5">
+                    {blindMode ? (isElGamal ? 'ElGamal 공개키 암호화' : 'AES-256-GCM') : '평문 전달'}
+                  </p>
+                </div>
+                <div>
+                  <span className="text-slate-500">Credential 유형</span>
+                  <p className={`font-medium mt-0.5 ${panicCredential ? 'text-red-600' : 'text-slate-800'}`}>
+                    {panicCredential ? 'Panic (집계 제외)' : '정상'}
+                  </p>
                 </div>
               </div>
             </div>
-          </details>
 
-          {/* [PAPER-3] Benaloh Challenge */}
-          <details className="border rounded p-3">
-            <summary className="text-sm font-medium cursor-pointer text-gray-600">
-              Benaloh Challenge — 투표 암호화 검증 (PAPER-3, 선택)
-            </summary>
-            <div className="mt-3 space-y-3 text-sm">
-              <p className="text-xs text-gray-500">
-                투표를 제출하기 전에 암호화가 올바르게 수행되었는지 검증합니다.
-                Prepare → Audit(검증) → 검증 성공 확인 후 실제 투표를 제출하세요.
-                (Audit된 투표는 폐기되며, 새로운 투표를 제출해야 합니다.)
-              </p>
+            {/* Benaloh Challenge */}
+            <details className="rounded-xl border border-slate-200 overflow-hidden">
+              <summary className="px-4 py-3 cursor-pointer text-sm font-medium text-slate-600 hover:bg-slate-50 transition-colors duration-200">
+                Benaloh Challenge — 암호화 검증 (선택)
+              </summary>
+              <div className="px-4 pb-4 space-y-3 border-t border-slate-100 pt-3">
+                <p className="text-xs text-slate-500">
+                  투표 제출 전 암호화 정확성을 검증합니다. Audit된 투표는 폐기됩니다.
+                </p>
 
-              {benalohStep === 'idle' && (
-                <button
-                  className="px-4 py-2 rounded border border-purple-400 text-purple-600 text-sm hover:bg-purple-50"
-                  onClick={benalohPrepare}
-                  disabled={loading || !candidateID}
-                >
-                  1. Prepare (암호화 사전 검증)
-                </button>
-              )}
-
-              {benalohStep === 'prepared' && benalohBallot && (
-                <div className="space-y-2">
-                  <div className="bg-purple-50 border border-purple-200 rounded p-3 text-xs">
-                    <p className="font-medium text-purple-700 mb-1">Ballot 준비 완료</p>
-                    <p>Ballot ID: <code className="bg-white px-1 rounded">{benalohBallot.ballotID}</code></p>
-                    <p>Commitment: <code className="bg-white px-1 rounded break-all">{benalohBallot.commitment}</code></p>
-                  </div>
-                  <div className="flex gap-2">
-                    <button
-                      className="px-4 py-2 rounded border border-yellow-400 text-yellow-700 text-sm hover:bg-yellow-50"
-                      onClick={benalohAudit}
-                      disabled={loading}
-                    >
-                      2. Audit (암호화 검증)
-                    </button>
-                    <button
-                      className="px-3 py-2 rounded border border-gray-300 text-gray-500 text-xs hover:bg-gray-50"
-                      onClick={benalohReset}
-                    >
-                      취소
-                    </button>
-                  </div>
-                </div>
-              )}
-
-              {benalohStep === 'audited' && benalohAuditResult && (
-                <div className="space-y-2">
-                  <div className={`border rounded p-3 text-xs ${
-                    benalohAuditResult.clientVerified
-                      ? 'bg-green-50 border-green-200'
-                      : 'bg-red-50 border-red-200'
-                  }`}>
-                    <p className={`font-medium mb-1 ${benalohAuditResult.clientVerified ? 'text-green-700' : 'text-red-700'}`}>
-                      {benalohAuditResult.clientVerified
-                        ? '브라우저 독립 검증 성공 — 암호화가 정확합니다'
-                        : '검증 실패 — 암호화 불일치'}
-                    </p>
-                    <p>후보: <code className="bg-white px-1 rounded">{benalohAuditResult.candidateID}</code></p>
-                    <p className="text-gray-500 mt-1">이 투표는 폐기되었습니다. 아래 버튼으로 실제 투표를 제출하세요.</p>
-                  </div>
+                {benalohStep === 'idle' && (
                   <button
-                    className="px-3 py-2 rounded border border-gray-300 text-gray-500 text-xs hover:bg-gray-50"
-                    onClick={benalohReset}
-                  >
-                    초기화
-                  </button>
+                    className="h-10 px-4 rounded-lg border border-purple-300 text-purple-600 text-sm font-medium
+                      hover:bg-purple-50 transition-all duration-200"
+                    onClick={benalohPrepare} disabled={loading}
+                  >1. Prepare (암호화 사전 검증)</button>
+                )}
+
+                {benalohStep === 'prepared' && benalohBallot && (
+                  <div className="space-y-3">
+                    <Alert variant="purple" title="Ballot 준비 완료">
+                      <p className="text-xs mt-1">Ballot ID: <code className="bg-white/80 px-1 rounded">{benalohBallot.ballotID}</code></p>
+                    </Alert>
+                    <div className="flex gap-2">
+                      <button
+                        className="h-10 px-4 rounded-lg border border-amber-300 text-amber-700 text-sm font-medium
+                          hover:bg-amber-50 transition-all duration-200"
+                        onClick={benalohAudit} disabled={loading}
+                      >2. Audit (검증)</button>
+                      <button
+                        className="h-10 px-3 rounded-lg border border-slate-200 text-slate-500 text-xs
+                          hover:bg-slate-50 transition-all duration-200"
+                        onClick={benalohReset}
+                      >취소</button>
+                    </div>
+                  </div>
+                )}
+
+                {benalohStep === 'audited' && benalohAuditResult && (
+                  <div className="space-y-3">
+                    <Alert variant={benalohAuditResult.clientVerified ? 'success' : 'error'}
+                           title={benalohAuditResult.clientVerified ? '브라우저 독립 검증 성공' : '검증 실패'}>
+                      <p className="text-xs">후보: {benalohAuditResult.candidateID}</p>
+                      {benalohAuditResult.clientVerified && (
+                        <p className="text-xs text-slate-500 mt-1">이 투표는 폐기되었습니다. 아래 버튼으로 실제 투표를 제출하세요.</p>
+                      )}
+                    </Alert>
+                    <button
+                      className="h-10 px-3 rounded-lg border border-slate-200 text-slate-500 text-xs
+                        hover:bg-slate-50 transition-all duration-200"
+                      onClick={benalohReset}
+                    >초기화</button>
+                  </div>
+                )}
+              </div>
+            </details>
+
+            {/* 암호화 진행 시각화 */}
+            {loading && encProgress.length > 0 && (
+              <div className="bg-slate-900 rounded-xl p-5 space-y-3">
+                <div className="flex items-center gap-2">
+                  <svg className="w-4 h-4 text-blue-400 animate-spin" fill="none" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                  </svg>
+                  <span className="text-sm font-semibold text-white">투표 암호화 중...</span>
                 </div>
-              )}
-            </div>
-          </details>
+                {ENC_STEPS.map(({ key, label, doneKey }) => {
+                  const started = encProgress.includes(key);
+                  const done = encProgress.includes(doneKey);
+                  return (
+                    <div key={key} className="flex items-center gap-3 text-sm">
+                      {done ? (
+                        <svg className="w-4 h-4 text-emerald-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                        </svg>
+                      ) : started ? (
+                        <svg className="w-4 h-4 text-blue-400 animate-spin" fill="none" viewBox="0 0 24 24">
+                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                        </svg>
+                      ) : (
+                        <div className="w-4 h-4 rounded-full border border-slate-600" />
+                      )}
+                      <span className={done ? 'text-emerald-400' : started ? 'text-blue-300' : 'text-slate-600'}>
+                        {label}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
 
-          {/* 투표 제출 */}
-          {!panicMode && (
-            <div className="flex justify-between items-center">
-              <button
-                className={`w-full py-3 rounded-lg font-bold text-white text-sm ${
-                  loading ? 'bg-gray-400' : 'bg-blue-600 hover:bg-blue-700'
-                }`}
-                onClick={submitVote}
-                disabled={loading}
-              >
-                {loading ? '처리 중...' : blindMode ? '투표 제출 (Blind Mode)' : '투표 제출'}
+            {/* 제출 버튼 */}
+            {!panicMode && !loading && (
+              <div className="flex gap-3">
+                <button
+                  onClick={submitVote}
+                  disabled={loading}
+                  className="flex-1 h-12 bg-blue-600 text-white rounded-xl font-bold text-sm
+                    hover:bg-blue-700 active:scale-[0.99] disabled:opacity-40
+                    transition-all duration-200 shadow-sm shadow-blue-600/20"
+                >
+                  {blindMode ? '투표 제출 (Blind Mode)' : '투표 제출'}
+                </button>
+                <button
+                  onClick={() => { setPanicMode(true); setResult({ message: '(Panic Mode 활성화됨)' }); }}
+                  className="h-12 px-5 rounded-xl border-2 border-red-200 text-red-500 text-xs font-medium
+                    hover:bg-red-50 transition-all duration-200"
+                  title="강압 상황에서 누르세요"
+                >Panic</button>
+              </div>
+            )}
+
+            {panicMode && (
+              <Alert variant="error">Panic Mode 활성 — 강압자에게는 정상 화면처럼 표시됩니다.</Alert>
+            )}
+
+            <div className="flex justify-start">
+              <button onClick={prev} className="h-11 px-6 text-sm font-medium text-slate-600 hover:text-slate-900 transition-colors duration-200">
+                <svg className="inline-block w-4 h-4 mr-1.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" /></svg>
+                이전
               </button>
-              <button
-                className="ml-3 px-4 py-3 rounded-lg border border-red-300 text-red-500 text-xs hover:bg-red-50 whitespace-nowrap"
-                onClick={activatePanicMode}
-                title="강압 상황에서 누르세요"
-              >Panic</button>
             </div>
-          )}
-
-          {panicMode && (
-            <div className="bg-red-50 border border-red-200 rounded p-3 text-sm text-red-700">
-              Panic Mode 활성 — 강압자에게는 정상 화면처럼 표시됩니다.
-            </div>
-          )}
-        </section>
+          </div>
+        </div>
       )}
 
-      {/* 결과 */}
-      {error  && <div className="bg-red-50 border border-red-200 rounded p-3 text-sm text-red-700">{error}</div>}
-      {result && (
-        <div className="bg-green-50 border border-green-200 rounded p-4 text-sm space-y-2">
-          <p className="font-bold text-green-700">{result.message}</p>
-          {result.blindMode && (
-            <p className="text-xs text-purple-600 font-medium">
-              Blind Mode 투표 — 서버는 평문 후보를 보지 못했습니다
-            </p>
-          )}
-          {panicCredential && (
-            <p className="text-xs text-red-600 font-medium">
-              Panic Credential 투표 — 이 투표는 집계에서 자동 제외됩니다 (PAPER-12)
-            </p>
-          )}
+      {/* ════════ Step 5: 완료 & 영수증 ════════ */}
+      {step === 5 && result && (
+        <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-8 space-y-6">
+          {/* 성공 아이콘 */}
+          <div className="text-center space-y-3">
+            <div className="w-16 h-16 bg-emerald-100 rounded-full flex items-center justify-center mx-auto">
+              <svg className="w-8 h-8 text-emerald-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+              </svg>
+            </div>
+            <h2 className="text-xl font-bold text-slate-900">투표가 성공적으로 제출되었습니다</h2>
+            <p className="text-sm text-slate-500">{result.message}</p>
+          </div>
+
+          {/* 상태 배지 */}
+          <div className="flex flex-wrap gap-2 justify-center">
+            <span className="px-3 py-1 bg-emerald-100 text-emerald-700 rounded-full text-xs font-semibold">
+              E2E 암호화 완료
+            </span>
+            {result.blindMode && (
+              <span className="px-3 py-1 bg-purple-100 text-purple-700 rounded-full text-xs font-semibold">
+                Blind Mode
+              </span>
+            )}
+            {panicCredential && (
+              <span className="px-3 py-1 bg-red-100 text-red-700 rounded-full text-xs font-semibold">
+                Panic Credential (집계 제외)
+              </span>
+            )}
+          </div>
+
+          {/* 추적 번호 */}
           {result.nullifierHash && (
-            <div>
-              <p className="text-xs text-gray-500 mb-1">Nullifier Hash (E2E 검증에 사용):</p>
-              <code className="text-xs bg-white border rounded px-2 py-1 block break-all">
-                {result.nullifierHash}
-              </code>
-              <p className="text-xs text-gray-400 mt-1">
-                이 값을 저장해두면 검증 탭에서 투표 포함 여부를 확인할 수 있습니다.
-                <br/>재투표 시 최종 1표만 유효합니다 (이전 투표는 자동 대체).
+            <div className="space-y-2">
+              <HashDisplay label="투표 추적 번호 (Nullifier Hash)" value={result.nullifierHash} />
+              <p className="text-xs text-slate-400 text-center">
+                이 추적 번호로 "검증" 탭에서 투표 포함 여부를 확인할 수 있습니다.
+                재투표 시 최종 1표만 유효합니다.
               </p>
             </div>
           )}
+
+          {/* 보안 속성 */}
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            {[
+              { icon: 'M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z', label: 'E2E 암호화' },
+              { icon: 'M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z', label: '영지식 증명' },
+              { icon: 'M10 6H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V8a2 2 0 00-2-2h-5m-4 0V5a2 2 0 114 0v1m-4 0a2 2 0 104 0m-5 8a2 2 0 100-4 2 2 0 000 4zm0 0c1.306 0 2.417.835 2.83 2M9 14a3.001 3.001 0 00-2.83 2M15 11h3m-3 4h2', label: '익명 투표' },
+              { icon: 'M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4', label: '공개 검증' },
+            ].map(({ icon, label }) => (
+              <div key={label} className="flex flex-col items-center gap-2 p-3 bg-slate-50 rounded-lg">
+                <svg className="w-5 h-5 text-blue-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d={icon} />
+                </svg>
+                <span className="text-[11px] font-medium text-slate-600">{label}</span>
+              </div>
+            ))}
+          </div>
+
+          {/* 새 투표 */}
+          <div className="text-center">
+            <button
+              onClick={() => { setStep(0); setResult(null); setCandidateID(''); setEncProgress([]); }}
+              className="h-11 px-6 border border-slate-200 rounded-lg text-sm font-medium text-slate-600
+                hover:bg-slate-50 transition-all duration-200"
+            >처음으로 돌아가기</button>
+          </div>
         </div>
       )}
     </div>

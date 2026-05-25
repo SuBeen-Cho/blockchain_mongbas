@@ -1,6 +1,6 @@
 module github.com/blockchain_mongbas/chaincode/voting
 
-go 1.25.7
+go 1.23
 
 require (
 	github.com/IBM/mathlib v0.1.0

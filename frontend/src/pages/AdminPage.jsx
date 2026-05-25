@@ -1,10 +1,12 @@
 /**
- * AdminPage.jsx — 관리자 UI
+ * AdminPage.jsx — 관리자 대시보드 (자동 진행 방식)
  *
- * 선거 생성 → 활성화 → 종료 → Merkle Tree 구축 → Shamir 키 분산 → 복원 현황
+ * 각 단계 완료 시 다음 섹션이 자동으로 열립니다.
+ * 선거 생성 → 활성화 → (투표 진행) → 종료 → 개표 → Merkle → 키 분산 → Bulletin Board → 보안 속성
  */
 
-import { useState } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
+import Alert from '../components/Alert.jsx';
 
 const API = '/api';
 
@@ -26,45 +28,113 @@ async function apiGet(url) {
   return data;
 }
 
-function Section({ title, children }) {
+/* ── 토글 가능한 섹션 ────────────────────────────── */
+function Section({ title, number, open, done, onToggle, children }) {
+  const contentRef = useRef(null);
+
   return (
-    <section className="bg-white rounded-xl shadow p-5 space-y-3">
-      <h3 className="font-bold text-gray-700 border-b pb-2">{title}</h3>
-      {children}
-    </section>
+    <div className={`bg-white rounded-xl border shadow-sm overflow-hidden transition-all duration-300 ${
+      done ? 'border-emerald-200' : open ? 'border-blue-300 ring-2 ring-blue-100' : 'border-slate-200'
+    }`}>
+      <button
+        type="button"
+        onClick={onToggle}
+        className="w-full px-6 py-4 flex items-center gap-3 hover:bg-slate-50/50 transition-colors duration-200 text-left"
+      >
+        <span className={`w-7 h-7 rounded-lg flex items-center justify-center text-xs font-bold shrink-0 transition-colors duration-300 ${
+          done ? 'bg-emerald-500 text-white' : open ? 'bg-blue-600 text-white' : 'bg-slate-200 text-slate-500'
+        }`}>
+          {done ? (
+            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+            </svg>
+          ) : number}
+        </span>
+        <span className={`text-sm font-semibold flex-1 transition-colors ${done ? 'text-emerald-700' : 'text-slate-800'}`}>
+          {title}
+          {done && <span className="ml-2 text-xs font-normal text-emerald-500">완료</span>}
+        </span>
+        <svg className={`w-4 h-4 text-slate-400 transition-transform duration-300 ${open ? 'rotate-180' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+          <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+        </svg>
+      </button>
+      <div
+        ref={contentRef}
+        className="overflow-hidden transition-all duration-300 ease-in-out"
+        style={{
+          maxHeight: open ? (contentRef.current?.scrollHeight || 2000) + 'px' : '0px',
+          opacity: open ? 1 : 0,
+        }}
+      >
+        <div className="px-6 pb-5 pt-2 border-t border-slate-100 space-y-4">
+          {children}
+        </div>
+      </div>
+    </div>
   );
 }
 
-function Btn({ onClick, loading, color = 'blue', children }) {
-  const colors = {
-    blue:  'bg-blue-600 hover:bg-blue-700',
-    green: 'bg-green-600 hover:bg-green-700',
-    red:   'bg-red-600 hover:bg-red-700',
-    gray:  'bg-gray-500 hover:bg-gray-600',
+function Btn({ onClick, loading, variant = 'primary', className = '', children }) {
+  const styles = {
+    primary:   'bg-blue-600 text-white hover:bg-blue-700 shadow-sm shadow-blue-600/10',
+    success:   'bg-emerald-600 text-white hover:bg-emerald-700',
+    danger:    'bg-red-600 text-white hover:bg-red-700',
+    secondary: 'bg-slate-100 text-slate-700 hover:bg-slate-200 border border-slate-200',
   };
   return (
     <button
       onClick={onClick}
       disabled={loading}
-      className={`px-4 py-2 rounded text-white text-sm font-medium ${loading ? 'bg-gray-400' : colors[color]}`}
+      className={`h-10 px-4 rounded-lg text-sm font-semibold transition-all duration-200 active:scale-[0.98]
+        ${loading ? 'opacity-50 cursor-not-allowed' : styles[variant]} ${className}`}
     >
-      {loading ? '처리 중...' : children}
+      {loading ? (
+        <span className="flex items-center gap-2">
+          <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
+            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+          </svg>
+          처리 중...
+        </span>
+      ) : children}
     </button>
   );
 }
 
-function Msg({ data, error }) {
-  if (error) return <p className="text-red-600 text-sm">{error}</p>;
-  if (data)  return <pre className="bg-gray-50 border rounded p-2 text-xs overflow-auto">{JSON.stringify(data, null, 2)}</pre>;
-  return null;
+function SuccessBanner({ children }) {
+  return (
+    <div className="flex items-center gap-2 bg-emerald-50 border border-emerald-200 rounded-lg px-4 py-2.5 text-sm text-emerald-700">
+      <svg className="w-4 h-4 text-emerald-500 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+        <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+      </svg>
+      {children}
+    </div>
+  );
 }
+
+const INPUT = "h-10 px-3 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none transition-colors duration-200";
 
 export default function AdminPage() {
   const [busy, setBusy] = useState({});
   const [res,  setRes]  = useState({});
   const [err,  setErr]  = useState({});
 
-  const run = (key, fn) => {
+  // 섹션 열림/닫힘 상태 (0-based)
+  const [openSection, setOpenSection] = useState(0);
+  // 완료된 섹션들
+  const [doneSections, setDoneSections] = useState(new Set());
+
+  // 섹션 자동 스크롤
+  const sectionRefs = useRef([]);
+
+  const scrollToSection = useCallback((idx) => {
+    setTimeout(() => {
+      sectionRefs.current[idx]?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }, 350);
+  }, []);
+
+  // 작업 실행 + 성공 시 다음 섹션 자동 열기
+  const run = (key, fn, sectionIdx, nextSection) => {
     return async () => {
       setBusy(b => ({ ...b, [key]: true }));
       setRes(r => ({ ...r, [key]: null }));
@@ -72,6 +142,12 @@ export default function AdminPage() {
       try {
         const data = await fn();
         setRes(r => ({ ...r, [key]: data }));
+        // 성공 시 현재 섹션 완료 + 다음 섹션 열기
+        if (nextSection !== undefined) {
+          setDoneSections(prev => new Set([...prev, sectionIdx]));
+          setOpenSection(nextSection);
+          scrollToSection(nextSection);
+        }
       } catch (e) {
         setErr(er => ({ ...er, [key]: e.message }));
       } finally {
@@ -80,233 +156,336 @@ export default function AdminPage() {
     };
   };
 
-  // ── 선거 생성 ─────────────────────────────────────
-  const [newID,          setNewID]          = useState('');
-  const [newTitle,       setNewTitle]       = useState('');
-  const [newDesc,        setNewDesc]        = useState('');
-  const [newCandidates,  setNewCandidates]  = useState('');
-  const [newEncMode,     setNewEncMode]     = useState('aes'); // 'aes' | 'elgamal'
+  // 섹션 클릭으로 직접 토글 (수동 접기/펼치기)
+  const toggleSection = (idx) => {
+    setOpenSection(prev => prev === idx ? -1 : idx);
+  };
 
-  // ── 선거 ID 입력 (공통) ───────────────────────────
-  const [eid,      setEid]      = useState('');
-  const [shareIdx, setShareIdx] = useState('1');
-  const [shareHex, setShareHex] = useState('');
+  const [newID,         setNewID]         = useState('');
+  const [newTitle,      setNewTitle]      = useState('');
+  const [newDesc,       setNewDesc]       = useState('');
+  const [newCandidates, setNewCandidates] = useState('');
+  const [newEncMode,    setNewEncMode]    = useState('aes');
+  const [eid,           setEid]           = useState('');
+  const [shareIdx,      setShareIdx]      = useState('1');
+  const [shareHex,      setShareHex]      = useState('');
 
-  const endTime = Math.floor(Date.now() / 1000) + 60 * 60 * 24 * 7; // 7일 후
+  const endTime = Math.floor(Date.now() / 1000) + 60 * 60 * 24 * 7;
+
+  // 선거 생성 시 자동으로 eid도 동기화
+  useEffect(() => {
+    if (res.create?.electionID && !eid) {
+      setEid(res.create.electionID);
+    }
+  }, [res.create]);
+
+  // 선거 상태 파악
+  const electionInfo = res.info;
+  const statusSteps = ['CREATED', 'ACTIVE', 'CLOSED'];
+  const currentStatus = electionInfo?.status || '';
+  const statusIndex = statusSteps.indexOf(currentStatus);
 
   return (
-    <div className="space-y-5">
-      <p className="text-xs text-gray-500 bg-yellow-50 border border-yellow-200 rounded px-3 py-2">
-        ⚠️ 관리자 전용 화면입니다. 선거 진행 순서: 생성 → 활성화 → 종료 → Merkle 구축 → Shamir 분산
-      </p>
-
-      {/* 공통 선거 ID */}
-      <div className="flex gap-2 items-center">
-        <input
-          className="border rounded px-3 py-2 flex-1 text-sm"
-          placeholder="선거 ID (모든 작업에 공통 사용)"
-          value={eid}
-          onChange={e => setEid(e.target.value)}
-        />
+    <div className="space-y-4">
+      {/* 페이지 헤더 */}
+      <div className="mb-2">
+        <h1 className="text-2xl font-bold text-slate-900">관리자 대시보드</h1>
+        <p className="text-sm text-slate-500 mt-1">각 단계를 완료하면 다음 단계가 자동으로 열립니다.</p>
       </div>
 
-      {/* ─── 1. 선거 생성 ─────────────────────────── */}
-      <Section title="1. 선거 생성">
-        <input className="border rounded px-3 py-2 w-full text-sm" placeholder="선거 ID" value={newID}    onChange={e => setNewID(e.target.value)} />
-        <input className="border rounded px-3 py-2 w-full text-sm" placeholder="제목"    value={newTitle}  onChange={e => setNewTitle(e.target.value)} />
-        <input className="border rounded px-3 py-2 w-full text-sm" placeholder="설명"    value={newDesc}   onChange={e => setNewDesc(e.target.value)} />
-        <input className="border rounded px-3 py-2 w-full text-sm" placeholder="후보자 (쉼표 구분, 예: A,B,C)" value={newCandidates} onChange={e => setNewCandidates(e.target.value)} />
-        <div className="flex items-center gap-3 text-sm">
-          <span className="text-gray-500">암호화 모드:</span>
-          <label className="flex items-center gap-1 cursor-pointer">
-            <input type="radio" value="aes" checked={newEncMode==='aes'} onChange={() => setNewEncMode('aes')} />
-            AES-256-GCM
-          </label>
-          <label className="flex items-center gap-1 cursor-pointer">
-            <input type="radio" value="elgamal" checked={newEncMode==='elgamal'} onChange={() => setNewEncMode('elgamal')} />
-            ElGamal (PAPER-11)
-          </label>
+      {/* 선거 ID 입력 + 상태 조회 */}
+      <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6 space-y-4">
+        <label className="block text-sm font-medium text-slate-700">선거 ID (모든 작업에 공통)</label>
+        <div className="flex gap-3">
+          <input
+            className={`flex-1 font-mono ${INPUT}`}
+            placeholder="예: ELECTION_2026_PRESIDENT"
+            value={eid}
+            onChange={e => setEid(e.target.value)}
+          />
+          <Btn loading={busy.info} onClick={run('info', () => apiGet(`${API}/elections/${eid}`))}>
+            상태 조회
+          </Btn>
         </div>
-        {newEncMode === 'elgamal' && (
-          <p className="text-xs text-purple-600">
-            ElGamal 공개키 암호화 — Chaum-Pedersen ZKP로 키 공개 없이 복호화 검증 가능
-          </p>
-        )}
-        <Btn
-          loading={busy.create}
-          onClick={run('create', () => apiPost(`${API}/elections`, {
-            electionID:  newID || eid,
-            title:       newTitle,
-            description: newDesc,
-            candidates:  newCandidates.split(',').map(s => s.trim()).filter(Boolean),
-            endTime,
-            encryptionMode: newEncMode,
-          }))}
-        >선거 생성</Btn>
-        <Msg data={res.create} error={err.create} />
-      </Section>
 
-      {/* ─── 2. 활성화 ────────────────────────────── */}
-      <Section title="2. 선거 활성화 (CREATED → ACTIVE)">
-        <Btn color="green" loading={busy.activate} onClick={run('activate', () => apiPost(`${API}/elections/${eid}/activate`))}>활성화</Btn>
-        <Msg data={res.activate} error={err.activate} />
-      </Section>
-
-      {/* ─── 3. 선거 조회 ─────────────────────────── */}
-      <Section title="3. 선거 상태 조회">
-        <Btn color="gray" loading={busy.info} onClick={run('info', () => apiGet(`${API}/elections/${eid}`))}>조회</Btn>
-        <Msg data={res.info} error={err.info} />
-      </Section>
-
-      {/* ─── 4. 종료 ──────────────────────────────── */}
-      <Section title="4. 선거 종료 + 자동 집계">
-        <Btn color="red" loading={busy.close} onClick={run('close', () => apiPost(`${API}/elections/${eid}/close`))}>선거 종료</Btn>
-        <Msg data={res.close} error={err.close} />
-      </Section>
-
-      {/* ─── 5. 개표 결과 ─────────────────────────── */}
-      <Section title="5. 개표 결과 조회">
-        <Btn color="gray" loading={busy.tally} onClick={run('tally', () => apiGet(`${API}/elections/${eid}/tally`))}>결과 조회</Btn>
-        {err.tally && <p className="text-red-600 text-sm">{err.tally}</p>}
-        {res.tally && (
-          <div className="space-y-2">
-            <p className="text-sm text-gray-600">총 투표수: <span className="font-bold">{res.tally.totalVotes}</span></p>
-            {res.tally.results && Object.entries(res.tally.results)
-              .sort(([,a],[,b]) => b - a)
-              .map(([candidate, count]) => {
-                const pct = res.tally.totalVotes > 0 ? Math.round(count / res.tally.totalVotes * 100) : 0;
-                return (
-                  <div key={candidate} className="text-sm">
-                    <div className="flex justify-between mb-1">
-                      <span className="font-medium">{candidate}</span>
-                      <span className="text-gray-500">{count}표 ({pct}%)</span>
-                    </div>
-                    <div className="w-full bg-gray-200 rounded-full h-4">
-                      <div className="bg-blue-600 h-4 rounded-full transition-all" style={{ width: `${pct}%` }} />
-                    </div>
-                  </div>
-                );
-              })}
-            <details className="text-xs mt-2">
-              <summary className="cursor-pointer text-gray-500">JSON 원본 보기</summary>
-              <pre className="mt-1 bg-gray-50 border rounded p-2 overflow-auto">{JSON.stringify(res.tally, null, 2)}</pre>
-            </details>
-          </div>
-        )}
-      </Section>
-
-      {/* ─── 6. Merkle Tree ───────────────────────── */}
-      <Section title="6. Merkle Tree 구축 (E2E 검증 활성화)">
-        <div className="flex gap-2 flex-wrap">
-          <Btn loading={busy.buildMerkle} onClick={run('buildMerkle', () => apiPost(`${API}/elections/${eid}/merkle`))}>Tree 구축</Btn>
-          <Btn color="gray" loading={busy.getMerkle} onClick={run('getMerkle', () => apiGet(`${API}/elections/${eid}/merkle`))}>Root 조회</Btn>
-        </div>
-        <Msg data={res.buildMerkle || res.getMerkle} error={err.buildMerkle || err.getMerkle} />
-      </Section>
-
-      {/* ─── 7. Shamir SSS ────────────────────────── */}
-      <Section title="7. Shamir SSS — 분산 개표 키 관리">
-        <p className="text-xs text-gray-500">masterKey를 3개 기관에 분산합니다. 2개 이상 제출 시 자동 복원.</p>
-        <Btn loading={busy.initKey} onClick={run('initKey', () => apiPost(`${API}/elections/${eid}/keysharing`))}>키 분산 초기화</Btn>
-        <Msg data={res.initKey} error={err.initKey} />
-
-        <div className="flex gap-2 mt-2">
-          <select
-            className="border rounded px-2 py-2 text-sm"
-            value={shareIdx}
-            onChange={e => setShareIdx(e.target.value)}
-          >
-            <option value="1">Share 1 (선관위)</option>
-            <option value="2">Share 2 (참관정당)</option>
-            <option value="3">Share 3 (시민단체)</option>
-          </select>
-          <Btn color="gray" loading={busy.getShare} onClick={run('getShare', async () => {
-            const r = await apiGet(`${API}/elections/${eid}/shares/${shareIdx}`);
-            setShareHex(r.shareHex || '');
-            return r;
-          })}>Share 조회</Btn>
-        </div>
-        {shareHex && <input className="border rounded px-3 py-2 w-full text-xs font-mono" readOnly value={shareHex} />}
-
-        <div className="flex gap-2 mt-2">
-          <select className="border rounded px-2 py-2 text-sm" value={shareIdx} onChange={e => setShareIdx(e.target.value)}>
-            <option value="1">Share 1</option>
-            <option value="2">Share 2</option>
-            <option value="3">Share 3</option>
-          </select>
-          <input className="border rounded px-3 py-2 flex-1 text-xs font-mono" placeholder="shareHex" value={shareHex} onChange={e => setShareHex(e.target.value)} />
-          <Btn color="green" loading={busy.submitShare} onClick={run('submitShare', () => apiPost(`${API}/elections/${eid}/shares`, { shareIndex: shareIdx, shareHex }))}>제출</Btn>
-        </div>
-        <Msg data={res.submitShare} error={err.submitShare} />
-
-        <Btn color="gray" loading={busy.decStatus} onClick={run('decStatus', () => apiGet(`${API}/elections/${eid}/decryption`))}>복원 현황 조회</Btn>
-        {err.decStatus && <p className="text-red-600 text-sm">{err.decStatus}</p>}
-        {res.decStatus && (
-          <div className="text-sm space-y-1 bg-gray-50 border rounded p-3">
-            <p>
-              복원 상태:{' '}
-              <span className={`font-bold ${res.decStatus.restored ? 'text-green-600' : 'text-yellow-600'}`}>
-                {res.decStatus.restored ? '복원 완료' : '대기 중'}
-              </span>
-            </p>
-            <p>제출된 Share: {res.decStatus.submittedCount || 0} / {res.decStatus.totalShares || 3}</p>
-            <p>필요 Threshold: {res.decStatus.threshold || 2}</p>
-          </div>
-        )}
-      </Section>
-
-      {/* ─── 8. Bulletin Board 공개 (PAPER-6) ─────── */}
-      <Section title="8. Bulletin Board 공개 (Universal Verifiability)">
-        <p className="text-xs text-gray-500">
-          선거 종료 + 키 복원 완료 후, 암호화 키와 모든 투표를 공개하여 누구나 독립 검증 가능하게 합니다.
-          공개 후에는 검증 탭의 "Bulletin Board" 모드에서 누구나 집계를 검증할 수 있습니다.
-        </p>
-        <Btn loading={busy.publishAudit} onClick={run('publishAudit', () => apiPost(`${API}/elections/${eid}/publish-audit`, { electionID: eid }))}>
-          Audit Data 공개
-        </Btn>
-        <Msg data={res.publishAudit} error={err.publishAudit} />
-      </Section>
-
-      {/* ─── 9. 보안 속성 대시보드 (PAPER-5) ─────── */}
-      <Section title="9. Security Properties (보안 속성 진단)">
-        <p className="text-xs text-gray-500">
-          체인코드에서 자가 진단한 보안 속성 현황입니다. 논문 Section 5 (Security Analysis)에 대응합니다.
-        </p>
-        <Btn color="gray" loading={busy.secProps} onClick={run('secProps', () => apiGet(`${API}/elections/security-properties`))}>
-          보안 속성 조회
-        </Btn>
-        {err.secProps && <p className="text-red-600 text-sm">{err.secProps}</p>}
-        {res.secProps && (
-          <div className="space-y-2">
-            {Object.entries(res.secProps).filter(([k]) =>
-              !['electionID', 'verifiedAt', 'docType'].includes(k)
-            ).map(([key, prop]) => {
-              if (!prop || typeof prop !== 'object') return null;
-              const isAchieved = prop.status === 'ACHIEVED' || prop.status === 'PARTIAL';
+        {/* 진행 상태 스텝퍼 */}
+        {electionInfo && (
+          <div className="flex items-center gap-0 pt-2">
+            {statusSteps.map((s, i) => {
+              const done = i <= statusIndex;
+              const isCurrent = i === statusIndex;
               return (
-                <div key={key} className={`border rounded p-3 text-sm ${
-                  prop.status === 'ACHIEVED' ? 'bg-green-50 border-green-200' :
-                  prop.status === 'PARTIAL'  ? 'bg-yellow-50 border-yellow-200' :
-                  'bg-gray-50 border-gray-200'
-                }`}>
-                  <div className="flex justify-between items-center">
-                    <span className="font-medium">{key}</span>
-                    <span className={`text-xs font-bold px-2 py-0.5 rounded ${
-                      prop.status === 'ACHIEVED' ? 'bg-green-200 text-green-800' :
-                      prop.status === 'PARTIAL'  ? 'bg-yellow-200 text-yellow-800' :
-                      'bg-gray-200 text-gray-600'
-                    }`}>{prop.status}</span>
+                <div key={s} className="flex items-center flex-1 last:flex-none">
+                  <div className="flex flex-col items-center">
+                    <div className={`
+                      w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold transition-all duration-300
+                      ${done ? 'bg-blue-600 text-white' : 'bg-slate-200 text-slate-500'}
+                      ${isCurrent ? 'ring-4 ring-blue-100' : ''}
+                    `}>
+                      {done && i < statusIndex ? (
+                        <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" /></svg>
+                      ) : i + 1}
+                    </div>
+                    <span className={`mt-1 text-[11px] font-medium ${isCurrent ? 'text-blue-600' : done ? 'text-slate-600' : 'text-slate-400'}`}>{s}</span>
                   </div>
-                  <p className="text-xs text-gray-600 mt-1">{prop.mechanism}</p>
-                  {prop.assumption && (
-                    <p className="text-xs text-gray-400 mt-0.5">assumption: {prop.assumption}</p>
+                  {i < statusSteps.length - 1 && (
+                    <div className={`flex-1 h-0.5 mx-2 rounded transition-colors duration-300 ${i < statusIndex ? 'bg-blue-600' : 'bg-slate-200'}`} />
                   )}
                 </div>
               );
             })}
           </div>
         )}
-      </Section>
+
+        {/* KPI 카드 */}
+        {electionInfo && (
+          <div className="grid grid-cols-3 gap-4 pt-2">
+            <div className="bg-slate-50 rounded-lg p-4 text-center">
+              <p className="text-2xl font-bold text-slate-900">{electionInfo.totalVotes || 0}</p>
+              <p className="text-xs text-slate-500 mt-1">총 투표수</p>
+            </div>
+            <div className="bg-slate-50 rounded-lg p-4 text-center">
+              <p className="text-sm font-bold text-slate-900 mt-1.5">
+                {electionInfo.encryptionMode === 'elgamal' ? (
+                  <span className="px-2 py-0.5 bg-purple-100 text-purple-700 rounded text-xs">ElGamal</span>
+                ) : (
+                  <span className="px-2 py-0.5 bg-blue-100 text-blue-700 rounded text-xs">AES-256-GCM</span>
+                )}
+              </p>
+              <p className="text-xs text-slate-500 mt-2">암호화 모드</p>
+            </div>
+            <div className="bg-slate-50 rounded-lg p-4 text-center">
+              <p className="text-2xl font-bold text-emerald-600">7/7</p>
+              <p className="text-xs text-slate-500 mt-1">보안 속성</p>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* ═══════ 1. 선거 생성 ═══════ */}
+      <div ref={el => sectionRefs.current[0] = el}>
+        <Section title="선거 생성" number="1" open={openSection === 0} done={doneSections.has(0)} onToggle={() => toggleSection(0)}>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs font-medium text-slate-500 mb-1">선거 ID</label>
+              <input className={`w-full ${INPUT}`} placeholder="예: test2026" value={newID} onChange={e => setNewID(e.target.value)} />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-slate-500 mb-1">제목</label>
+              <input className={`w-full ${INPUT}`} placeholder="예: 전자투표 2026" value={newTitle} onChange={e => setNewTitle(e.target.value)} />
+            </div>
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-slate-500 mb-1">설명</label>
+            <input className={`w-full ${INPUT}`} placeholder="선거에 대한 설명" value={newDesc} onChange={e => setNewDesc(e.target.value)} />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-slate-500 mb-1">후보자</label>
+            <input className={`w-full ${INPUT}`} placeholder="쉼표로 구분 (예: 김길동, 가길동, 길동김)" value={newCandidates} onChange={e => setNewCandidates(e.target.value)} />
+          </div>
+          <div className="flex items-center gap-3">
+            <span className="text-xs font-medium text-slate-500">암호화:</span>
+            {['aes', 'elgamal'].map(m => (
+              <button key={m} onClick={() => setNewEncMode(m)}
+                className={`px-3 py-1.5 rounded-lg border text-sm font-medium transition-all duration-200 ${
+                  newEncMode === m ? 'border-blue-500 bg-blue-50 text-blue-700' : 'border-slate-200 text-slate-600 hover:border-blue-300'
+                }`}
+              >{m === 'aes' ? 'AES-256-GCM' : 'ElGamal'}</button>
+            ))}
+          </div>
+          {err.create && <Alert variant="error">{err.create}</Alert>}
+          {res.create && <SuccessBanner>선거가 생성되었습니다 — ID: {res.create.electionID}</SuccessBanner>}
+          <Btn loading={busy.create} onClick={run('create', () => apiPost(`${API}/elections`, {
+            electionID: newID || eid, title: newTitle, description: newDesc,
+            candidates: newCandidates.split(',').map(s => s.trim()).filter(Boolean),
+            endTime, encryptionMode: newEncMode,
+          }), 0, 1)}>
+            선거 생성
+          </Btn>
+        </Section>
+      </div>
+
+      {/* ═══════ 2. 활성화 ═══════ */}
+      <div ref={el => sectionRefs.current[1] = el}>
+        <Section title="선거 활성화 (CREATED → ACTIVE)" number="2" open={openSection === 1} done={doneSections.has(1)} onToggle={() => toggleSection(1)}>
+          <p className="text-xs text-slate-500">투표를 시작하려면 선거를 활성화하세요.</p>
+          {err.activate && <Alert variant="error">{err.activate}</Alert>}
+          {res.activate && <SuccessBanner>선거가 활성화되었습니다 — 이제 투표를 받을 수 있습니다.</SuccessBanner>}
+          <Btn variant="success" loading={busy.activate} onClick={run('activate', () => apiPost(`${API}/elections/${eid}/activate`), 1, 2)}>
+            활성화
+          </Btn>
+        </Section>
+      </div>
+
+      {/* ═══════ 3. 종료 ═══════ */}
+      <div ref={el => sectionRefs.current[2] = el}>
+        <Section title="선거 종료 + 자동 집계" number="3" open={openSection === 2} done={doneSections.has(2)} onToggle={() => toggleSection(2)}>
+          <p className="text-xs text-slate-500">투표를 마감하고 집계를 시작합니다. 이 작업은 되돌릴 수 없습니다.</p>
+          {err.close && <Alert variant="error">{err.close}</Alert>}
+          {res.close && <SuccessBanner>선거가 종료되고 집계가 완료되었습니다.</SuccessBanner>}
+          <Btn variant="danger" loading={busy.close} onClick={run('close', () => apiPost(`${API}/elections/${eid}/close`), 2, 3)}>
+            선거 종료
+          </Btn>
+        </Section>
+      </div>
+
+      {/* ═══════ 4. 개표 결과 ═══════ */}
+      <div ref={el => sectionRefs.current[3] = el}>
+        <Section title="개표 결과 조회" number="4" open={openSection === 3} done={doneSections.has(3)} onToggle={() => toggleSection(3)}>
+          {err.tally && <Alert variant="error">{err.tally}</Alert>}
+          {res.tally && (
+            <div className="space-y-4">
+              <p className="text-sm text-slate-600">
+                총 투표수: <span className="font-bold text-slate-900 text-lg">{res.tally.totalVotes}</span>표
+              </p>
+              {res.tally.results && Object.entries(res.tally.results)
+                .sort(([,a],[,b]) => b - a)
+                .map(([candidate, count], idx) => {
+                  const pct = res.tally.totalVotes > 0 ? Math.round(count / res.tally.totalVotes * 100) : 0;
+                  const colors = ['bg-blue-500', 'bg-emerald-500', 'bg-amber-500', 'bg-purple-500', 'bg-pink-500'];
+                  return (
+                    <div key={candidate}>
+                      <div className="flex justify-between mb-1.5 text-sm">
+                        <span className="font-semibold text-slate-800">{candidate}</span>
+                        <span className="font-mono font-semibold text-slate-600">{count}표 ({pct}%)</span>
+                      </div>
+                      <div className="w-full bg-slate-100 rounded-full h-3.5 overflow-hidden">
+                        <div className={`h-3.5 rounded-full transition-all duration-700 ease-out ${colors[idx % colors.length]}`}
+                          style={{ width: `${pct}%` }} />
+                      </div>
+                    </div>
+                  );
+                })}
+              <details className="text-xs">
+                <summary className="cursor-pointer text-slate-500 hover:text-slate-700 transition-colors">JSON 원본 보기</summary>
+                <pre className="mt-2 bg-slate-50 border border-slate-200 rounded-lg p-3 overflow-auto text-xs font-mono">{JSON.stringify(res.tally, null, 2)}</pre>
+              </details>
+            </div>
+          )}
+          <Btn variant="secondary" loading={busy.tally} onClick={run('tally', () => apiGet(`${API}/elections/${eid}/tally`), 3, 4)}>
+            결과 조회
+          </Btn>
+        </Section>
+      </div>
+
+      {/* ═══════ 5. Merkle Tree ═══════ */}
+      <div ref={el => sectionRefs.current[4] = el}>
+        <Section title="Merkle Tree 구축 (E2E 검증)" number="5" open={openSection === 4} done={doneSections.has(4)} onToggle={() => toggleSection(4)}>
+          <p className="text-xs text-slate-500">투표 데이터를 Merkle tree로 구축하여 개별 투표의 포함 증명을 활성화합니다.</p>
+          {(err.buildMerkle || err.getMerkle) && <Alert variant="error">{err.buildMerkle || err.getMerkle}</Alert>}
+          {(res.buildMerkle || res.getMerkle) && <SuccessBanner>Merkle tree가 구축되었습니다.</SuccessBanner>}
+          <div className="flex gap-2">
+            <Btn loading={busy.buildMerkle} onClick={run('buildMerkle', () => apiPost(`${API}/elections/${eid}/merkle`), 4, 5)}>Tree 구축</Btn>
+            <Btn variant="secondary" loading={busy.getMerkle} onClick={run('getMerkle', () => apiGet(`${API}/elections/${eid}/merkle`))}>Root 조회</Btn>
+          </div>
+        </Section>
+      </div>
+
+      {/* ═══════ 6. Shamir SSS ═══════ */}
+      <div ref={el => sectionRefs.current[5] = el}>
+        <Section title="Shamir SSS — 분산 개표 키 관리" number="6" open={openSection === 5} done={doneSections.has(5)} onToggle={() => toggleSection(5)}>
+          <p className="text-xs text-slate-500">masterKey를 3개 기관에 분산합니다. 2개 이상 제출 시 자동 복원.</p>
+
+          {/* 키 분산 초기화 */}
+          {err.initKey && <Alert variant="error">{err.initKey}</Alert>}
+          {res.initKey && <SuccessBanner>키 분산이 초기화되었습니다 — 각 기관의 Share를 조회하고 제출하세요.</SuccessBanner>}
+          <Btn loading={busy.initKey} onClick={run('initKey', () => apiPost(`${API}/elections/${eid}/keysharing`))}>키 분산 초기화</Btn>
+
+          {/* Share 조회 & 제출 */}
+          <div className="bg-slate-50 rounded-lg p-4 space-y-3">
+            <p className="text-xs font-semibold text-slate-600">Share 조회 & 제출</p>
+            <div className="flex gap-2 items-center">
+              <select className={`${INPUT} w-auto`} value={shareIdx} onChange={e => setShareIdx(e.target.value)}>
+                <option value="1">Share 1 (선관위)</option>
+                <option value="2">Share 2 (참관정당)</option>
+                <option value="3">Share 3 (시민단체)</option>
+              </select>
+              <Btn variant="secondary" loading={busy.getShare} onClick={run('getShare', async () => {
+                const r = await apiGet(`${API}/elections/${eid}/shares/${shareIdx}`);
+                setShareHex(r.shareHex || ''); return r;
+              })}>조회</Btn>
+              <Btn variant="success" loading={busy.submitShare} onClick={run('submitShare', () => apiPost(`${API}/elections/${eid}/shares`, { shareIndex: shareIdx, shareHex }))}>제출</Btn>
+            </div>
+            {shareHex && (
+              <input className={`w-full text-xs font-mono bg-white ${INPUT}`} readOnly value={shareHex} />
+            )}
+            {err.submitShare && <Alert variant="error">{err.submitShare}</Alert>}
+            {res.submitShare && <SuccessBanner>Share {shareIdx}이 제출되었습니다.</SuccessBanner>}
+          </div>
+
+          {/* 복원 현황 */}
+          {err.decStatus && <Alert variant="error">{err.decStatus}</Alert>}
+          {res.decStatus && (
+            <div className="bg-slate-50 rounded-lg p-4 space-y-2">
+              <div className="flex items-center gap-3">
+                <span className="text-sm font-medium text-slate-700">복원 상태:</span>
+                <span className={`px-2 py-0.5 rounded-full text-xs font-bold ${res.decStatus.restored ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>
+                  {res.decStatus.restored ? '복원 완료' : '대기 중'}
+                </span>
+              </div>
+              <div className="flex gap-4 text-sm text-slate-600">
+                <span>제출: <span className="font-bold">{res.decStatus.submittedCount || 0}</span> / {res.decStatus.totalShares || 3}</span>
+                <span>Threshold: <span className="font-bold">{res.decStatus.threshold || 2}</span></span>
+              </div>
+            </div>
+          )}
+          <Btn variant="secondary" loading={busy.decStatus} onClick={run('decStatus', () => apiGet(`${API}/elections/${eid}/decryption`), 5, 6)}>
+            복원 현황 조회 → 다음
+          </Btn>
+        </Section>
+      </div>
+
+      {/* ═══════ 7. Bulletin Board ═══════ */}
+      <div ref={el => sectionRefs.current[6] = el}>
+        <Section title="Bulletin Board 공개 (Universal Verifiability)" number="7" open={openSection === 6} done={doneSections.has(6)} onToggle={() => toggleSection(6)}>
+          <p className="text-xs text-slate-500">
+            암호화 키와 투표를 공개하여 누구나 독립 검증 가능하게 합니다.
+          </p>
+          {err.publishAudit && <Alert variant="error">{err.publishAudit}</Alert>}
+          {res.publishAudit && <SuccessBanner>Audit 데이터가 공개되었습니다 — 검증 탭에서 누구나 확인 가능합니다.</SuccessBanner>}
+          <Btn loading={busy.publishAudit} onClick={run('publishAudit', () => apiPost(`${API}/elections/${eid}/publish-audit`, { electionID: eid }), 6, 7)}>
+            Audit Data 공개
+          </Btn>
+        </Section>
+      </div>
+
+      {/* ═══════ 8. 보안 속성 ═══════ */}
+      <div ref={el => sectionRefs.current[7] = el}>
+        <Section title="Security Properties (보안 속성 진단)" number="8" open={openSection === 7} done={doneSections.has(7)} onToggle={() => toggleSection(7)}>
+          <p className="text-xs text-slate-500">체인코드에서 자가 진단한 7가지 보안 속성 현황입니다.</p>
+          {err.secProps && <Alert variant="error">{err.secProps}</Alert>}
+          {res.secProps && (
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              {Object.entries(res.secProps).filter(([k]) =>
+                !['electionID', 'verifiedAt', 'docType'].includes(k)
+              ).map(([key, prop]) => {
+                if (!prop || typeof prop !== 'object') return null;
+                return (
+                  <div key={key} className={`rounded-lg border p-3 ${
+                    prop.status === 'ACHIEVED' ? 'bg-emerald-50 border-emerald-200' :
+                    prop.status === 'PARTIAL'  ? 'bg-amber-50 border-amber-200' :
+                    'bg-slate-50 border-slate-200'
+                  }`}>
+                    <div className="flex justify-between items-start mb-1.5">
+                      <span className="text-sm font-semibold text-slate-800">{key}</span>
+                      <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
+                        prop.status === 'ACHIEVED' ? 'bg-emerald-200 text-emerald-800' :
+                        prop.status === 'PARTIAL'  ? 'bg-amber-200 text-amber-800' :
+                        'bg-slate-200 text-slate-600'
+                      }`}>{prop.status}</span>
+                    </div>
+                    <p className="text-xs text-slate-600 leading-relaxed">{prop.mechanism}</p>
+                    {prop.assumption && <p className="text-[11px] text-slate-400 mt-1">assumption: {prop.assumption}</p>}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+          <Btn variant="secondary" loading={busy.secProps} onClick={run('secProps', () => apiGet(`${API}/elections/security-properties`), 7)}>
+            보안 속성 조회
+          </Btn>
+        </Section>
+      </div>
     </div>
   );
 }

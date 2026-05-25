@@ -1,42 +1,44 @@
 /**
- * VerifyPage.jsx — E2E 검증 (Merkle 포함 증명 + 공개 검증)
- *
- * 유권자가 자신의 투표가 집계에 포함됐는지 독립적으로 검증합니다.
- * Deniable Verification: 비밀번호에 따라 Normal/Panic 경로 분기.
- * [PAPER-6] Bulletin Board: 누구나 공개된 키로 전체 집계를 독립 검증.
- * [PAPER-8] Receipt-Free: 증명 데이터 없이 포함 여부만 확인.
+ * VerifyPage.jsx — E2E 검증 (아이콘 카드 방식)
  */
 
 import { useState } from 'react';
 import { computeMerkleRootFromProof, computeNullifier, computePasswordHash, verifyBulletinBoard, verifyChaumPedersen } from '../utils/crypto.js';
+import HashDisplay from '../components/HashDisplay.jsx';
+import Alert from '../components/Alert.jsx';
 
 const API = '/api';
 
+const MODES = [
+  { id: 'simple',       label: 'Merkle 검증',     desc: '투표 포함 증명',           icon: 'M4 5a1 1 0 011-1h14a1 1 0 011 1v2a1 1 0 01-1 1H5a1 1 0 01-1-1V5zM4 13a1 1 0 011-1h6a1 1 0 011 1v6a1 1 0 01-1 1H5a1 1 0 01-1-1v-6zM16 13a1 1 0 011-1h2a1 1 0 011 1v6a1 1 0 01-1 1h-2a1 1 0 01-1-1v-6z' },
+  { id: 'deniable',     label: 'Deniable',        desc: '강압 대응 검증',           icon: 'M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z' },
+  { id: 'bulletin',     label: 'Bulletin Board',  desc: '공개 재집계 검증',         icon: 'M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01' },
+  { id: 'receipt-free', label: 'Receipt-Free',    desc: '포함 여부만 확인',         icon: 'M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z' },
+  { id: 'elgamal-zkp',  label: 'ElGamal ZKP',     desc: '영지식 증명 검증',         icon: 'M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z' },
+];
+
 export default function VerifyPage() {
-  const [electionID,   setElectionID]   = useState('');
-  const [voterSecret,  setVoterSecret]  = useState('');
+  const [electionID,    setElectionID]    = useState('');
+  const [voterSecret,   setVoterSecret]   = useState('');
   const [nullifierHash, setNullifierHash] = useState('');
-  const [password,     setPassword]     = useState('');
-  const [mode,         setMode]         = useState('simple'); // 'simple' | 'deniable' | 'bulletin' | 'receipt-free'
+  const [password,      setPassword]      = useState('');
+  const [mode,          setMode]          = useState('simple');
 
   const [loading, setLoading] = useState(false);
   const [result,  setResult]  = useState(null);
   const [error,   setError]   = useState('');
-
-  // [PAPER-6] Bulletin Board
-  const [bbResult, setBbResult] = useState(null);
-  // [PAPER-8] Receipt-free
-  const [rfResult, setRfResult] = useState(null);
-  // [PAPER-11] ElGamal ZKP
+  const [bbResult,  setBbResult]  = useState(null);
+  const [rfResult,  setRfResult]  = useState(null);
   const [zkpResult, setZkpResult] = useState(null);
+
+  function resetResults() {
+    setResult(null); setBbResult(null); setRfResult(null); setZkpResult(null); setError('');
+  }
 
   async function verify() {
     setLoading(true); setError(''); setResult(null);
     try {
       let hash = nullifierHash;
-
-      // voterSecret이 있으면 직접 계산
-      // [CRIT-03 FIX] 블라인딩 팩터 포함하여 계산
       if (!hash && voterSecret && electionID) {
         const bfRes = await fetch(`${API}/elections/${electionID}/blinding-factor`);
         if (!bfRes.ok) throw new Error('블라인딩 팩터 조회 실패');
@@ -47,29 +49,20 @@ export default function VerifyPage() {
       if (!hash) throw new Error('nullifierHash 또는 (voterSecret + electionID)가 필요합니다.');
 
       let res, data;
-
       if (mode === 'deniable' && password) {
-        // Deniable Verification (Normal/Panic 분기)
         const pwHash = await computePasswordHash(password, hash);
-        res  = await fetch(`${API}/elections/${electionID}/proof`, {
-          method:  'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body:    JSON.stringify({ nullifierHash: hash, passwordHash: pwHash }),
+        res = await fetch(`${API}/elections/${electionID}/proof`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ nullifierHash: hash, passwordHash: pwHash }),
         });
       } else {
-        // 일반 Merkle 포함 증명
         res = await fetch(`${API}/elections/${electionID}/proof/${hash}`);
       }
-
       data = await res.json();
       if (!res.ok) throw new Error(data.error);
 
       const proofPayload = data.proof && !Array.isArray(data.proof) ? data.proof : data;
-      const proofPath = Array.isArray(data.proof)
-        ? data.proof
-        : Array.isArray(data.proof?.proof)
-          ? data.proof.proof
-          : [];
+      const proofPath = Array.isArray(data.proof) ? data.proof : Array.isArray(data.proof?.proof) ? data.proof.proof : [];
       const leafHash = proofPayload.leafHash || data.leafHash || '';
 
       const rootRes = await fetch(`${API}/elections/${electionID}/merkle`);
@@ -79,40 +72,26 @@ export default function VerifyPage() {
       const computedRoot = await computeMerkleRootFromProof(leafHash, proofPath);
       const chainRoot = rootData.rootHash;
       const localVerified = computedRoot === chainRoot;
-      if (!localVerified) {
-        throw new Error('로컬 Merkle proof 검증 실패: 재계산한 root가 체인 root와 일치하지 않습니다.');
-      }
+      if (!localVerified) throw new Error('Merkle proof 검증 실패: root 불일치');
 
       setResult({
-        nullifierHash: hash,
-        ...data,
-        localVerification: {
-          ok: localVerified,
-          computedRoot,
-          chainRoot,
-          leafHash,
-        },
+        nullifierHash: hash, ...data,
+        localVerification: { ok: localVerified, computedRoot, chainRoot, leafHash },
       });
     } catch (e) { setError(e.message); }
     finally { setLoading(false); }
   }
 
-  // [PAPER-6] Bulletin Board 공개 검증
   async function verifyBulletinBoardPublic() {
     setLoading(true); setError(''); setBbResult(null);
     try {
-      // 1. Bulletin Board 데이터 조회
       const bbRes = await fetch(`${API}/elections/${electionID}/bulletin-board`);
       const bbData = await bbRes.json();
       if (!bbRes.ok) throw new Error(bbData.error || 'Bulletin Board 조회 실패');
 
-      // 2. 브라우저에서 독립 검증 (공개 키로 복호화 + 재집계)
       const verification = await verifyBulletinBoard(bbData);
-
-      // 3. 서버 측 검증도 수행
       const serverRes = await fetch(`${API}/elections/${electionID}/verify-public`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ electionID }),
       });
       const serverData = await serverRes.json();
@@ -131,13 +110,11 @@ export default function VerifyPage() {
     finally { setLoading(false); }
   }
 
-  // [PAPER-11] ElGamal ZKP 검증
   async function verifyElGamalZKP() {
     setLoading(true); setError(''); setZkpResult(null);
     try {
       const res = await fetch(`${API}/elections/${electionID}/verify-elgamal`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ electionID }),
       });
       const data = await res.json();
@@ -147,7 +124,6 @@ export default function VerifyPage() {
     finally { setLoading(false); }
   }
 
-  // [PAPER-8] Receipt-Free 검증
   async function verifyReceiptFree() {
     setLoading(true); setError(''); setRfResult(null);
     try {
@@ -160,7 +136,6 @@ export default function VerifyPage() {
         setNullifierHash(hash);
       }
       if (!hash) throw new Error('nullifierHash 또는 voterSecret이 필요합니다.');
-
       const res = await fetch(`${API}/elections/${electionID}/vote-counted/${hash}`);
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || '확인 실패');
@@ -169,290 +144,335 @@ export default function VerifyPage() {
     finally { setLoading(false); }
   }
 
-  return (
-    <div className="space-y-5">
-      <section className="bg-white rounded-xl shadow p-5 space-y-4">
-        <h2 className="font-bold text-gray-700">E2E 검증</h2>
-        <p className="text-xs text-gray-500">
-          투표 포함 여부 확인, 공개 집계 검증, Receipt-free 확인 등 다양한 검증 모드를 제공합니다.
-        </p>
+  const handleVerify = mode === 'bulletin' ? verifyBulletinBoardPublic
+    : mode === 'receipt-free' ? verifyReceiptFree
+    : mode === 'elgamal-zkp' ? verifyElGamalZKP
+    : verify;
 
+  const btnLabel = mode === 'bulletin' ? '공개 검증 시작'
+    : mode === 'receipt-free' ? 'Receipt-Free 확인'
+    : mode === 'elgamal-zkp' ? 'ZKP 검증 시작'
+    : '검증하기';
+
+  return (
+    <div className="space-y-8">
+      {/* 페이지 헤더 */}
+      <div>
+        <h1 className="text-2xl font-bold text-slate-900">E2E 검증</h1>
+        <p className="text-sm text-slate-500 mt-1">투표 포함 여부 확인, 공개 집계 검증, Receipt-free 확인 등 다양한 검증 모드를 제공합니다.</p>
+      </div>
+
+      {/* 선거 ID 입력 */}
+      <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6">
+        <label className="block text-sm font-medium text-slate-700 mb-1.5">선거 ID</label>
         <input
-          className="border rounded px-3 py-2 w-full text-sm"
-          placeholder="선거 ID"
+          className="w-full h-11 px-4 border border-slate-200 rounded-lg text-sm font-mono bg-white
+            focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none transition-colors duration-200"
+          placeholder="예: ELECTION_2026_PRESIDENT"
           value={electionID}
           onChange={e => setElectionID(e.target.value)}
         />
+      </div>
 
-        <div className="flex flex-wrap gap-3 text-sm">
-          <label className="flex items-center gap-1 cursor-pointer">
-            <input type="radio" value="simple"   checked={mode==='simple'}   onChange={() => { setMode('simple'); setResult(null); setBbResult(null); setRfResult(null); }} />
-            Merkle 검증
-          </label>
-          <label className="flex items-center gap-1 cursor-pointer">
-            <input type="radio" value="deniable" checked={mode==='deniable'} onChange={() => { setMode('deniable'); setResult(null); setBbResult(null); setRfResult(null); }} />
-            Deniable
-          </label>
-          <label className="flex items-center gap-1 cursor-pointer">
-            <input type="radio" value="bulletin" checked={mode==='bulletin'} onChange={() => { setMode('bulletin'); setResult(null); setBbResult(null); setRfResult(null); }} />
-            Bulletin Board (PAPER-6)
-          </label>
-          <label className="flex items-center gap-1 cursor-pointer">
-            <input type="radio" value="receipt-free" checked={mode==='receipt-free'} onChange={() => { setMode('receipt-free'); setResult(null); setBbResult(null); setRfResult(null); setZkpResult(null); }} />
-            Receipt-Free (PAPER-8)
-          </label>
-          <label className="flex items-center gap-1 cursor-pointer">
-            <input type="radio" value="elgamal-zkp" checked={mode==='elgamal-zkp'} onChange={() => { setMode('elgamal-zkp'); setResult(null); setBbResult(null); setRfResult(null); setZkpResult(null); }} />
-            ElGamal ZKP (PAPER-11)
-          </label>
+      {/* 검증 방식 선택 — 아이콘 카드 */}
+      <div>
+        <h3 className="text-sm font-semibold text-slate-700 mb-3">검증 방식</h3>
+        <div className="grid grid-cols-3 sm:grid-cols-5 gap-3">
+          {MODES.map(m => (
+            <button
+              key={m.id}
+              onClick={() => { setMode(m.id); resetResults(); }}
+              className={`
+                flex flex-col items-center gap-2 p-4 rounded-xl border-2 text-center
+                transition-all duration-200
+                ${mode === m.id
+                  ? 'border-blue-500 bg-blue-50 shadow-sm'
+                  : 'border-slate-200 hover:border-blue-300 hover:bg-blue-50/30'
+                }
+              `}
+            >
+              <svg className={`w-6 h-6 ${mode === m.id ? 'text-blue-600' : 'text-slate-400'}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                <path strokeLinecap="round" strokeLinejoin="round" d={m.icon} />
+              </svg>
+              <span className={`text-xs font-semibold ${mode === m.id ? 'text-blue-700' : 'text-slate-700'}`}>{m.label}</span>
+              <span className="text-[10px] text-slate-500 leading-tight">{m.desc}</span>
+            </button>
+          ))}
         </div>
+      </div>
 
-        {mode === 'simple' && (
-          <div className="space-y-2">
-            <div className="flex gap-2">
+      {/* 입력 폼 */}
+      <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6 space-y-4">
+        {(mode === 'simple' || mode === 'receipt-free') && (
+          <>
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-1.5">voterSecret</label>
               <input
-                className="border rounded px-3 py-2 flex-1 text-sm font-mono"
-                placeholder="voterSecret (알고 있는 경우)"
+                className="w-full h-11 px-4 border border-slate-200 rounded-lg text-sm font-mono bg-white
+                  focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none transition-colors duration-200"
+                placeholder="투표 시 사용한 voterSecret"
                 value={voterSecret}
                 onChange={e => setVoterSecret(e.target.value)}
               />
-              <span className="self-center text-gray-400 text-xs">또는</span>
             </div>
-            <input
-              className="border rounded px-3 py-2 w-full text-sm font-mono"
-              placeholder="nullifierHash (직접 입력)"
-              value={nullifierHash}
-              onChange={e => setNullifierHash(e.target.value)}
-            />
-          </div>
+            <div className="flex items-center gap-3">
+              <div className="flex-1 h-px bg-slate-200" />
+              <span className="text-xs text-slate-400">또는</span>
+              <div className="flex-1 h-px bg-slate-200" />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-1.5">nullifierHash (직접 입력)</label>
+              <input
+                className="w-full h-11 px-4 border border-slate-200 rounded-lg text-sm font-mono bg-white
+                  focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none transition-colors duration-200"
+                placeholder="투표 완료 시 받은 추적 번호"
+                value={nullifierHash}
+                onChange={e => setNullifierHash(e.target.value)}
+              />
+            </div>
+          </>
         )}
 
         {mode === 'deniable' && (
-          <div className="space-y-2">
-            <input
-              className="border rounded px-3 py-2 w-full text-sm font-mono"
-              placeholder="voterSecret"
-              value={voterSecret}
-              onChange={e => setVoterSecret(e.target.value)}
-            />
-            <input
-              className="border rounded px-3 py-2 w-full text-sm"
-              placeholder="비밀번호 (Normal 또는 Panic)"
-              type="password"
-              value={password}
-              onChange={e => setPassword(e.target.value)}
-            />
-            <p className="text-xs text-gray-400">
-              Normal 비밀번호 → 실제 투표 증명 반환<br/>
-              Panic 비밀번호 → 가짜 투표 증명 반환 (강압 대응)
-            </p>
-          </div>
-        )}
-
-        {mode === 'bulletin' && (
-          <div className="space-y-2">
-            <p className="text-xs text-gray-500">
-              선거 종료 후 공개된 암호화 키로 모든 투표를 복호화하고 재집계하여 결과를 독립 검증합니다.
-              <br/>인증 불필요 — 누구나 검증 가능 (Universal Verifiability).
-            </p>
-          </div>
-        )}
-
-        {mode === 'elgamal-zkp' && (
-          <div className="space-y-2">
-            <p className="text-xs text-gray-500">
-              ElGamal 모드 선거에서 Chaum-Pedersen ZKP로 복호화 정확성을 검증합니다.
-              <br/>비밀키를 공개하지 않고도 각 투표의 복호화가 올바른지 수학적으로 증명합니다.
-              <br/>AES 모드의 "키 공개 후 검증"과 달리 Zero-Knowledge로 검증합니다.
-            </p>
-          </div>
-        )}
-
-        {mode === 'receipt-free' && (
-          <div className="space-y-2">
-            <p className="text-xs text-gray-500">
-              투표 포함 여부만 확인합니다. 후보자 정보, Merkle proof 등 증명 데이터가 반환되지 않아
-              강압자에게 보여줄 receipt가 생성되지 않습니다.
-            </p>
-            <div className="flex gap-2">
+          <>
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-1.5">voterSecret</label>
               <input
-                className="border rounded px-3 py-2 flex-1 text-sm font-mono"
+                className="w-full h-11 px-4 border border-slate-200 rounded-lg text-sm font-mono bg-white
+                  focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none transition-colors duration-200"
                 placeholder="voterSecret"
                 value={voterSecret}
                 onChange={e => setVoterSecret(e.target.value)}
               />
-              <span className="self-center text-gray-400 text-xs">또는</span>
             </div>
-            <input
-              className="border rounded px-3 py-2 w-full text-sm font-mono"
-              placeholder="nullifierHash (직접 입력)"
-              value={nullifierHash}
-              onChange={e => setNullifierHash(e.target.value)}
-            />
-          </div>
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-1.5">비밀번호</label>
+              <input
+                className="w-full h-11 px-4 border border-slate-200 rounded-lg text-sm bg-white
+                  focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none transition-colors duration-200"
+                placeholder="Normal 또는 Panic 비밀번호"
+                type="password"
+                value={password}
+                onChange={e => setPassword(e.target.value)}
+              />
+            </div>
+            <p className="text-xs text-slate-400">Normal 비밀번호 → 실제 투표 증명 / Panic 비밀번호 → 가짜 증명 (강압 대응)</p>
+          </>
+        )}
+
+        {mode === 'bulletin' && (
+          <Alert variant="info">
+            선거 종료 후 공개된 암호화 키로 모든 투표를 복호화하고 재집계합니다. 인증 불필요 — 누구나 검증 가능.
+          </Alert>
+        )}
+
+        {mode === 'elgamal-zkp' && (
+          <Alert variant="purple">
+            ElGamal 모드에서 Chaum-Pedersen ZKP로 비밀키 없이 복호화 정확성을 수학적으로 증명합니다.
+          </Alert>
+        )}
+
+        {mode === 'receipt-free' && (
+          <Alert variant="warning">
+            포함 여부만 확인합니다. 후보자 정보나 증명 데이터가 반환되지 않아 receipt 생성이 불가합니다.
+          </Alert>
         )}
 
         <button
-          className={`w-full py-3 rounded-lg font-bold text-white text-sm ${
-            loading ? 'bg-gray-400' : 'bg-blue-600 hover:bg-blue-700'
-          }`}
-          onClick={
-            mode === 'bulletin' ? verifyBulletinBoardPublic :
-            mode === 'receipt-free' ? verifyReceiptFree :
-            mode === 'elgamal-zkp' ? verifyElGamalZKP :
-            verify
-          }
+          onClick={handleVerify}
           disabled={loading}
+          className={`
+            w-full h-12 rounded-xl font-bold text-white text-sm
+            transition-all duration-200 active:scale-[0.99] shadow-sm
+            ${loading ? 'bg-slate-400 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700 shadow-blue-600/20'}
+          `}
         >
-          {loading ? '검증 중...' :
-           mode === 'bulletin' ? '공개 검증 (Bulletin Board)' :
-           mode === 'receipt-free' ? 'Receipt-Free 확인' :
-           mode === 'elgamal-zkp' ? 'ZKP 검증 (ElGamal)' :
-           '검증하기'}
+          {loading ? (
+            <span className="flex items-center justify-center gap-2">
+              <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+              </svg>
+              검증 중...
+            </span>
+          ) : btnLabel}
         </button>
-      </section>
+      </div>
 
-      {error && <div className="bg-red-50 border border-red-200 rounded p-3 text-sm text-red-700">{error}</div>}
+      {/* 에러 */}
+      {error && <Alert variant="error">{error}</Alert>}
 
-      {/* Merkle / Deniable 결과 */}
+      {/* ── Merkle / Deniable 결과 ── */}
       {result && (
-        <section className="bg-green-50 border border-green-200 rounded-xl p-5 space-y-3">
-          <p className="font-bold text-green-700">검증 성공 — 투표가 집계에 포함됨</p>
-          {result.localVerification?.ok && (
-            <p className="text-xs text-green-700">
-              브라우저에서 Merkle proof를 재계산했고, 체인에 기록된 Root Hash와 일치합니다.
-            </p>
-          )}
-          <div className="text-xs space-y-1">
-            <p><span className="font-medium">선거:</span> {result.electionID}</p>
-            <p><span className="font-medium">Nullifier:</span></p>
-            <code className="block bg-white border rounded px-2 py-1 break-all">{result.nullifierHash}</code>
+        <div className="bg-white rounded-2xl border border-emerald-200 shadow-sm overflow-hidden">
+          <div className="bg-emerald-50 px-6 py-4 border-b border-emerald-200 flex items-center gap-3">
+            <div className="w-10 h-10 bg-emerald-100 rounded-full flex items-center justify-center">
+              <svg className="w-5 h-5 text-emerald-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+              </svg>
+            </div>
+            <div>
+              <p className="font-bold text-emerald-800">검증 성공</p>
+              <p className="text-xs text-emerald-600">투표가 집계에 포함됨 — Merkle proof 검증 완료</p>
+            </div>
+          </div>
+          <div className="p-6 space-y-4">
+            <HashDisplay label="Nullifier Hash" value={result.nullifierHash} />
             {(result.leafHash || result.proof?.leafHash) && (
-              <>
-                <p><span className="font-medium">Merkle Leaf:</span></p>
-                <code className="block bg-white border rounded px-2 py-1 break-all">
-                  {result.leafHash || result.proof.leafHash}
-                </code>
-              </>
+              <HashDisplay label="Merkle Leaf Hash" value={result.leafHash || result.proof?.leafHash} />
             )}
             {result.localVerification?.chainRoot && (
-              <>
-                <p><span className="font-medium">Chain Root:</span></p>
-                <code className="block bg-white border rounded px-2 py-1 break-all">
-                  {result.localVerification.chainRoot}
-                </code>
-              </>
+              <HashDisplay label="Chain Root Hash" value={result.localVerification.chainRoot} />
+            )}
+            {result.proof && (
+              <details className="text-xs">
+                <summary className="cursor-pointer font-medium text-slate-500 hover:text-slate-700 transition-colors">
+                  Merkle Proof 상세 보기
+                </summary>
+                <pre className="mt-2 bg-slate-50 border border-slate-200 rounded-lg p-3 overflow-auto font-mono text-xs">
+                  {JSON.stringify(result.proof, null, 2)}
+                </pre>
+              </details>
             )}
           </div>
-          {result.proof && (
-            <details className="text-xs">
-              <summary className="cursor-pointer font-medium text-gray-600">Merkle Proof 상세 보기</summary>
-              <pre className="mt-2 bg-white border rounded p-2 overflow-auto text-xs">
-                {JSON.stringify(result.proof, null, 2)}
-              </pre>
-            </details>
-          )}
-        </section>
+        </div>
       )}
 
-      {/* [PAPER-6] Bulletin Board 결과 */}
+      {/* ── Bulletin Board 결과 ── */}
       {bbResult && (
-        <section className={`border rounded-xl p-5 space-y-3 ${
-          bbResult.clientVerification.verified ? 'bg-green-50 border-green-200' : 'bg-red-50 border-red-200'
+        <div className={`bg-white rounded-2xl border shadow-sm overflow-hidden ${
+          bbResult.clientVerification.verified ? 'border-emerald-200' : 'border-red-200'
         }`}>
-          <p className={`font-bold ${bbResult.clientVerification.verified ? 'text-green-700' : 'text-red-700'}`}>
-            {bbResult.clientVerification.verified
-              ? 'Universal Verification 성공 — 집계 결과가 정확합니다'
-              : 'Universal Verification 실패 — 집계 불일치 감지'}
-          </p>
-          <div className="text-xs space-y-2">
-            <div className="grid grid-cols-2 gap-2">
-              <div className="bg-white border rounded p-2">
-                <p className="font-medium text-gray-600 mb-1">브라우저 검증 (Client)</p>
-                <p>재집계 일치: <span className={bbResult.clientVerification.tallyVerification?.tallyMatch ? 'text-green-600 font-bold' : 'text-red-600 font-bold'}>
-                  {bbResult.clientVerification.tallyVerification?.tallyMatch ? 'YES' : 'NO'}
-                </span></p>
-                <p>검증된 투표: {bbResult.clientVerification.tallyVerification?.validCount}/{bbResult.clientVerification.tallyVerification?.totalCount}</p>
-                <p>모든 투표 증명 존재: {bbResult.clientVerification.allBallotsHaveProof ? 'YES' : 'NO'}</p>
+          <div className={`px-6 py-4 border-b flex items-center gap-3 ${
+            bbResult.clientVerification.verified ? 'bg-emerald-50 border-emerald-200' : 'bg-red-50 border-red-200'
+          }`}>
+            <div className={`w-10 h-10 rounded-full flex items-center justify-center ${
+              bbResult.clientVerification.verified ? 'bg-emerald-100' : 'bg-red-100'
+            }`}>
+              {bbResult.clientVerification.verified ? (
+                <svg className="w-5 h-5 text-emerald-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" /></svg>
+              ) : (
+                <svg className="w-5 h-5 text-red-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+              )}
+            </div>
+            <div>
+              <p className={`font-bold ${bbResult.clientVerification.verified ? 'text-emerald-800' : 'text-red-800'}`}>
+                Universal Verification {bbResult.clientVerification.verified ? '성공' : '실패'}
+              </p>
+              <p className="text-xs text-slate-500">클라이언트 + 서버 이중 검증</p>
+            </div>
+          </div>
+          <div className="p-6 space-y-4">
+            <div className="grid grid-cols-2 gap-4">
+              <div className="bg-slate-50 rounded-lg p-4 space-y-2">
+                <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">브라우저 검증</p>
+                <VerifyItem label="재집계 일치" ok={bbResult.clientVerification.tallyVerification?.tallyMatch} />
+                <p className="text-xs text-slate-600">
+                  검증된 투표: {bbResult.clientVerification.tallyVerification?.validCount}/{bbResult.clientVerification.tallyVerification?.totalCount}
+                </p>
               </div>
-              <div className="bg-white border rounded p-2">
-                <p className="font-medium text-gray-600 mb-1">서버 검증 (Chaincode)</p>
-                <p>결과 일치: <span className={bbResult.serverVerification?.resultsMatch ? 'text-green-600 font-bold' : 'text-red-600 font-bold'}>
-                  {bbResult.serverVerification?.resultsMatch ? 'YES' : 'NO'}
-                </span></p>
-                <p>Proof Hash 일치: {bbResult.serverVerification?.proofHashMatch ? 'YES' : 'NO'}</p>
+              <div className="bg-slate-50 rounded-lg p-4 space-y-2">
+                <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">서버 검증</p>
+                <VerifyItem label="결과 일치" ok={bbResult.serverVerification?.resultsMatch} />
+                <VerifyItem label="Proof Hash" ok={bbResult.serverVerification?.proofHashMatch} />
                 {bbResult.bulletinBoard.hasShuffleProof && (
-                  <p>Shuffle 검증: {bbResult.serverVerification?.shuffleVerified ? 'YES' : 'NO'}</p>
+                  <VerifyItem label="Shuffle" ok={bbResult.serverVerification?.shuffleVerified} />
                 )}
               </div>
             </div>
-            <div className="bg-white border rounded p-2">
-              <p className="font-medium text-gray-600 mb-1">집계 결과</p>
-              {bbResult.bulletinBoard.tallyResults && Object.entries(bbResult.bulletinBoard.tallyResults)
-                .sort(([,a],[,b]) => b - a)
-                .map(([candidate, count]) => (
-                  <p key={candidate}>{candidate}: <span className="font-bold">{count}표</span></p>
-                ))
-              }
-              <p className="text-gray-500 mt-1">총 {bbResult.bulletinBoard.totalBallots}표</p>
-            </div>
+            {bbResult.bulletinBoard.tallyResults && (
+              <div className="bg-slate-50 rounded-lg p-4">
+                <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">집계 결과</p>
+                {Object.entries(bbResult.bulletinBoard.tallyResults).sort(([,a],[,b]) => b - a).map(([c, n]) => (
+                  <p key={c} className="text-sm"><span className="font-semibold">{c}</span>: <span className="font-mono">{n}표</span></p>
+                ))}
+                <p className="text-xs text-slate-400 mt-2">총 {bbResult.bulletinBoard.totalBallots}표</p>
+              </div>
+            )}
           </div>
-        </section>
+        </div>
       )}
 
-      {/* [PAPER-11] ElGamal ZKP 결과 */}
+      {/* ── ElGamal ZKP 결과 ── */}
       {zkpResult && (
-        <section className={`border rounded-xl p-5 space-y-3 ${
-          zkpResult.isValid ? 'bg-green-50 border-green-200' : 'bg-red-50 border-red-200'
-        }`}>
-          <p className={`font-bold ${zkpResult.isValid ? 'text-green-700' : 'text-red-700'}`}>
-            {zkpResult.isValid
-              ? 'Chaum-Pedersen ZKP 검증 성공 — 비밀키 없이 복호화 정확성 증명됨'
-              : 'ZKP 검증 실패 — 복호화 불일치 감지'}
-          </p>
-          <div className="text-xs space-y-2">
-            <div className="bg-white border rounded p-3">
-              <p className="font-medium text-gray-600 mb-1">Zero-Knowledge Proof 결과</p>
-              <p>검증된 투표: <span className="font-bold text-green-600">{zkpResult.verified}</span> / {zkpResult.totalProofs}</p>
-              <p>실패: <span className={`font-bold ${zkpResult.failed > 0 ? 'text-red-600' : 'text-gray-400'}`}>{zkpResult.failed}</span></p>
-              <p>재집계 일치: <span className={`font-bold ${zkpResult.resultsMatch ? 'text-green-600' : 'text-red-600'}`}>
-                {zkpResult.resultsMatch ? 'YES' : 'NO'}
-              </span></p>
+        <div className={`bg-white rounded-2xl border shadow-sm overflow-hidden ${zkpResult.isValid ? 'border-emerald-200' : 'border-red-200'}`}>
+          <div className={`px-6 py-4 border-b flex items-center gap-3 ${zkpResult.isValid ? 'bg-emerald-50 border-emerald-200' : 'bg-red-50 border-red-200'}`}>
+            <div className={`w-10 h-10 rounded-full flex items-center justify-center ${zkpResult.isValid ? 'bg-emerald-100' : 'bg-red-100'}`}>
+              <svg className={`w-5 h-5 ${zkpResult.isValid ? 'text-emerald-600' : 'text-red-600'}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                <path strokeLinecap="round" strokeLinejoin="round" d={zkpResult.isValid ? 'M5 13l4 4L19 7' : 'M6 18L18 6M6 6l12 12'} />
+              </svg>
             </div>
-            <div className="bg-white border rounded p-3">
-              <p className="font-medium text-gray-600 mb-1">집계 결과 (ZKP 검증됨)</p>
-              {zkpResult.recount && Object.entries(zkpResult.recount)
-                .sort(([,a],[,b]) => b - a)
-                .map(([candidate, count]) => (
-                  <p key={candidate}>{candidate}: <span className="font-bold">{count}표</span></p>
-                ))
-              }
+            <div>
+              <p className={`font-bold ${zkpResult.isValid ? 'text-emerald-800' : 'text-red-800'}`}>
+                Chaum-Pedersen ZKP {zkpResult.isValid ? '검증 성공' : '검증 실패'}
+              </p>
+              <p className="text-xs text-slate-500">비밀키 없이 복호화 정확성 증명</p>
             </div>
-            <p className="text-gray-400">
-              암호화 모드: {zkpResult.encryptionMode} — 비밀키를 공개하지 않고 검증 완료
-            </p>
           </div>
-        </section>
+          <div className="p-6 space-y-4">
+            <div className="grid grid-cols-3 gap-4">
+              <div className="bg-slate-50 rounded-lg p-4 text-center">
+                <p className="text-2xl font-bold text-emerald-600">{zkpResult.verified}</p>
+                <p className="text-xs text-slate-500 mt-1">검증 성공</p>
+              </div>
+              <div className="bg-slate-50 rounded-lg p-4 text-center">
+                <p className={`text-2xl font-bold ${zkpResult.failed > 0 ? 'text-red-600' : 'text-slate-400'}`}>{zkpResult.failed}</p>
+                <p className="text-xs text-slate-500 mt-1">실패</p>
+              </div>
+              <div className="bg-slate-50 rounded-lg p-4 text-center">
+                <VerifyItem label="재집계 일치" ok={zkpResult.resultsMatch} />
+              </div>
+            </div>
+            {zkpResult.recount && (
+              <div className="bg-slate-50 rounded-lg p-4">
+                <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">집계 결과 (ZKP 검증됨)</p>
+                {Object.entries(zkpResult.recount).sort(([,a],[,b]) => b - a).map(([c, n]) => (
+                  <p key={c} className="text-sm"><span className="font-semibold">{c}</span>: <span className="font-mono">{n}표</span></p>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
       )}
 
-      {/* [PAPER-8] Receipt-Free 결과 */}
+      {/* ── Receipt-Free 결과 ── */}
       {rfResult && (
-        <section className={`border rounded-xl p-5 space-y-2 ${
-          rfResult.included ? 'bg-green-50 border-green-200' : 'bg-yellow-50 border-yellow-200'
-        }`}>
-          <p className={`font-bold ${rfResult.included ? 'text-green-700' : 'text-yellow-700'}`}>
-            {rfResult.included
-              ? 'Receipt-Free 확인: 투표가 집계에 포함되어 있습니다'
-              : 'Receipt-Free 확인: 해당 투표가 발견되지 않습니다'}
-          </p>
-          <p className="text-xs text-gray-500">
-            총 투표수: {rfResult.totalVotes}표
-          </p>
-          <p className="text-xs text-gray-400">
-            후보자 정보, Merkle proof 등 증명 데이터는 반환되지 않습니다 — receipt 생성 불가
-          </p>
-        </section>
+        <div className={`bg-white rounded-2xl border shadow-sm overflow-hidden ${rfResult.included ? 'border-emerald-200' : 'border-amber-200'}`}>
+          <div className={`px-6 py-4 border-b flex items-center gap-3 ${rfResult.included ? 'bg-emerald-50 border-emerald-200' : 'bg-amber-50 border-amber-200'}`}>
+            <div className={`w-10 h-10 rounded-full flex items-center justify-center ${rfResult.included ? 'bg-emerald-100' : 'bg-amber-100'}`}>
+              {rfResult.included ? (
+                <svg className="w-5 h-5 text-emerald-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" /></svg>
+              ) : (
+                <svg className="w-5 h-5 text-amber-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01" /></svg>
+              )}
+            </div>
+            <div>
+              <p className={`font-bold ${rfResult.included ? 'text-emerald-800' : 'text-amber-800'}`}>
+                {rfResult.included ? '투표가 집계에 포함되어 있습니다' : '해당 투표가 발견되지 않습니다'}
+              </p>
+              <p className="text-xs text-slate-500">총 투표수: {rfResult.totalVotes}표</p>
+            </div>
+          </div>
+          <div className="p-6">
+            <Alert variant="info">
+              후보자 정보, Merkle proof 등 증명 데이터는 반환되지 않습니다 — receipt 생성 불가 (Receipt-Free 속성)
+            </Alert>
+          </div>
+        </div>
       )}
+    </div>
+  );
+}
+
+function VerifyItem({ label, ok }) {
+  return (
+    <div className="flex items-center gap-2 text-xs">
+      {ok ? (
+        <svg className="w-4 h-4 text-emerald-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" /></svg>
+      ) : (
+        <svg className="w-4 h-4 text-red-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+      )}
+      <span className="text-slate-700">{label}: <span className={`font-bold ${ok ? 'text-emerald-600' : 'text-red-600'}`}>{ok ? 'YES' : 'NO'}</span></span>
     </div>
   );
 }
