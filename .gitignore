@@ -15,6 +15,9 @@ network/organizations/
 network/*.tar.gz
 chaincode/voting/ccaas-package/
 
+# ── vendor 내 시크릿 포함 파일 (GitHub Push Protection) ────────
+chaincode/voting/vendor/github.com/go-openapi/spec/appveyor.yml
+
 # ── 컴파일된 Go 바이너리 ───────────────────────────────────────
 chaincode/voting/voting
 
