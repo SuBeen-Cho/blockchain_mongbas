@@ -245,7 +245,7 @@ cd network
 
 ## 팀 몽바스
 
-한국기술교육대학교 컴퓨터공학부 2025 캡스톤디자인 | 지도교수: 서화정
+2026 캡스톤디자인
 
 <p align="center">
   <a href="https://github.com/SuBeen-Cho">
