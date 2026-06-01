@@ -239,7 +239,7 @@ cd network
 | D. 집계 키 단독 탈취 | 1-share 복원 실패 100%, 2-share 성공 100% |
 | E. 결과 조작 외부 주장 | Merkle 검증 정확도 100% |
 
-> 상세 결과: [docs/performance/PERF-SUMMARY.md](./docs/performance/PERF-SUMMARY.md) | [docs/security-eval/SECURITY-SCENARIOS.md](./docs/security-eval/SECURITY-SCENARIOS.md)
+> 상세 결과: [docs/PERFORMANCE-EVALUATION.md](./docs/PERFORMANCE-EVALUATION.md) | [docs/performance/PERF-SUMMARY.md](./docs/performance/PERF-SUMMARY.md) | [docs/security-eval/SECURITY-SCENARIOS.md](./docs/security-eval/SECURITY-SCENARIOS.md)
 
 ---
 
