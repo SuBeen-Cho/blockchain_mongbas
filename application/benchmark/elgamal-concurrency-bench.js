@@ -1,0 +1,353 @@
+#!/usr/bin/env node
+/**
+ * benchmark/elgamal-concurrency-bench.js
+ * ElGamal 모드 동시성(확장성) 벤치마크
+ *
+ * 측정: 동시 투표자 수별 TPS, 레이턴시, 에러율 (ElGamal + ZKP 포함)
+ *
+ * 사용법:
+ *   node benchmark/elgamal-concurrency-bench.js \
+ *     [--url http://localhost:3000] \
+ *     [--conc 1,10,50,100,300,500,1000] \
+ *     [--stopFailRate 30] \
+ *     [--out results.json]
+ */
+'use strict';
+
+const crypto = require('crypto');
+const fs = require('fs');
+const http = require('http');
+const { execSync } = require('child_process');
+const path = require('path');
+
+const args = {};
+process.argv.slice(2).forEach((a, i, arr) => {
+  if (a.startsWith('--')) args[a.slice(2)] = arr[i + 1] ?? true;
+});
+
+const BASE = args.url || 'http://localhost:3000';
+const CONCURRENCIES = (args.conc || '1,10,50,100,300,500,1000').split(',').map(Number).filter(Boolean);
+const STOP_FAIL_RATE = Number(args.stopFailRate || 30);
+const CANDIDATES = ['CANDIDATE_A', 'CANDIDATE_B', 'CANDIDATE_C'];
+const TIMESTAMP = new Date().toISOString().replace(/[:.]/g, '').slice(0, 15);
+const OUT = args.out || path.join(__dirname, `../benchmark-reports/elgamal-conc-${TIMESTAMP}.json`);
+
+// ── HTTP 헬퍼 ───────────────────────────────────────────────────
+function rawRequest(method, urlPath, body = null, headers = {}, timeoutMs = 90000) {
+  return new Promise((resolve) => {
+    const url = new URL(urlPath, BASE);
+    const payload = body ? JSON.stringify(body) : null;
+    const start = process.hrtime.bigint();
+    const req = http.request({
+      hostname: url.hostname,
+      port: url.port || 80,
+      path: url.pathname + url.search,
+      method,
+      headers: {
+        ...(payload ? { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload) } : {}),
+        ...headers,
+      },
+    }, res => {
+      let raw = '';
+      res.on('data', chunk => { raw += chunk; });
+      res.on('end', () => {
+        const ms = Number(process.hrtime.bigint() - start) / 1e6;
+        let parsed = raw;
+        try { parsed = raw ? JSON.parse(raw) : null; } catch {}
+        resolve({ status: res.statusCode, body: parsed, ms });
+      });
+    });
+    req.on('error', err => resolve({ status: 0, body: { error: err.message }, ms: Number(process.hrtime.bigint() - start) / 1e6 }));
+    req.setTimeout(timeoutMs, () => { req.destroy(new Error('timeout')); });
+    if (payload) req.write(payload);
+    req.end();
+  });
+}
+
+const get = (p, h = {}) => rawRequest('GET', p, null, h);
+const post = (p, b, h = {}, t) => rawRequest('POST', p, b, h, t);
+
+function sha256Hex(input) { return crypto.createHash('sha256').update(input).digest('hex'); }
+
+function stats(values) {
+  if (!values.length) return { n: 0, avg: 0, min: 0, p50: 0, p95: 0, p99: 0, max: 0 };
+  const sorted = values.slice().sort((a, b) => a - b);
+  const n = sorted.length;
+  const p = pct => sorted[Math.max(0, Math.ceil((pct / 100) * n) - 1)];
+  return {
+    n,
+    avg: +(sorted.reduce((a, b) => a + b, 0) / n).toFixed(1),
+    min: +sorted[0].toFixed(1),
+    p50: +p(50).toFixed(1),
+    p95: +p(95).toFixed(1),
+    p99: +p(99).toFixed(1),
+    max: +sorted[n - 1].toFixed(1),
+  };
+}
+
+// ── BigInt 유틸 ─────────────────────────────────────────────────
+function modPow(base, exp, mod) {
+  base = ((base % mod) + mod) % mod;
+  let result = 1n;
+  while (exp > 0n) {
+    if (exp & 1n) result = (result * base) % mod;
+    exp >>= 1n;
+    base = (base * base) % mod;
+  }
+  return result;
+}
+
+function modInverse(a, m) {
+  a = ((a % m) + m) % m;
+  let [old_r, r] = [a, m];
+  let [old_s, s] = [1n, 0n];
+  while (r !== 0n) {
+    const q = old_r / r;
+    [old_r, r] = [r, old_r - q * r];
+    [old_s, s] = [s, old_s - q * s];
+  }
+  if (old_r !== 1n) return null;
+  return ((old_s % m) + m) % m;
+}
+
+function randomBigInt(bytes) {
+  const buf = crypto.randomBytes(bytes);
+  let result = 0n;
+  for (const b of buf) result = (result << 8n) | BigInt(b);
+  return result;
+}
+
+// ── ElGamal + ZKP ───────────────────────────────────────────────
+const HOMOMORPHIC_BASE = 10000n;
+
+function elgamalEncrypt(pubKey, candidateIndex) {
+  const p = BigInt('0x' + pubKey.p);
+  const g = BigInt('0x' + pubKey.g);
+  const y = BigInt('0x' + pubKey.y);
+  const m = HOMOMORPHIC_BASE ** BigInt(candidateIndex);
+  const gm = modPow(g, m, p);
+  let r = randomBigInt(32) % (p - 2n);
+  if (r === 0n) r = 1n;
+  const c1 = modPow(g, r, p);
+  const yr = modPow(y, r, p);
+  const c2 = (gm * yr) % p;
+  return { c1: c1.toString(16), c2: c2.toString(16), _r: r };
+}
+
+function generateBallotValidityProof(pubKey, c1Hex, c2Hex, r, actualIndex, numCandidates) {
+  const p = BigInt('0x' + pubKey.p);
+  const g = BigInt('0x' + pubKey.g);
+  const y = BigInt('0x' + pubKey.y);
+  const q = (p - 1n) / 2n;
+  const c1 = BigInt('0x' + c1Hex);
+  const c2 = BigInt('0x' + c2Hex);
+
+  const a1s = new Array(numCandidates);
+  const a2s = new Array(numCandidates);
+  const es = new Array(numCandidates);
+  const zs = new Array(numCandidates);
+
+  let k = randomBigInt(32) % q;
+  if (k === 0n) k = 1n;
+
+  let eSum = 0n;
+  for (let j = 0; j < numCandidates; j++) {
+    if (j === actualIndex) continue;
+    const mj = modPow(g, HOMOMORPHIC_BASE ** BigInt(j), p);
+    const mjInv = modInverse(mj, p);
+    const c2DivMj = (c2 * mjInv) % p;
+    const ej = randomBigInt(32) % q;
+    const zj = randomBigInt(32) % q;
+    const gzj = modPow(g, zj, p);
+    const c1InvEj = modPow(modInverse(c1, p), ej, p);
+    a1s[j] = ((gzj * c1InvEj) % p).toString(16);
+    const yzj = modPow(y, zj, p);
+    const c2DivMjInvEj = modPow(modInverse(c2DivMj, p), ej, p);
+    a2s[j] = ((yzj * c2DivMjInvEj) % p).toString(16);
+    es[j] = ej.toString(16);
+    zs[j] = zj.toString(16);
+    eSum = (eSum + ej) % q;
+  }
+
+  a1s[actualIndex] = modPow(g, k, p).toString(16);
+  a2s[actualIndex] = modPow(y, k, p).toString(16);
+
+  let hashInput = c1Hex + '|' + c2Hex;
+  for (let j = 0; j < numCandidates; j++) hashInput += '|' + a1s[j] + '|' + a2s[j];
+  const eTotal = BigInt('0x' + sha256Hex(hashInput)) % q;
+
+  const eActual = ((eTotal - eSum) % q + q) % q;
+  es[actualIndex] = eActual.toString(16);
+  const zActual = (k + eActual * r) % q;
+  zs[actualIndex] = zActual.toString(16);
+
+  return { a1s, a2s, es, zs };
+}
+
+// ── 선거 생성 (ElGamal) ─────────────────────────────────────────
+async function createElection(label) {
+  const electionID = `elgamal-conc-${label}-${Date.now()}`;
+  const now = Math.floor(Date.now() / 1000);
+  const create = await post('/api/elections', {
+    electionID,
+    title: `ElGamal Concurrency ${label}`,
+    description: 'ElGamal concurrency benchmark',
+    candidates: CANDIDATES,
+    startTime: now,
+    endTime: now + 7200,
+    encryptionMode: 'elgamal',
+  }, {}, 60000);
+  if (create.status >= 400) throw new Error(`create failed: ${create.status} ${JSON.stringify(create.body)}`);
+
+  const activate = await post(`/api/elections/${electionID}/activate`, {}, {}, 60000);
+  if (activate.status >= 400) throw new Error(`activate failed: ${activate.status}`);
+
+  const pubKeyRes = await get(`/api/elections/${electionID}/elgamal-pubkey`);
+  if (pubKeyRes.status >= 400) throw new Error(`pubkey failed: ${pubKeyRes.status}`);
+  const pubKey = pubKeyRes.body.pubKey || pubKeyRes.body;
+
+  return { electionID, pubKey };
+}
+
+async function issueCredential(electionID) {
+  const res = await post('/api/credential/idemix', {
+    enrollmentID: 'voter1',
+    enrollmentSecret: 'voter1pw',
+    electionID,
+  }, {}, 30000);
+  if (res.status !== 200 || !res.body?.credential) {
+    throw new Error(`credential failed: ${res.status}`);
+  }
+  return { 'x-idemix-credential': res.body.credential };
+}
+
+// ── 단일 투표 (ElGamal + ZKP) ───────────────────────────────────
+function castVoteElGamal(electionID, pubKey, i, headers) {
+  const candidateIdx = i % CANDIDATES.length;
+  const nullifierHash = sha256Hex(`conc-${electionID}-${i}-${Date.now()}-${Math.random()}`);
+
+  // 클라이언트 암호화 + ZKP (동기, CPU-bound)
+  const encrypted = elgamalEncrypt(pubKey, candidateIdx);
+  const proof = generateBallotValidityProof(
+    pubKey, encrypted.c1, encrypted.c2, encrypted._r,
+    candidateIdx, CANDIDATES.length
+  );
+
+  return post('/api/vote', {
+    electionID,
+    nullifierHash,
+    encryptedCandidateID: encrypted.c1 + ':' + encrypted.c2,
+    voterID: `conc-voter-${i}`,
+    ballotValidityProof: JSON.stringify(proof),
+  }, headers, 90000).then(res => {
+    const ok = res.status >= 200 && res.status < 300;
+    return { ok, status: res.status, ms: res.ms, error: ok ? null : (res.body?.error || 'error') };
+  });
+}
+
+function systemSnapshot() {
+  const snapshot = {};
+  try { snapshot.dockerStats = execSync("docker stats --no-stream --format 'table {{.Name}}\\t{{.CPUPerc}}\\t{{.MemUsage}}'", { encoding: 'utf8', timeout: 10000 }); } catch {}
+  return snapshot;
+}
+
+// ── 동시성 라운드 ───────────────────────────────────────────────
+async function runConcurrency(label, concurrency, idemixEnabled) {
+  console.log(`\n  [${label}] C=${concurrency} — 선거 생성...`);
+  const { electionID, pubKey } = await createElection(`${label}-c${concurrency}`);
+
+  let headers = {};
+  if (idemixEnabled) {
+    headers = await issueCredential(electionID);
+  }
+
+  console.log(`  투표 ${concurrency}건 동시 제출 (ElGamal + ZKP)...`);
+  const before = systemSnapshot();
+  const started = Date.now();
+
+  // 동시 투표 실행
+  const results = await Promise.all(
+    Array.from({ length: concurrency }, (_, i) => castVoteElGamal(electionID, pubKey, i, headers))
+  );
+
+  const elapsedSec = (Date.now() - started) / 1000;
+  const after = systemSnapshot();
+
+  const ok = results.filter(r => r.ok);
+  const fail = results.filter(r => !r.ok);
+  const errors = {};
+  for (const r of fail) {
+    const key = `${r.status}:${(r.error || '').slice(0, 120)}`;
+    errors[key] = (errors[key] || 0) + 1;
+  }
+
+  const round = {
+    concurrency,
+    success: ok.length,
+    fail: fail.length,
+    failRate: +((fail.length / concurrency) * 100).toFixed(2),
+    tps: +(ok.length / elapsedSec).toFixed(2),
+    elapsedSec: +elapsedSec.toFixed(2),
+    latency: stats(ok.map(r => r.ms)),
+    errors,
+  };
+
+  console.log(`  성공=${round.success}/${concurrency} TPS=${round.tps} avg=${round.latency.avg}ms P95=${round.latency.p95}ms fail=${round.failRate}%`);
+  return round;
+}
+
+// ── 메인 ────────────────────────────────────────────────────────
+async function main() {
+  const health = await get('/health');
+  if (health.status !== 200) throw new Error('API server not ready');
+  const idemix = health.body.idemix || {};
+
+  const label = !idemix.enabled
+    ? 'bypass'
+    : idemix.idemixImpl === 'ps' ? 'PS-BN254'
+    : idemix.idemixImpl === 'bbs' ? 'BBS'
+    : 'Ed25519';
+
+  console.log('═══════════════════════════════════════════════════');
+  console.log(` ElGamal Concurrency Benchmark: ${label}`);
+  console.log(` 동시성 레벨: ${CONCURRENCIES.join(', ')}`);
+  console.log('═══════════════════════════════════════════════════');
+
+  const rounds = [];
+  for (const c of CONCURRENCIES) {
+    const round = await runConcurrency(label, c, idemix.enabled);
+    rounds.push(round);
+
+    if (round.failRate >= STOP_FAIL_RATE) {
+      console.log(`\n  [STOP] failRate ${round.failRate}% >= ${STOP_FAIL_RATE}% — 포화 도달`);
+      break;
+    }
+  }
+
+  const result = {
+    scenario: `elgamal-concurrency-${label}`,
+    timestamp: new Date().toISOString(),
+    config: { encryptionMode: 'elgamal', candidates: CANDIDATES.length, idemix, stopFailRate: STOP_FAIL_RATE },
+    rounds,
+  };
+
+  fs.mkdirSync(path.dirname(OUT), { recursive: true });
+  fs.writeFileSync(OUT, JSON.stringify(result, null, 2));
+
+  // 요약 테이블
+  console.log('\n═══════════════════════════════════════════════════');
+  console.log(' 요약');
+  console.log('═══════════════════════════════════════════════════');
+  console.log(' C      | TPS    | avg(ms) | P95(ms) | fail%');
+  console.log('--------|--------|---------|---------|------');
+  for (const r of rounds) {
+    console.log(` ${String(r.concurrency).padStart(6)} | ${String(r.tps).padStart(6)} | ${String(r.latency.avg).padStart(7)} | ${String(r.latency.p95).padStart(7)} | ${r.failRate}%`);
+  }
+
+  console.log(`\n결과 저장: ${OUT}`);
+}
+
+main().catch(err => {
+  console.error('[FATAL]', err);
+  process.exit(1);
+});

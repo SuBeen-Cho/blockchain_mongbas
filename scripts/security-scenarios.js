@@ -28,7 +28,7 @@ const BASE = 'http://localhost:3000';
 const OUT  = path.join(__dirname, '../docs/security-eval/SECURITY-SCENARIOS.md');
 
 // ── HTTP 헬퍼 ───────────────────────────────────────────────────
-function req(method, urlPath, body) {
+function req(method, urlPath, body, extraHeaders = {}) {
   return new Promise((resolve, reject) => {
     const data = body ? JSON.stringify(body) : null;
     const options = {
@@ -37,6 +37,7 @@ function req(method, urlPath, body) {
       headers: {
         'Content-Type': 'application/json',
         ...(data ? { 'Content-Length': Buffer.byteLength(data) } : {}),
+        ...extraHeaders,
       },
     };
     const r = http.request(options, res => {
@@ -75,6 +76,18 @@ function stats(arr) {
   };
 }
 
+// ── 자격증명 발급 헬퍼 ──────────────────────────────────────────
+async function getCredentialHeaders(electionID) {
+  const health = await req('GET', '/health');
+  const idemix = (typeof health.body === 'object' ? health.body : {}).idemix || {};
+  if (!idemix.enabled) return {};
+  const res = await req('POST', '/api/credential/idemix', {
+    enrollmentID: 'voter1', enrollmentSecret: 'voter1pw', electionID,
+  });
+  if (res.status !== 200 || !(res.body && res.body.credential)) return {};
+  return { 'x-idemix-credential': res.body.credential };
+}
+
 // ── 선거 생성 헬퍼 ──────────────────────────────────────────────
 async function createActiveElection(suffix) {
   const eid = `security-test-${suffix}-${Date.now()}`;
@@ -97,6 +110,7 @@ async function scenarioB() {
   console.log('\n[B] 이중투표 시도 측정 중...');
   const ROUNDS = 30;
   const eid    = await createActiveElection('B');
+  const credHeaders = await getCredentialHeaders(eid);
 
   let firstOk = 0, blockOk = 0;
   const firstTimes = [], blockTimes = [];
@@ -110,7 +124,7 @@ async function scenarioB() {
     const r1  = await req('POST', '/api/vote', {
       electionID: eid, candidateID: 'A', nullifierHash,
       voterID: `voter-b-${i}`,
-    });
+    }, credHeaders);
     firstTimes.push(Date.now() - t1);
     if (r1.status === 200) firstOk++;
 
@@ -119,7 +133,7 @@ async function scenarioB() {
     const r2  = await req('POST', '/api/vote', {
       electionID: eid, candidateID: 'B', nullifierHash,
       voterID: `voter-b-${i}`,
-    });
+    }, credHeaders);
     blockTimes.push(Date.now() - t2);
     // Eviction 모드: 재투표 허용(200) — 이 시스템은 덮어쓰기 지원
     if (r2.status === 200) blockOk++;
@@ -143,6 +157,7 @@ async function scenarioC() {
   console.log('\n[C] Normal/Panic 타이밍 측정 중...');
   const ROUNDS = 100;
   const eid    = await createActiveElection('C');
+  const credHeaders = await getCredentialHeaders(eid);
 
   // 투표 + Merkle Tree 구축
   const nullifiers = [];
@@ -153,7 +168,7 @@ async function scenarioC() {
     await req('POST', '/api/vote', {
       electionID: eid, candidateID: i % 2 === 0 ? 'A' : 'B',
       nullifierHash: nh, voterID: `voter-c-${i}`,
-    });
+    }, credHeaders);
   }
   await req('POST', `/api/elections/${eid}/close`);
   await req('POST', `/api/elections/${eid}/merkle`);

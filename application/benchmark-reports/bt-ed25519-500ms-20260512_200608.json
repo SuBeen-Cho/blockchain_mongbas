@@ -1,0 +1,98 @@
+{
+  "label": "Ed25519",
+  "timestamp": "2026-05-12T11:06:46.341Z",
+  "health": {
+    "idemix": {
+      "enabled": true,
+      "mode": "idemix-hmac",
+      "impl": "Ed25519-asymmetric",
+      "securityNote": "공개키 서명 credential — 체인코드 직접 검증 완료, 익명 credential은 아님",
+      "idemixImpl": "hmac",
+      "asymEnabled": true,
+      "cacheEnabled": false,
+      "cacheTtlSec": 5,
+      "cacheSize": 0
+    },
+    "memory": {
+      "heapUsed": 17385336,
+      "heapTotal": 33062912,
+      "rss": 46923776,
+      "external": 2711354
+    }
+  },
+  "txPerRound": 10,
+  "rounds": [
+    {
+      "targetTps": 1,
+      "txCount": 10,
+      "success": 10,
+      "fail": 0,
+      "failRate": 0,
+      "actualTps": 1,
+      "elapsedSec": 10.02,
+      "latency": {
+        "n": 10,
+        "avg": 672.2,
+        "min": 622.7,
+        "p50": 645.3,
+        "p95": 767.7,
+        "p99": 767.7,
+        "max": 767.7
+      },
+      "credential": {
+        "credType": "Ed25519-asym",
+        "sizeBytes": 267,
+        "latencyMs": 3.24
+      },
+      "errors": {}
+    },
+    {
+      "targetTps": 5,
+      "txCount": 10,
+      "success": 10,
+      "fail": 0,
+      "failRate": 0,
+      "actualTps": 1.56,
+      "elapsedSec": 6.41,
+      "latency": {
+        "n": 10,
+        "avg": 640.4,
+        "min": 606.4,
+        "p50": 619.1,
+        "p95": 752.5,
+        "p99": 752.5,
+        "max": 752.5
+      },
+      "credential": {
+        "credType": "Ed25519-asym",
+        "sizeBytes": 267,
+        "latencyMs": 8.57
+      },
+      "errors": {}
+    },
+    {
+      "targetTps": 20,
+      "txCount": 10,
+      "success": 10,
+      "fail": 0,
+      "failRate": 0,
+      "actualTps": 1.55,
+      "elapsedSec": 6.45,
+      "latency": {
+        "n": 10,
+        "avg": 644.9,
+        "min": 595,
+        "p50": 613.4,
+        "p95": 828.8,
+        "p99": 828.8,
+        "max": 828.8
+      },
+      "credential": {
+        "credType": "Ed25519-asym",
+        "sizeBytes": 268,
+        "latencyMs": 1.57
+      },
+      "errors": {}
+    }
+  ]
+}

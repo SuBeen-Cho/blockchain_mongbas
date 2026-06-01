@@ -1,0 +1,200 @@
+{
+  "label": "Ed25519",
+  "timestamp": "2026-05-13T11:57:33.948Z",
+  "health": {
+    "idemix": {
+      "enabled": true,
+      "mode": "idemix-hmac",
+      "impl": "Ed25519-asymmetric",
+      "securityNote": "공개키 서명 credential — 체인코드 직접 검증 완료, 익명 credential은 아님",
+      "idemixImpl": "hmac",
+      "asymEnabled": true,
+      "cacheEnabled": false,
+      "cacheTtlSec": 5,
+      "cacheSize": 0
+    },
+    "memory": {
+      "heapUsed": 105540632,
+      "heapTotal": 163692544,
+      "rss": 37978112,
+      "external": 18824476
+    }
+  },
+  "concurrencies": [
+    20,
+    50,
+    100,
+    200,
+    500
+  ],
+  "stopFailRate": 30,
+  "rounds": [
+    {
+      "concurrency": 20,
+      "success": 20,
+      "fail": 0,
+      "failRate": 0,
+      "throughput": 9.05,
+      "elapsedSec": 2.21,
+      "latency": {
+        "n": 20,
+        "avg": 2195.2,
+        "min": 2184.6,
+        "p50": 2194.9,
+        "p95": 2201.3,
+        "p99": 2203.5,
+        "max": 2203.5
+      },
+      "credential": {
+        "credType": "Ed25519-asym",
+        "sizeBytes": 259,
+        "latencyMs": 2.48
+      },
+      "errors": {},
+      "resource": {
+        "before": {
+          "top": "Processes: 499 total, 4 running, 495 sleeping, 3986 threads \n2026/05/13 20:56:18\nLoad Avg: 8.81, 5.57, 4.13 \nCPU usage: 20.86% user, 23.22% sys, 55.90% idle \nSharedLibs: 167M resident, 42M data, 27M linkedit.\nMemRegions: 760146 total, 726M resident, 25M private, 1493M shared.\nPhysMem: 7524M used (1908M wired, 3423M compressor), 93M unused.\nVM: 256T vsize, 5702M framework vsize, 67701097(0) swapins, 69961185(0) swapouts.\nNetworks: packets: 46461950/20G in, 28949219/7690M out.\nDisks: 126176344/3295G read, 36260547/1442G written.\n",
+          "dockerStats": "NAME                                  CPU %     MEM USAGE / LIMIT\nvoting-chaincode                      0.00%     35.92MiB / 3.827GiB\ncli                                   0.00%     976KiB / 3.827GiB\npeer0.civil.voting.example.com        2.71%     209.9MiB / 3.827GiB\npeer0.ec.voting.example.com           4.69%     613.1MiB / 3.827GiB\npeer0.party.voting.example.com        4.56%     197.7MiB / 3.827GiB\npeer1.ec.voting.example.com           3.48%     179.5MiB / 3.827GiB\ncouchdb-ec0                           0.39%     116.9MiB / 3.827GiB\ncouchdb-civil                         0.42%     108.1MiB / 3.827GiB\ncouchdb-party                         0.39%     109MiB / 3.827GiB\ncouchdb-ec1                           0.50%     102.3MiB / 3.827GiB\norderer1.orderer.voting.example.com   0.31%     64.41MiB / 3.827GiB\norderer2.orderer.voting.example.com   0.46%     58.7MiB / 3.827GiB\norderer3.orderer.voting.example.com   0.26%     61.95MiB / 3.827GiB\norderer4.orderer.voting.example.com   0.37%     64.53MiB / 3.827GiB\nca.ec.voting.example.com              0.00%     13.28MiB / 3.827GiB\nca.civil.voting.example.com           0.00%     15.48MiB / 3.827GiB\nca.party.voting.example.com           0.00%     10.89MiB / 3.827GiB\n"
+        },
+        "after": {
+          "top": "Processes: 501 total, 3 running, 1 stuck, 497 sleeping, 4133 threads \n2026/05/13 20:56:24\nLoad Avg: 8.27, 5.52, 4.12 \nCPU usage: 22.76% user, 34.85% sys, 42.38% idle \nSharedLibs: 196M resident, 36M data, 23M linkedit.\nMemRegions: 760507 total, 598M resident, 38M private, 1562M shared.\nPhysMem: 7446M used (1911M wired, 3418M compressor), 174M unused.\nVM: 257T vsize, 5702M framework vsize, 67749570(0) swapins, 70013025(0) swapouts.\nNetworks: packets: 46463790/20G in, 28951038/7690M out.\nDisks: 126191864/3295G read, 36274858/1443G written.\n",
+          "dockerStats": "NAME                                  CPU %     MEM USAGE / LIMIT\nvoting-chaincode                      0.00%     32.72MiB / 3.827GiB\ncli                                   0.00%     976KiB / 3.827GiB\npeer0.civil.voting.example.com        4.11%     209.9MiB / 3.827GiB\npeer0.ec.voting.example.com           4.49%     611.3MiB / 3.827GiB\npeer0.party.voting.example.com        1.75%     197.7MiB / 3.827GiB\npeer1.ec.voting.example.com           3.00%     179.8MiB / 3.827GiB\ncouchdb-ec0                           0.79%     116.8MiB / 3.827GiB\ncouchdb-civil                         2.42%     108MiB / 3.827GiB\ncouchdb-party                         2.35%     108.8MiB / 3.827GiB\ncouchdb-ec1                           1.20%     102.2MiB / 3.827GiB\norderer1.orderer.voting.example.com   0.39%     64.76MiB / 3.827GiB\norderer2.orderer.voting.example.com   0.56%     58.71MiB / 3.827GiB\norderer3.orderer.voting.example.com   0.31%     61.97MiB / 3.827GiB\norderer4.orderer.voting.example.com   0.44%     64.55MiB / 3.827GiB\nca.ec.voting.example.com              0.00%     13.28MiB / 3.827GiB\nca.civil.voting.example.com           0.00%     15.48MiB / 3.827GiB\nca.party.voting.example.com           0.00%     10.93MiB / 3.827GiB\n"
+        }
+      }
+    },
+    {
+      "concurrency": 50,
+      "success": 50,
+      "fail": 0,
+      "failRate": 0,
+      "throughput": 25.21,
+      "elapsedSec": 1.98,
+      "latency": {
+        "n": 50,
+        "avg": 1970.6,
+        "min": 1951,
+        "p50": 1970.8,
+        "p95": 1980.6,
+        "p99": 1982,
+        "max": 1982
+      },
+      "credential": {
+        "credType": "Ed25519-asym",
+        "sizeBytes": 259,
+        "latencyMs": 3.17
+      },
+      "errors": {},
+      "resource": {
+        "before": {
+          "top": "Processes: 501 total, 3 running, 498 sleeping, 4052 threads \n2026/05/13 20:56:29\nLoad Avg: 7.76, 5.46, 4.11 \nCPU usage: 24.39% user, 27.35% sys, 48.25% idle \nSharedLibs: 189M resident, 36M data, 23M linkedit.\nMemRegions: 760371 total, 811M resident, 40M private, 1360M shared.\nPhysMem: 7531M used (1864M wired, 3423M compressor), 89M unused.\nVM: 257T vsize, 5702M framework vsize, 67763476(0) swapins, 70024237(0) swapouts.\nNetworks: packets: 46464702/20G in, 28951945/7690M out.\nDisks: 126196686/3296G read, 36278399/1443G written.\n",
+          "dockerStats": "NAME                                  CPU %     MEM USAGE / LIMIT\nvoting-chaincode                      0.00%     32.72MiB / 3.827GiB\ncli                                   0.00%     976KiB / 3.827GiB\npeer0.civil.voting.example.com        1.80%     209.9MiB / 3.827GiB\npeer0.ec.voting.example.com           1.96%     611.5MiB / 3.827GiB\npeer0.party.voting.example.com        1.46%     197.7MiB / 3.827GiB\npeer1.ec.voting.example.com           1.97%     179.5MiB / 3.827GiB\ncouchdb-ec0                           0.22%     116.7MiB / 3.827GiB\ncouchdb-civil                         0.95%     108MiB / 3.827GiB\ncouchdb-party                         0.47%     108.6MiB / 3.827GiB\ncouchdb-ec1                           0.96%     102.2MiB / 3.827GiB\norderer1.orderer.voting.example.com   0.28%     64.79MiB / 3.827GiB\norderer2.orderer.voting.example.com   1.05%     58.72MiB / 3.827GiB\norderer3.orderer.voting.example.com   0.38%     61.97MiB / 3.827GiB\norderer4.orderer.voting.example.com   0.26%     64.55MiB / 3.827GiB\nca.ec.voting.example.com              0.00%     13.28MiB / 3.827GiB\nca.civil.voting.example.com           0.00%     15.48MiB / 3.827GiB\nca.party.voting.example.com           0.00%     10.93MiB / 3.827GiB\n"
+        },
+        "after": {
+          "top": "Processes: 497 total, 3 running, 494 sleeping, 3989 threads \n2026/05/13 20:56:34\nLoad Avg: 7.38, 5.42, 4.10 \nCPU usage: 19.52% user, 26.23% sys, 54.24% idle \nSharedLibs: 191M resident, 37M data, 23M linkedit.\nMemRegions: 746001 total, 609M resident, 23M private, 1789M shared.\nPhysMem: 7516M used (1835M wired, 3259M compressor), 106M unused.\nVM: 254T vsize, 5702M framework vsize, 67778354(0) swapins, 70029905(0) swapouts.\nNetworks: packets: 46467938/20G in, 28955173/7692M out.\nDisks: 126201804/3296G read, 36281929/1443G written.\n",
+          "dockerStats": "NAME                                  CPU %     MEM USAGE / LIMIT\nvoting-chaincode                      0.00%     32.87MiB / 3.827GiB\ncli                                   0.00%     976KiB / 3.827GiB\npeer0.civil.voting.example.com        3.91%     203.7MiB / 3.827GiB\npeer0.ec.voting.example.com           3.30%     612MiB / 3.827GiB\npeer0.party.voting.example.com        2.92%     197.8MiB / 3.827GiB\npeer1.ec.voting.example.com           2.84%     179.5MiB / 3.827GiB\ncouchdb-ec0                           0.65%     117MiB / 3.827GiB\ncouchdb-civil                         1.13%     108.3MiB / 3.827GiB\ncouchdb-party                         0.69%     108.9MiB / 3.827GiB\ncouchdb-ec1                           0.71%     104.5MiB / 3.827GiB\norderer1.orderer.voting.example.com   0.45%     64.83MiB / 3.827GiB\norderer2.orderer.voting.example.com   0.75%     59.02MiB / 3.827GiB\norderer3.orderer.voting.example.com   0.43%     62.28MiB / 3.827GiB\norderer4.orderer.voting.example.com   0.40%     65.79MiB / 3.827GiB\nca.ec.voting.example.com              0.00%     13.28MiB / 3.827GiB\nca.civil.voting.example.com           0.00%     15.48MiB / 3.827GiB\nca.party.voting.example.com           0.00%     10.93MiB / 3.827GiB\n"
+        }
+      }
+    },
+    {
+      "concurrency": 100,
+      "success": 100,
+      "fail": 0,
+      "failRate": 0,
+      "throughput": 35.92,
+      "elapsedSec": 2.78,
+      "latency": {
+        "n": 100,
+        "avg": 2766,
+        "min": 2746.1,
+        "p50": 2767.3,
+        "p95": 2773.1,
+        "p99": 2775.2,
+        "max": 2775.2
+      },
+      "credential": {
+        "credType": "Ed25519-asym",
+        "sizeBytes": 260,
+        "latencyMs": 1.41
+      },
+      "errors": {},
+      "resource": {
+        "before": {
+          "top": "Processes: 500 total, 5 running, 495 sleeping, 4012 threads \n2026/05/13 20:56:39\nLoad Avg: 7.03, 5.38, 4.09 \nCPU usage: 19.92% user, 25.33% sys, 54.73% idle \nSharedLibs: 196M resident, 44M data, 31M linkedit.\nMemRegions: 759670 total, 855M resident, 36M private, 1330M shared.\nPhysMem: 7473M used (1805M wired, 3424M compressor), 146M unused.\nVM: 257T vsize, 5702M framework vsize, 67790079(0) swapins, 70053217(0) swapouts.\nNetworks: packets: 46469561/20G in, 28956797/7692M out.\nDisks: 126210010/3296G read, 36289179/1443G written.\n",
+          "dockerStats": "NAME                                  CPU %     MEM USAGE / LIMIT\nvoting-chaincode                      0.00%     32.88MiB / 3.827GiB\ncli                                   0.00%     976KiB / 3.827GiB\npeer0.civil.voting.example.com        7.56%     203.7MiB / 3.827GiB\npeer0.ec.voting.example.com           7.29%     612MiB / 3.827GiB\npeer0.party.voting.example.com        5.15%     197.8MiB / 3.827GiB\npeer1.ec.voting.example.com           7.68%     174.1MiB / 3.827GiB\ncouchdb-ec0                           1.50%     117.6MiB / 3.827GiB\ncouchdb-civil                         0.73%     108.8MiB / 3.827GiB\ncouchdb-party                         1.73%     111.5MiB / 3.827GiB\ncouchdb-ec1                           2.88%     105MiB / 3.827GiB\norderer1.orderer.voting.example.com   1.66%     64.83MiB / 3.827GiB\norderer2.orderer.voting.example.com   8.22%     59.02MiB / 3.827GiB\norderer3.orderer.voting.example.com   0.65%     62.28MiB / 3.827GiB\norderer4.orderer.voting.example.com   3.24%     65.84MiB / 3.827GiB\nca.ec.voting.example.com              0.00%     13.28MiB / 3.827GiB\nca.civil.voting.example.com           0.00%     15.48MiB / 3.827GiB\nca.party.voting.example.com           0.00%     10.93MiB / 3.827GiB\n"
+        },
+        "after": {
+          "top": "Processes: 496 total, 5 running, 1 stuck, 490 sleeping, 4054 threads \n2026/05/13 20:56:45\nLoad Avg: 6.79, 5.35, 4.09 \nCPU usage: 20.75% user, 33.93% sys, 45.30% idle \nSharedLibs: 194M resident, 45M data, 31M linkedit.\nMemRegions: 759744 total, 663M resident, 25M private, 1518M shared.\nPhysMem: 7504M used (1812M wired, 3462M compressor), 115M unused.\nVM: 255T vsize, 5702M framework vsize, 67833537(0) swapins, 70095065(0) swapouts.\nNetworks: packets: 46475297/20G in, 28962532/7694M out.\nDisks: 126223754/3297G read, 36302012/1444G written.\n",
+          "dockerStats": "NAME                                  CPU %     MEM USAGE / LIMIT\nvoting-chaincode                      0.00%     34.08MiB / 3.827GiB\ncli                                   0.00%     976KiB / 3.827GiB\npeer0.civil.voting.example.com        2.86%     204.1MiB / 3.827GiB\npeer0.ec.voting.example.com           2.60%     612.8MiB / 3.827GiB\npeer0.party.voting.example.com        2.93%     199.8MiB / 3.827GiB\npeer1.ec.voting.example.com           3.44%     175.8MiB / 3.827GiB\ncouchdb-ec0                           2.40%     116.8MiB / 3.827GiB\ncouchdb-civil                         1.70%     110.2MiB / 3.827GiB\ncouchdb-party                         0.72%     110.7MiB / 3.827GiB\ncouchdb-ec1                           0.73%     104.2MiB / 3.827GiB\norderer1.orderer.voting.example.com   1.09%     68.24MiB / 3.827GiB\norderer2.orderer.voting.example.com   1.20%     64.36MiB / 3.827GiB\norderer3.orderer.voting.example.com   0.25%     65.37MiB / 3.827GiB\norderer4.orderer.voting.example.com   1.13%     69.04MiB / 3.827GiB\nca.ec.voting.example.com              0.00%     13.28MiB / 3.827GiB\nca.civil.voting.example.com           0.00%     15.48MiB / 3.827GiB\nca.party.voting.example.com           0.00%     10.93MiB / 3.827GiB\n"
+        }
+      }
+    },
+    {
+      "concurrency": 200,
+      "success": 200,
+      "fail": 0,
+      "failRate": 0,
+      "throughput": 49.29,
+      "elapsedSec": 4.06,
+      "latency": {
+        "n": 200,
+        "avg": 3593.5,
+        "min": 3258.2,
+        "p50": 3320.8,
+        "p95": 4048.2,
+        "p99": 4049.4,
+        "max": 4049.9
+      },
+      "credential": {
+        "credType": "Ed25519-asym",
+        "sizeBytes": 260,
+        "latencyMs": 2.59
+      },
+      "errors": {},
+      "resource": {
+        "before": {
+          "top": "Processes: 494 total, 4 running, 490 sleeping, 3991 threads \n2026/05/13 20:56:51\nLoad Avg: 6.28, 5.29, 4.09 \nCPU usage: 19.96% user, 21.34% sys, 58.69% idle \nSharedLibs: 189M resident, 45M data, 31M linkedit.\nMemRegions: 759556 total, 786M resident, 31M private, 1429M shared.\nPhysMem: 7542M used (1939M wired, 3360M compressor), 79M unused.\nVM: 254T vsize, 5702M framework vsize, 67842011(0) swapins, 70111505(0) swapouts.\nNetworks: packets: 46477301/20G in, 28964500/7694M out.\nDisks: 126227288/3297G read, 36307158/1444G written.\n",
+          "dockerStats": "NAME                                  CPU %     MEM USAGE / LIMIT\nvoting-chaincode                      0.00%     34.08MiB / 3.827GiB\ncli                                   0.00%     976KiB / 3.827GiB\npeer0.civil.voting.example.com        3.41%     204.1MiB / 3.827GiB\npeer0.ec.voting.example.com           5.59%     612.8MiB / 3.827GiB\npeer0.party.voting.example.com        5.00%     187.1MiB / 3.827GiB\npeer1.ec.voting.example.com           3.16%     175.7MiB / 3.827GiB\ncouchdb-ec0                           3.90%     116.9MiB / 3.827GiB\ncouchdb-civil                         4.07%     110.2MiB / 3.827GiB\ncouchdb-party                         3.30%     110.8MiB / 3.827GiB\ncouchdb-ec1                           4.04%     104.3MiB / 3.827GiB\norderer1.orderer.voting.example.com   0.13%     68.25MiB / 3.827GiB\norderer2.orderer.voting.example.com   0.27%     64.36MiB / 3.827GiB\norderer3.orderer.voting.example.com   0.23%     65.4MiB / 3.827GiB\norderer4.orderer.voting.example.com   0.22%     69.05MiB / 3.827GiB\nca.ec.voting.example.com              0.00%     13.28MiB / 3.827GiB\nca.civil.voting.example.com           0.00%     15.48MiB / 3.827GiB\nca.party.voting.example.com           0.00%     10.93MiB / 3.827GiB\n"
+        },
+        "after": {
+          "top": "Processes: 494 total, 4 running, 490 sleeping, 3975 threads \n2026/05/13 20:56:58\nLoad Avg: 6.90, 5.44, 4.14 \nCPU usage: 22.71% user, 32.66% sys, 44.61% idle \nSharedLibs: 187M resident, 44M data, 31M linkedit.\nMemRegions: 759552 total, 511M resident, 21M private, 1580M shared.\nPhysMem: 7494M used (1808M wired, 3480M compressor), 127M unused.\nVM: 254T vsize, 5702M framework vsize, 67870471(0) swapins, 70135945(0) swapouts.\nNetworks: packets: 46489960/20G in, 28977150/7699M out.\nDisks: 126236387/3298G read, 36316911/1445G written.\n",
+          "dockerStats": "NAME                                  CPU %     MEM USAGE / LIMIT\nvoting-chaincode                      0.00%     34.27MiB / 3.827GiB\ncli                                   0.00%     976KiB / 3.827GiB\npeer0.civil.voting.example.com        3.47%     203.5MiB / 3.827GiB\npeer0.ec.voting.example.com           2.99%     659.8MiB / 3.827GiB\npeer0.party.voting.example.com        3.12%     193.6MiB / 3.827GiB\npeer1.ec.voting.example.com           3.44%     176MiB / 3.827GiB\ncouchdb-ec0                           0.44%     117MiB / 3.827GiB\ncouchdb-civil                         0.30%     110.3MiB / 3.827GiB\ncouchdb-party                         0.44%     113.1MiB / 3.827GiB\ncouchdb-ec1                           0.52%     104.4MiB / 3.827GiB\norderer1.orderer.voting.example.com   0.44%     70.97MiB / 3.827GiB\norderer2.orderer.voting.example.com   1.11%     63.71MiB / 3.827GiB\norderer3.orderer.voting.example.com   0.55%     68.71MiB / 3.827GiB\norderer4.orderer.voting.example.com   0.51%     72.21MiB / 3.827GiB\nca.ec.voting.example.com              0.00%     13.28MiB / 3.827GiB\nca.civil.voting.example.com           0.00%     15.85MiB / 3.827GiB\nca.party.voting.example.com           0.00%     10.93MiB / 3.827GiB\n"
+        }
+      }
+    },
+    {
+      "concurrency": 500,
+      "success": 467,
+      "fail": 33,
+      "failRate": 6.6,
+      "throughput": 21.07,
+      "elapsedSec": 22.16,
+      "latency": {
+        "n": 467,
+        "avg": 17828.5,
+        "min": 8918.7,
+        "p50": 17422.5,
+        "p95": 21981.4,
+        "p99": 22145.6,
+        "max": 22151.1
+      },
+      "credential": {
+        "credType": "Ed25519-asym",
+        "sizeBytes": 260,
+        "latencyMs": 1.8
+      },
+      "errors": {
+        "0:timeout": 33
+      },
+      "resource": {
+        "before": {
+          "top": "Processes: 494 total, 5 running, 489 sleeping, 3969 threads \n2026/05/13 20:57:03\nLoad Avg: 6.50, 5.38, 4.13 \nCPU usage: 21.34% user, 22.13% sys, 56.52% idle \nSharedLibs: 188M resident, 43M data, 30M linkedit.\nMemRegions: 759634 total, 636M resident, 29M private, 1614M shared.\nPhysMem: 7527M used (1850M wired, 3369M compressor), 93M unused.\nVM: 254T vsize, 5702M framework vsize, 67883061(0) swapins, 70156369(0) swapouts.\nNetworks: packets: 46492664/20G in, 28979848/7699M out.\nDisks: 126240797/3298G read, 36322974/1445G written.\n",
+          "dockerStats": "NAME                                  CPU %     MEM USAGE / LIMIT\nvoting-chaincode                      0.00%     34.27MiB / 3.827GiB\ncli                                   0.00%     976KiB / 3.827GiB\npeer0.civil.voting.example.com        2.04%     203.5MiB / 3.827GiB\npeer0.ec.voting.example.com           5.59%     659.9MiB / 3.827GiB\npeer0.party.voting.example.com        4.11%     193.7MiB / 3.827GiB\npeer1.ec.voting.example.com           5.66%     176MiB / 3.827GiB\ncouchdb-ec0                           1.38%     117.7MiB / 3.827GiB\ncouchdb-civil                         2.01%     112.8MiB / 3.827GiB\ncouchdb-party                         2.07%     113.8MiB / 3.827GiB\ncouchdb-ec1                           2.31%     105.2MiB / 3.827GiB\norderer1.orderer.voting.example.com   0.78%     71.01MiB / 3.827GiB\norderer2.orderer.voting.example.com   1.26%     63.34MiB / 3.827GiB\norderer3.orderer.voting.example.com   0.80%     68.72MiB / 3.827GiB\norderer4.orderer.voting.example.com   0.47%     72.22MiB / 3.827GiB\nca.ec.voting.example.com              0.00%     13.28MiB / 3.827GiB\nca.civil.voting.example.com           0.00%     15.85MiB / 3.827GiB\nca.party.voting.example.com           0.00%     10.93MiB / 3.827GiB\n"
+        },
+        "after": {
+          "top": "Processes: 492 total, 6 running, 3 stuck, 483 sleeping, 3977 threads \n2026/05/13 20:57:29\nLoad Avg: 7.89, 5.82, 4.33 \nCPU usage: 42.62% user, 51.39% sys, 5.97% idle \nSharedLibs: 167M resident, 34M data, 20M linkedit.\nMemRegions: 746357 total, 746M resident, 29M private, 1567M shared.\nPhysMem: 7460M used (2071M wired, 3319M compressor), 160M unused.\nVM: 252T vsize, 5702M framework vsize, 68322094(0) swapins, 70611501(0) swapouts.\nNetworks: packets: 46549867/20G in, 29037063/7712M out.\nDisks: 126362293/3305G read, 36449172/1452G written.\n",
+          "dockerStats": "NAME                                  CPU %     MEM USAGE / LIMIT\nvoting-chaincode                      0.00%     37.41MiB / 3.827GiB\ncli                                   0.00%     976KiB / 3.827GiB\npeer0.civil.voting.example.com        32.85%    216.3MiB / 3.827GiB\npeer0.ec.voting.example.com           13.23%    803MiB / 3.827GiB\npeer0.party.voting.example.com        4.71%     204.4MiB / 3.827GiB\npeer1.ec.voting.example.com           5.58%     178MiB / 3.827GiB\ncouchdb-ec0                           59.93%    142.1MiB / 3.827GiB\ncouchdb-civil                         62.05%    121.8MiB / 3.827GiB\ncouchdb-party                         63.35%    129.8MiB / 3.827GiB\ncouchdb-ec1                           64.09%    119.8MiB / 3.827GiB\norderer1.orderer.voting.example.com   0.72%     75.4MiB / 3.827GiB\norderer2.orderer.voting.example.com   1.66%     69.59MiB / 3.827GiB\norderer3.orderer.voting.example.com   0.63%     69.98MiB / 3.827GiB\norderer4.orderer.voting.example.com   0.83%     74.45MiB / 3.827GiB\nca.ec.voting.example.com              0.00%     13.82MiB / 3.827GiB\nca.civil.voting.example.com           0.00%     15.96MiB / 3.827GiB\nca.party.voting.example.com           0.00%     11.73MiB / 3.827GiB\n"
+        }
+      }
+    }
+  ]
+}

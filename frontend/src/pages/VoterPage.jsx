@@ -67,6 +67,7 @@ export default function VoterPage() {
 
   // ── 암호화 진행 상태 ─────────────────────────────
   const [encProgress, setEncProgress] = useState([]);
+  const [showEncComplete, setShowEncComplete] = useState(false);
 
   // ── ElGamal ────────────────────────────────────────
   const [elgamalPubKey, setElgamalPubKey] = useState(null);
@@ -86,12 +87,12 @@ export default function VoterPage() {
       fetch(`${API}/elections/${electionID}/elgamal-pubkey`)
         .then(r => r.json())
         .then(d => { setElgamalPubKey(d.pubKey || null); setEncryptionKey('elgamal'); })
-        .catch(() => { setElgamalPubKey(null); setEncryptionKey(''); });
+        .catch(() => { setElgamalPubKey(null); setEncryptionKey(''); setError('ElGamal 공개키를 불러오지 못했습니다. 네트워크를 확인하세요.'); });
     } else {
       fetch(`${API}/elections/${electionID}/encryption-key`)
         .then(r => r.json())
         .then(d => setEncryptionKey(d.encryptionKeyHex || ''))
-        .catch(() => setEncryptionKey(''));
+        .catch(() => { setEncryptionKey(''); setError('암호화 키를 불러오지 못했습니다. 네트워크를 확인하세요.'); });
     }
   }, [blindMode, election, electionID, isElGamal]);
 
@@ -119,10 +120,9 @@ export default function VoterPage() {
       if (!res.ok) throw new Error((await res.json()).error);
       const data = await res.json();
       setElection(data);
-      // 선거가 ACTIVE면 자동으로 다음 스텝으로 (voterSecret도 자동 생성)
+      // 선거가 ACTIVE면 voterSecret 자동 생성 (자동 step 이동은 하지 않음 — 사용자가 확인 후 직접 이동)
       if (data.status === 'ACTIVE') {
         if (!voterSecret) setVoterSecret(generateVoterSecret());
-        setTimeout(() => setStep(2), 600);
       }
     } catch (e) { setError(e.message); }
   }
@@ -189,11 +189,14 @@ export default function VoterPage() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || data.reason);
       setEncProgress(p => [...p, 'blockchain_done', 'receipt', 'receipt_done']);
+      setShowEncComplete(true);
 
+      // 완료 시각화를 2초간 보여준 후 결과 화면으로 전환
+      await new Promise(resolve => setTimeout(resolve, 2000));
       setResult({ nullifierHash, blindMode, ...data });
       setStep(5); // 완료 단계로
     } catch (e) { setError(e.message); }
-    finally { setLoading(false); }
+    finally { setLoading(false); setShowEncComplete(false); }
   }
 
   // ── Benaloh Challenge ─────────────────────────────
@@ -251,7 +254,14 @@ export default function VoterPage() {
   };
 
   const next = () => { if (canNext()) { setError(''); setStep(s => Math.min(s + 1, 5)); } };
-  const prev = () => { setError(''); setStep(s => Math.max(s - 1, 0)); };
+  const prev = () => {
+    setError('');
+    benalohReset();
+    // Panic 모드 초기화 (뒤로 갈 때 위협 상태 해제)
+    setPanicMode(false);
+    setPanicCredential(false);
+    setStep(s => Math.max(s - 1, 0));
+  };
 
   // ── Encryption Progress Steps ─────────────────────
   const ENC_STEPS = [
@@ -322,6 +332,7 @@ export default function VoterPage() {
               disabled={!canNext()}
               className="h-11 px-8 bg-blue-600 text-white rounded-lg text-sm font-semibold
                 hover:bg-blue-700 active:scale-[0.98] disabled:opacity-40 disabled:cursor-not-allowed
+                focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:ring-offset-1
                 transition-all duration-200"
             >
               다음 단계
@@ -395,6 +406,7 @@ export default function VoterPage() {
               disabled={!canNext()}
               className="h-11 px-8 bg-blue-600 text-white rounded-lg text-sm font-semibold
                 hover:bg-blue-700 active:scale-[0.98] disabled:opacity-40 disabled:cursor-not-allowed
+                focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:ring-offset-1
                 transition-all duration-200"
             >
               다음 단계
@@ -413,43 +425,39 @@ export default function VoterPage() {
           </div>
 
           {/* Blind Mode */}
-          <div className={`rounded-xl border p-4 transition-colors duration-200 ${blindMode ? 'border-blue-300 bg-blue-50/50' : 'border-slate-200 bg-slate-50'}`}>
-            <label className="flex items-center gap-3 cursor-pointer">
-              <div className={`w-10 h-6 rounded-full transition-colors duration-200 flex items-center ${blindMode ? 'bg-blue-600 justify-end' : 'bg-slate-300 justify-start'}`}>
-                <div className="w-5 h-5 bg-white rounded-full shadow-sm mx-0.5" />
-              </div>
-              <div className="flex-1">
-                <span className="text-sm font-semibold text-slate-800">Blind Mode</span>
-                <span className="text-xs text-slate-500 block mt-0.5">
-                  {blindMode
-                    ? encryptionKey
-                      ? isElGamal ? 'ElGamal 공개키 암호화 활성 — ZKP 검증 가능' : 'AES-256-GCM 암호화 활성 — 서버가 평문을 볼 수 없음'
-                      : '암호화 키 로딩 중...'
-                    : '서버에 평문 후보 전달 (기본 모드)'}
-                </span>
-              </div>
-              {isElGamal && blindMode && (
-                <span className="px-2 py-0.5 bg-purple-100 text-purple-700 rounded text-[11px] font-bold">ElGamal</span>
-              )}
-            </label>
+          <label className={`rounded-xl border p-4 transition-colors duration-200 flex items-center gap-3 cursor-pointer ${blindMode ? 'border-blue-300 bg-blue-50/50' : 'border-slate-200 bg-slate-50'}`}>
             <input type="checkbox" className="sr-only" checked={blindMode} onChange={e => setBlindMode(e.target.checked)} />
-          </div>
+            <div className={`w-10 h-6 rounded-full transition-colors duration-200 flex items-center shrink-0 ${blindMode ? 'bg-blue-600 justify-end' : 'bg-slate-300 justify-start'}`}>
+              <div className="w-5 h-5 bg-white rounded-full shadow-sm mx-0.5" />
+            </div>
+            <div className="flex-1">
+              <span className="text-sm font-semibold text-slate-800">Blind Mode</span>
+              <span className={`text-xs block mt-0.5 ${blindMode && !encryptionKey && error ? 'text-red-500' : 'text-slate-500'}`}>
+                {blindMode
+                  ? encryptionKey
+                    ? isElGamal ? 'ElGamal 공개키 암호화 활성 — ZKP 검증 가능' : 'AES-256-GCM 암호화 활성 — 서버가 평문을 볼 수 없음'
+                    : error ? '암호화 키 로딩 실패 — 네트워크 확인 후 재시도' : '암호화 키 로딩 중...'
+                  : '서버에 평문 후보 전달 (기본 모드)'}
+              </span>
+            </div>
+            {isElGamal && blindMode && (
+              <span className="px-2 py-0.5 bg-purple-100 text-purple-700 rounded text-[11px] font-bold">ElGamal</span>
+            )}
+          </label>
 
           {/* Panic Credential */}
-          <div className={`rounded-xl border p-4 transition-colors duration-200 ${panicCredential ? 'border-red-300 bg-red-50/50' : 'border-slate-200 bg-slate-50'}`}>
-            <label className="flex items-center gap-3 cursor-pointer">
-              <div className={`w-10 h-6 rounded-full transition-colors duration-200 flex items-center ${panicCredential ? 'bg-red-500 justify-end' : 'bg-slate-300 justify-start'}`}>
-                <div className="w-5 h-5 bg-white rounded-full shadow-sm mx-0.5" />
-              </div>
-              <div className="flex-1">
-                <span className="text-sm font-semibold text-slate-800">Panic Credential</span>
-                <span className="text-xs text-slate-500 block mt-0.5">
-                  {panicCredential ? '강압 투표 모드 — 이 투표는 집계에서 제외됩니다' : '정상 투표 모드 — 유효한 투표로 집계됩니다'}
-                </span>
-              </div>
-            </label>
+          <label className={`rounded-xl border p-4 transition-colors duration-200 flex items-center gap-3 cursor-pointer ${panicCredential ? 'border-red-300 bg-red-50/50' : 'border-slate-200 bg-slate-50'}`}>
             <input type="checkbox" className="sr-only" checked={panicCredential} onChange={e => setPanicCredential(e.target.checked)} />
-          </div>
+            <div className={`w-10 h-6 rounded-full transition-colors duration-200 flex items-center shrink-0 ${panicCredential ? 'bg-red-500 justify-end' : 'bg-slate-300 justify-start'}`}>
+              <div className="w-5 h-5 bg-white rounded-full shadow-sm mx-0.5" />
+            </div>
+            <div className="flex-1">
+              <span className="text-sm font-semibold text-slate-800">Panic Credential</span>
+              <span className="text-xs text-slate-500 block mt-0.5">
+                {panicCredential ? '강압 투표 모드 — 이 투표는 집계에서 제외됩니다' : '정상 투표 모드 — 유효한 투표로 집계됩니다'}
+              </span>
+            </div>
+          </label>
 
           {/* voterSecret */}
           <div>
@@ -475,7 +483,7 @@ export default function VoterPage() {
 
           {/* Deniable Passwords */}
           <details className="rounded-xl border border-slate-200 overflow-hidden">
-            <summary className="px-4 py-3 cursor-pointer text-sm font-medium text-slate-600 hover:bg-slate-50 transition-colors duration-200">
+            <summary className="px-4 py-3 cursor-pointer text-sm font-medium text-slate-600 hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-inset transition-colors duration-200">
               Deniable Verification 비밀번호 설정 (선택)
             </summary>
             <div className="px-4 pb-4 space-y-3 border-t border-slate-100 pt-3">
@@ -523,6 +531,7 @@ export default function VoterPage() {
               disabled={!canNext()}
               className="h-11 px-8 bg-blue-600 text-white rounded-lg text-sm font-semibold
                 hover:bg-blue-700 active:scale-[0.98] disabled:opacity-40 disabled:cursor-not-allowed
+                focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:ring-offset-1
                 transition-all duration-200"
             >
               다음 단계
@@ -583,6 +592,7 @@ export default function VoterPage() {
               disabled={!canNext()}
               className="h-11 px-8 bg-blue-600 text-white rounded-lg text-sm font-semibold
                 hover:bg-blue-700 active:scale-[0.98] disabled:opacity-40 disabled:cursor-not-allowed
+                focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:ring-offset-1
                 transition-all duration-200"
             >
               다음 단계
@@ -604,7 +614,7 @@ export default function VoterPage() {
 
             <div className="bg-slate-50 rounded-xl p-5 space-y-3">
               <h3 className="text-sm font-semibold text-slate-700">투표 요약</h3>
-              <div className="grid grid-cols-2 gap-4 text-sm">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-sm">
                 <div>
                   <span className="text-slate-500">선거</span>
                   <p className="font-medium text-slate-800 mt-0.5">{election?.title}</p>
@@ -628,21 +638,23 @@ export default function VoterPage() {
               </div>
             </div>
 
-            {/* Benaloh Challenge */}
-            <details className="rounded-xl border border-slate-200 overflow-hidden">
-              <summary className="px-4 py-3 cursor-pointer text-sm font-medium text-slate-600 hover:bg-slate-50 transition-colors duration-200">
-                Benaloh Challenge — 암호화 검증 (선택)
-              </summary>
-              <div className="px-4 pb-4 space-y-3 border-t border-slate-100 pt-3">
-                <p className="text-xs text-slate-500">
-                  투표 제출 전 암호화 정확성을 검증합니다. Audit된 투표는 폐기됩니다.
+            {/* Benaloh Challenge — Cast-as-Intended 검증 */}
+            <div className="rounded-xl border-2 border-purple-200 bg-purple-50/30 overflow-hidden">
+              <div className="px-4 py-3 flex items-center gap-2">
+                <span className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-purple-100 text-purple-600 text-xs font-bold">B</span>
+                <span className="text-sm font-semibold text-purple-800">Benaloh Challenge — 암호화 정확성 검증</span>
+                <span className="ml-auto text-[10px] text-purple-500 bg-purple-100 px-2 py-0.5 rounded-full font-medium">Cast-as-Intended</span>
+              </div>
+              <div className="px-4 pb-4 space-y-3 border-t border-purple-100 pt-3">
+                <p className="text-xs text-slate-600">
+                  투표 제출 전 암호화가 올바르게 수행되었는지 독립 검증합니다. Audit된 투표는 폐기되므로 안전합니다.
                 </p>
 
                 {benalohStep === 'idle' && (
                   <button
                     className="h-10 px-4 rounded-lg border border-purple-300 text-purple-600 text-sm font-medium
                       hover:bg-purple-50 transition-all duration-200"
-                    onClick={benalohPrepare} disabled={loading}
+                    onClick={benalohPrepare} disabled={loading || benalohStep !== 'idle'}
                   >1. Prepare (암호화 사전 검증)</button>
                 )}
 
@@ -683,17 +695,25 @@ export default function VoterPage() {
                   </div>
                 )}
               </div>
-            </details>
+            </div>
 
             {/* 암호화 진행 시각화 */}
-            {loading && encProgress.length > 0 && (
-              <div className="bg-slate-900 rounded-xl p-5 space-y-3">
+            {(loading || showEncComplete) && encProgress.length > 0 && (
+              <div className={`rounded-xl p-5 space-y-3 transition-colors duration-500 ${showEncComplete && !loading ? 'bg-emerald-900' : 'bg-slate-900'}`}>
                 <div className="flex items-center gap-2">
-                  <svg className="w-4 h-4 text-blue-400 animate-spin" fill="none" viewBox="0 0 24 24">
-                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-                  </svg>
-                  <span className="text-sm font-semibold text-white">투표 암호화 중...</span>
+                  {showEncComplete && !loading ? (
+                    <svg className="w-4 h-4 text-emerald-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                    </svg>
+                  ) : (
+                    <svg className="w-4 h-4 text-blue-400 animate-spin" fill="none" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                    </svg>
+                  )}
+                  <span className="text-sm font-semibold text-white">
+                    {showEncComplete && !loading ? '투표 암호화 완료!' : '투표 암호화 중...'}
+                  </span>
                 </div>
                 {ENC_STEPS.map(({ key, label, doneKey }) => {
                   const started = encProgress.includes(key);
@@ -722,28 +742,36 @@ export default function VoterPage() {
             )}
 
             {/* 제출 버튼 */}
-            {!panicMode && !loading && (
-              <div className="flex gap-3">
-                <button
-                  onClick={submitVote}
-                  disabled={loading}
-                  className="flex-1 h-12 bg-blue-600 text-white rounded-xl font-bold text-sm
-                    hover:bg-blue-700 active:scale-[0.99] disabled:opacity-40
-                    transition-all duration-200 shadow-sm shadow-blue-600/20"
-                >
-                  {blindMode ? '투표 제출 (Blind Mode)' : '투표 제출'}
-                </button>
-                <button
-                  onClick={() => { setPanicMode(true); setResult({ message: '(Panic Mode 활성화됨)' }); }}
-                  className="h-12 px-5 rounded-xl border-2 border-red-200 text-red-500 text-xs font-medium
-                    hover:bg-red-50 transition-all duration-200"
-                  title="강압 상황에서 누르세요"
-                >Panic</button>
+            {!loading && (
+              <div className="space-y-3">
+                {panicMode && (
+                  <Alert variant="error">
+                    Panic Mode 활성 — 이 투표는 집계에서 제외되며, 강압자에게는 정상 화면처럼 표시됩니다.
+                  </Alert>
+                )}
+                <div className="flex gap-3">
+                  <button
+                    onClick={submitVote}
+                    disabled={loading || !voterSecret || !candidateID}
+                    className={`flex-1 h-12 text-white rounded-xl font-bold text-sm
+                      active:scale-[0.99] disabled:opacity-40 transition-all duration-200 shadow-sm ${
+                      panicMode
+                        ? 'bg-red-600 hover:bg-red-700 shadow-red-600/20'
+                        : 'bg-blue-600 hover:bg-blue-700 shadow-blue-600/20'
+                    }`}
+                  >
+                    {panicMode ? '투표 제출 (Panic Mode)' : blindMode ? '투표 제출 (Blind Mode)' : '투표 제출'}
+                  </button>
+                  {!panicMode && (
+                    <button
+                      onClick={() => { setPanicMode(true); setPanicCredential(true); }}
+                      className="h-12 px-5 rounded-xl border-2 border-red-200 text-red-500 text-xs font-medium
+                        hover:bg-red-50 transition-all duration-200"
+                      title="강압 상황에서 누르세요"
+                    >Panic</button>
+                  )}
+                </div>
               </div>
-            )}
-
-            {panicMode && (
-              <Alert variant="error">Panic Mode 활성 — 강압자에게는 정상 화면처럼 표시됩니다.</Alert>
             )}
 
             <div className="flex justify-start">
@@ -799,7 +827,7 @@ export default function VoterPage() {
           )}
 
           {/* 보안 속성 */}
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
             {[
               { icon: 'M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z', label: 'E2E 암호화' },
               { icon: 'M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z', label: '영지식 증명' },
@@ -818,7 +846,7 @@ export default function VoterPage() {
           {/* 새 투표 */}
           <div className="text-center">
             <button
-              onClick={() => { setStep(0); setResult(null); setCandidateID(''); setEncProgress([]); }}
+              onClick={() => { setStep(0); setResult(null); setCandidateID(''); setEncProgress([]); setPanicMode(false); setPanicCredential(false); benalohReset(); setBlindMode(false); }}
               className="h-11 px-6 border border-slate-200 rounded-lg text-sm font-medium text-slate-600
                 hover:bg-slate-50 transition-all duration-200"
             >처음으로 돌아가기</button>

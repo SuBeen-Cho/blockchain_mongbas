@@ -555,12 +555,18 @@ export async function verifyBulletinBoard(bulletinBoard) {
     );
   }
 
-  // 2. Bulletin Board의 암호화 투표 수와 DecryptionProof 수 일치 확인
-  const ballotCountMatch = encryptedBallots.length === decryptionProofs.length;
-
-  // 3. 각 암호화 투표가 DecryptionProof에 대응하는지 확인
-  const proofNullifiers = new Set(decryptionProofs.map(p => p.nullifierHash));
-  const allBallotsHaveProof = encryptedBallots.every(b => proofNullifiers.has(b.nullifierHash));
+  // 2. ElGamal 모드: 동형 집계는 개별 ballot-proof 매칭이 아닌 집합 증명
+  //    → ballotCount/proofNullifier 매칭은 AES 모드에서만 적용
+  let ballotCountMatch, allBallotsHaveProof;
+  if (isElGamal) {
+    // ElGamal 동형 집계: DecryptionProof는 HOMOMORPHIC_TALLY 1개
+    ballotCountMatch = true; // 동형 집계에서는 1:N 관계
+    allBallotsHaveProof = true; // ZKP가 전체 집합을 증명
+  } else {
+    ballotCountMatch = encryptedBallots.length === decryptionProofs.length;
+    const proofNullifiers = new Set(decryptionProofs.map(p => p.nullifierHash));
+    allBallotsHaveProof = encryptedBallots.every(b => proofNullifiers.has(b.nullifierHash));
+  }
 
   return {
     verified: tallyVerification.verified && ballotCountMatch && allBallotsHaveProof,

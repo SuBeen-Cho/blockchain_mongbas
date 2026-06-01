@@ -1687,9 +1687,10 @@ func (c *VotingContract) TallyVotes(
 					accC2.Mul(accC2, c2i)
 					accC2.Mod(accC2, elgamalP)
 					homomorphicCount++
+					totalVotes++
 				}
 			}
-			totalVotes++
+			// ElGamal 모드에서 colon 없는 암호문(더미/레거시)은 동형 집계 대상 아님 → 무시
 		} else if useAES {
 			// AES 복호화 (기존 — 개별 복호화)
 			decrypted, decErr := decryptAESGCM(encKey, nullifier.EncryptedCandidateID)
@@ -3138,13 +3139,43 @@ func (c *VotingContract) VerifyTallyPublic(
 	isElGamal := bb.EncryptionMode == "elgamal"
 
 	if isElGamal && bb.ElGamalPubKey != nil {
-		// [PAPER-11] ElGamal 모드: ZKP로 검증 (비밀키 불필요)
+		// [PAPER-11/13] ElGamal 모드: 동형 집계 ZKP 검증 (비밀키 불필요)
 		for _, proof := range bb.DecryptionProofs {
 			if proof.ZKProof == nil {
 				failed++
 				continue
 			}
-			// decryptedHash에서 후보자 역추적 (후보 목록 대조)
+
+			if proof.NullifierHash == "HOMOMORPHIC_TALLY" {
+				// 동형 집계 증명: g^sum 직접 검증
+				recomputedSum := int64(0)
+				for i, cand := range election.Candidates {
+					count := int64(bb.TallyResults[cand])
+					base := int64(1)
+					for j := 0; j < i; j++ {
+						base *= HomomorphicBase
+					}
+					recomputedSum += count * base
+				}
+				gSum := new(big.Int).Exp(elgamalG, big.NewInt(recomputedSum), elgamalP)
+				sumStr := fmt.Sprintf("homomorphic_sum:%d", recomputedSum)
+				dh := sha256.Sum256([]byte(sumStr))
+				if hex.EncodeToString(dh[:]) != proof.DecryptedHash {
+					failed++
+					continue
+				}
+				if chaumPedersenVerifyRaw(bb.ElGamalPubKey, proof.ZKProof, gSum) {
+					verified++
+					for _, cand := range election.Candidates {
+						recomputed[cand] = bb.TallyResults[cand]
+					}
+				} else {
+					failed++
+				}
+				continue
+			}
+
+			// 개별 투표 ZKP (AES 호환)
 			var matchedCandidate string
 			for _, cand := range election.Candidates {
 				dh := sha256.Sum256([]byte(cand))

@@ -1,0 +1,50 @@
+{
+  "label": "B-PS-BN254",
+  "timestamp": "2026-05-12T11:42:36.242Z",
+  "health": {
+    "idemix": {
+      "enabled": true,
+      "mode": "idemix-ps",
+      "impl": "PS-BN254 (B단계: 진짜 Idemix CL)",
+      "securityNote": "익명 credential (선택적 공개, 비연결성) — 체인코드 직접 검증 미완",
+      "idemixImpl": "ps",
+      "asymEnabled": false,
+      "cacheEnabled": false,
+      "cacheTtlSec": 5,
+      "cacheSize": 0
+    },
+    "memory": {
+      "heapUsed": 17483720,
+      "heapTotal": 31227904,
+      "rss": 52183040,
+      "external": 2710253
+    }
+  },
+  "txPerRound": 3,
+  "rounds": [
+    {
+      "targetTps": 1,
+      "txCount": 3,
+      "success": 3,
+      "fail": 0,
+      "failRate": 0,
+      "actualTps": 0.45,
+      "elapsedSec": 6.69,
+      "latency": {
+        "n": 3,
+        "avg": 2228.2,
+        "min": 2203.3,
+        "p50": 2229.2,
+        "p95": 2252.1,
+        "p99": 2252.1,
+        "max": 2252.1
+      },
+      "credential": {
+        "credType": "PS-BN254",
+        "sizeBytes": 393,
+        "latencyMs": 216.86
+      },
+      "errors": {}
+    }
+  ]
+}

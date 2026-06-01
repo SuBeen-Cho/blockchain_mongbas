@@ -1,0 +1,122 @@
+{
+  "label": "C-BBS",
+  "timestamp": "2026-05-12T10:41:41.385Z",
+  "health": {
+    "idemix": {
+      "enabled": true,
+      "mode": "idemix-bbs",
+      "impl": "BBS+-BLS12381 (C단계: 개선 Idemix)",
+      "securityNote": "익명 credential (ZKP 기반 선택적 공개) — 체인코드 직접 검증 미완",
+      "idemixImpl": "bbs",
+      "asymEnabled": false,
+      "cacheEnabled": false,
+      "cacheTtlSec": 5,
+      "cacheSize": 0
+    },
+    "memory": {
+      "heapUsed": 18152872,
+      "heapTotal": 32014336,
+      "rss": 84197376,
+      "external": 2711378
+    }
+  },
+  "txPerRound": 15,
+  "rounds": [
+    {
+      "targetTps": 1,
+      "txCount": 15,
+      "success": 15,
+      "fail": 0,
+      "failRate": 0,
+      "actualTps": 0.45,
+      "elapsedSec": 33.04,
+      "latency": {
+        "n": 15,
+        "avg": 2202.2,
+        "min": 2145.6,
+        "p50": 2189.3,
+        "p95": 2284.8,
+        "p99": 2284.8,
+        "max": 2284.8
+      },
+      "credential": {
+        "credType": "BBS+-BLS12381",
+        "sizeBytes": 352,
+        "latencyMs": 59.85
+      },
+      "errors": {}
+    },
+    {
+      "targetTps": 5,
+      "txCount": 15,
+      "success": 15,
+      "fail": 0,
+      "failRate": 0,
+      "actualTps": 0.46,
+      "elapsedSec": 32.75,
+      "latency": {
+        "n": 15,
+        "avg": 2183.1,
+        "min": 2149.1,
+        "p50": 2183.1,
+        "p95": 2224.4,
+        "p99": 2224.4,
+        "max": 2224.4
+      },
+      "credential": {
+        "credType": "BBS+-BLS12381",
+        "sizeBytes": 352,
+        "latencyMs": 8.56
+      },
+      "errors": {}
+    },
+    {
+      "targetTps": 10,
+      "txCount": 15,
+      "success": 15,
+      "fail": 0,
+      "failRate": 0,
+      "actualTps": 0.46,
+      "elapsedSec": 32.7,
+      "latency": {
+        "n": 15,
+        "avg": 2179.4,
+        "min": 2143.6,
+        "p50": 2181.1,
+        "p95": 2211.8,
+        "p99": 2211.8,
+        "max": 2211.8
+      },
+      "credential": {
+        "credType": "BBS+-BLS12381",
+        "sizeBytes": 354,
+        "latencyMs": 13.04
+      },
+      "errors": {}
+    },
+    {
+      "targetTps": 20,
+      "txCount": 15,
+      "success": 15,
+      "fail": 0,
+      "failRate": 0,
+      "actualTps": 0.46,
+      "elapsedSec": 32.83,
+      "latency": {
+        "n": 15,
+        "avg": 2187.6,
+        "min": 2155.7,
+        "p50": 2189.9,
+        "p95": 2233.7,
+        "p99": 2233.7,
+        "max": 2233.7
+      },
+      "credential": {
+        "credType": "BBS+-BLS12381",
+        "sizeBytes": 354,
+        "latencyMs": 16.83
+      },
+      "errors": {}
+    }
+  ]
+}

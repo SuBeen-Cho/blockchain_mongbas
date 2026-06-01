@@ -1,0 +1,137 @@
+{
+  "scenario": "elgamal-concurrency-PS-BN254",
+  "timestamp": "2026-05-29T08:44:03.614Z",
+  "config": {
+    "encryptionMode": "elgamal",
+    "candidates": 3,
+    "idemix": {
+      "enabled": true,
+      "mode": "idemix-ps",
+      "impl": "PS-BN254 (B단계: 진짜 Idemix CL)",
+      "securityNote": "익명 credential — PS_ISSUER_PUBLIC_KEY_B64를 체인코드에 주입하면 pairing 기반 체인코드 직접 검증",
+      "idemixImpl": "ps",
+      "asymEnabled": true,
+      "cacheEnabled": false,
+      "cacheTtlSec": 5,
+      "cacheSize": 0
+    },
+    "stopFailRate": 50
+  },
+  "rounds": [
+    {
+      "concurrency": 1,
+      "success": 1,
+      "fail": 0,
+      "failRate": 0,
+      "tps": 0.41,
+      "elapsedSec": 2.44,
+      "latency": {
+        "n": 1,
+        "avg": 2408.3,
+        "min": 2408.3,
+        "p50": 2408.3,
+        "p95": 2408.3,
+        "p99": 2408.3,
+        "max": 2408.3
+      },
+      "errors": {}
+    },
+    {
+      "concurrency": 10,
+      "success": 10,
+      "fail": 0,
+      "failRate": 0,
+      "tps": 3.24,
+      "elapsedSec": 3.09,
+      "latency": {
+        "n": 10,
+        "avg": 2967.5,
+        "min": 2877.2,
+        "p50": 2954.9,
+        "p95": 3064.1,
+        "p99": 3064.1,
+        "max": 3064.1
+      },
+      "errors": {}
+    },
+    {
+      "concurrency": 50,
+      "success": 50,
+      "fail": 0,
+      "failRate": 0,
+      "tps": 8.21,
+      "elapsedSec": 6.09,
+      "latency": {
+        "n": 50,
+        "avg": 4680.3,
+        "min": 3519,
+        "p50": 5099.3,
+        "p95": 5539.3,
+        "p99": 5587.3,
+        "max": 5587.3
+      },
+      "errors": {}
+    },
+    {
+      "concurrency": 100,
+      "success": 100,
+      "fail": 0,
+      "failRate": 0,
+      "tps": 7.43,
+      "elapsedSec": 13.46,
+      "latency": {
+        "n": 100,
+        "avg": 7986.8,
+        "min": 4799.2,
+        "p50": 8157.9,
+        "p95": 11368.7,
+        "p99": 11446.2,
+        "max": 11464.7
+      },
+      "errors": {}
+    },
+    {
+      "concurrency": 300,
+      "success": 198,
+      "fail": 102,
+      "failRate": 34,
+      "tps": 7.64,
+      "elapsedSec": 25.9,
+      "latency": {
+        "n": 198,
+        "avg": 14873.4,
+        "min": 11683.6,
+        "p50": 14615.4,
+        "p95": 19433.3,
+        "p99": 21523.4,
+        "max": 21541.4
+      },
+      "errors": {
+        "0:read ECONNRESET": 1,
+        "0:timeout": 101
+      }
+    },
+    {
+      "concurrency": 500,
+      "success": 192,
+      "fail": 308,
+      "failRate": 61.6,
+      "tps": 5.52,
+      "elapsedSec": 34.78,
+      "latency": {
+        "n": 192,
+        "avg": 24835,
+        "min": 22744.8,
+        "p50": 24875.4,
+        "p95": 26273.7,
+        "p99": 26447.5,
+        "max": 26448.4
+      },
+      "errors": {
+        "0:read ECONNRESET": 1,
+        "0:timeout": 241,
+        "500:투표 처리 중 오류가 발생했습니다.": 66
+      }
+    }
+  ]
+}

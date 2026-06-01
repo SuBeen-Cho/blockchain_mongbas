@@ -30,7 +30,18 @@ async function apiGet(url) {
 
 /* ── 토글 가능한 섹션 ────────────────────────────── */
 function Section({ title, number, open, done, onToggle, children }) {
-  const contentRef = useRef(null);
+  const outerRef = useRef(null);
+  const innerRef = useRef(null);
+  const [height, setHeight] = useState(0);
+
+  useEffect(() => {
+    if (!innerRef.current) return;
+    const ro = new ResizeObserver(() => {
+      if (innerRef.current) setHeight(innerRef.current.scrollHeight);
+    });
+    ro.observe(innerRef.current);
+    return () => ro.disconnect();
+  }, []);
 
   return (
     <div className={`bg-white rounded-xl border shadow-sm overflow-hidden transition-all duration-300 ${
@@ -59,14 +70,14 @@ function Section({ title, number, open, done, onToggle, children }) {
         </svg>
       </button>
       <div
-        ref={contentRef}
+        ref={outerRef}
         className="overflow-hidden transition-all duration-300 ease-in-out"
         style={{
-          maxHeight: open ? (contentRef.current?.scrollHeight || 2000) + 'px' : '0px',
+          maxHeight: open ? Math.max(height, 2000) + 'px' : '0px',
           opacity: open ? 1 : 0,
         }}
       >
-        <div className="px-6 pb-5 pt-2 border-t border-slate-100 space-y-4">
+        <div ref={innerRef} className="px-6 pb-5 pt-2 border-t border-slate-100 space-y-4">
           {children}
         </div>
       </div>
@@ -85,7 +96,8 @@ function Btn({ onClick, loading, variant = 'primary', className = '', children }
     <button
       onClick={onClick}
       disabled={loading}
-      className={`h-10 px-4 rounded-lg text-sm font-semibold transition-all duration-200 active:scale-[0.98]
+      aria-busy={loading}
+      className={`h-10 px-4 rounded-lg text-sm font-semibold transition-all duration-200 active:scale-[0.98] focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:ring-offset-1
         ${loading ? 'opacity-50 cursor-not-allowed' : styles[variant]} ${className}`}
     >
       {loading ? (
@@ -129,8 +141,8 @@ export default function AdminPage() {
 
   const scrollToSection = useCallback((idx) => {
     setTimeout(() => {
-      sectionRefs.current[idx]?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    }, 350);
+      sectionRefs.current[idx]?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }, 600);
   }, []);
 
   // 작업 실행 + 성공 시 다음 섹션 자동 열기
@@ -172,10 +184,17 @@ export default function AdminPage() {
 
   const endTime = Math.floor(Date.now() / 1000) + 60 * 60 * 24 * 7;
 
-  // 선거 생성 시 자동으로 eid도 동기화
+  // 선거 생성 시 자동으로 eid 동기화 + 상태 조회
   useEffect(() => {
-    if (res.create?.electionID && !eid) {
-      setEid(res.create.electionID);
+    if (res.create?.electionID) {
+      const newEid = res.create.electionID;
+      if (!eid || eid === newEid) {
+        setEid(newEid);
+        // 자동 상태 조회
+        apiGet(`${API}/elections/${newEid}`)
+          .then(data => setRes(r => ({ ...r, info: data })))
+          .catch(() => {});
+      }
     }
   }, [res.create]);
 
@@ -239,7 +258,7 @@ export default function AdminPage() {
 
         {/* KPI 카드 */}
         {electionInfo && (
-          <div className="grid grid-cols-3 gap-4 pt-2">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 pt-2">
             <div className="bg-slate-50 rounded-lg p-4 text-center">
               <p className="text-2xl font-bold text-slate-900">{electionInfo.totalVotes || 0}</p>
               <p className="text-xs text-slate-500 mt-1">총 투표수</p>
@@ -357,7 +376,7 @@ export default function AdminPage() {
                   );
                 })}
               <details className="text-xs">
-                <summary className="cursor-pointer text-slate-500 hover:text-slate-700 transition-colors">JSON 원본 보기</summary>
+                <summary className="cursor-pointer text-slate-500 hover:text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500 rounded px-1 transition-colors">JSON 원본 보기</summary>
                 <pre className="mt-2 bg-slate-50 border border-slate-200 rounded-lg p-3 overflow-auto text-xs font-mono">{JSON.stringify(res.tally, null, 2)}</pre>
               </details>
             </div>

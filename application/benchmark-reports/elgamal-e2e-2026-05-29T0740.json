@@ -1,0 +1,121 @@
+{
+  "scenario": "S1-Ed25519",
+  "timestamp": "2026-05-29T07:41:02.469Z",
+  "config": {
+    "N": 100,
+    "WARMUP": 10,
+    "candidates": 3,
+    "encryptionMode": "elgamal",
+    "idemix": {
+      "enabled": true,
+      "mode": "idemix-hmac",
+      "impl": "Ed25519-asymmetric",
+      "securityNote": "공개키 서명 credential — 체인코드 직접 검증 완료, 익명 credential은 아님",
+      "idemixImpl": "hmac",
+      "asymEnabled": true,
+      "cacheEnabled": false,
+      "cacheTtlSec": 5,
+      "cacheSize": 0
+    },
+    "url": "http://localhost:3000"
+  },
+  "summary": {
+    "total": 100,
+    "success": 0,
+    "fail": 100,
+    "failRate": 100
+  },
+  "e2eTotal": {
+    "n": 0,
+    "avg": 0,
+    "min": 0,
+    "p50": 0,
+    "p95": 0,
+    "p99": 0,
+    "max": 0,
+    "stddev": 0
+  },
+  "clientEncrypt": {
+    "n": 0,
+    "avg": 0,
+    "min": 0,
+    "p50": 0,
+    "p95": 0,
+    "p99": 0,
+    "max": 0,
+    "stddev": 0
+  },
+  "clientZkp": {
+    "n": 0,
+    "avg": 0,
+    "min": 0,
+    "p50": 0,
+    "p95": 0,
+    "p99": 0,
+    "max": 0,
+    "stddev": 0
+  },
+  "serverConfirm": {
+    "n": 0,
+    "avg": 0,
+    "min": 0,
+    "p50": 0,
+    "p95": 0,
+    "p99": 0,
+    "max": 0,
+    "stddev": 0
+  },
+  "serverOnly": {
+    "n": 0,
+    "avg": 0,
+    "min": 0,
+    "p50": 0,
+    "p95": 0,
+    "p99": 0,
+    "max": 0,
+    "stddev": 0
+  },
+  "payloadBytes": {
+    "n": 0,
+    "avg": 0,
+    "min": 0,
+    "p50": 0,
+    "p95": 0,
+    "p99": 0,
+    "max": 0,
+    "stddev": 0
+  },
+  "credential": {
+    "samples": 9,
+    "latency": {
+      "n": 9,
+      "avg": 1.34,
+      "stddev": 0.93,
+      "min": 0.52,
+      "p50": 1.12,
+      "p95": 3.76,
+      "p99": 3.76,
+      "max": 3.76
+    },
+    "sizeBytes": 271,
+    "credType": "Ed25519-asym"
+  },
+  "tally": {
+    "success": true,
+    "latencyMs": 2317.19,
+    "results": {
+      "docType": "tally",
+      "electionID": "elgamal-bench-S1-Ed25519-1780040452395",
+      "results": {
+        "CANDIDATE_A": 0,
+        "CANDIDATE_B": 0,
+        "CANDIDATE_C": 0
+      },
+      "totalVotes": 9,
+      "closedAt": 1780040460
+    }
+  },
+  "errors": {
+    "500:투표 처리 중 오류가 발생했습니다.": 100
+  }
+}

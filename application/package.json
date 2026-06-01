@@ -10,7 +10,10 @@
     "keys:ps-bbs": "node scripts/generate-ps-bbs-env.js",
     "e2e:ed25519": "node scripts/ed25519-e2e-smoke.js",
     "e2e:merkle": "node scripts/merkle-e2e-smoke.js",
-    "e2e:full": "node scripts/full-election-e2e.js"
+    "e2e:full": "node scripts/full-election-e2e.js",
+    "bench:elgamal": "node benchmark/elgamal-e2e-bench.js",
+    "bench:elgamal:conc": "node benchmark/elgamal-concurrency-bench.js",
+    "bench:elgamal:run": "bash benchmark/run-elgamal-bench.sh"
   },
   "dependencies": {
     "@grpc/grpc-js": "^1.10.0",

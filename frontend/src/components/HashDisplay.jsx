@@ -19,7 +19,9 @@ export default function HashDisplay({ label, value, className = '' }) {
         <span className="text-[11px] font-medium text-slate-500">{label}</span>
         <button
           onClick={copy}
-          className="text-[11px] text-blue-500 hover:text-blue-700 transition-colors duration-200 flex items-center gap-1"
+          aria-label={copied ? "복사됨" : "클립보드에 복사"}
+          title="클립보드에 복사"
+          className="text-[11px] text-blue-500 hover:text-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 rounded transition-colors duration-200 flex items-center gap-1"
         >
           {copied ? (
             <><svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>복사됨</>

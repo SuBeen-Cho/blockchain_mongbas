@@ -1,0 +1,103 @@
+{
+  "runDate": "2026. 5. 29. 오후 8:01:54",
+  "results": {
+    "A": {
+      "policy": "OutOf(2, ElectionCommission.peer, PartyObserver.peer, CivilSociety.peer)",
+      "txSuccess": false,
+      "txLatencyMs": 2,
+      "tallyCorrect": true,
+      "note": [
+        "2-of-3 승인 정책 설정으로 단일 기관 단독 트랜잭션 불가",
+        "REST API → Fabric Gateway가 2개 이상의 피어 endorsement를 자동 요구",
+        "선관위(EC) 단독으로 CloseElection / CastVote 호출 시 Endorsement Policy 위반으로 거부"
+      ]
+    },
+    "B": {
+      "rounds": 30,
+      "firstVote": {
+        "ok": 0,
+        "n": 30,
+        "avg": "0.6",
+        "min": 0,
+        "max": 3,
+        "p50": 0,
+        "p95": 1,
+        "p99": 3
+      },
+      "secondVote": {
+        "ok": 0,
+        "n": 30,
+        "avg": "0.4",
+        "min": 0,
+        "max": 2,
+        "p50": 0,
+        "p95": 1,
+        "p99": 2
+      },
+      "note": "Eviction 모드 — 재투표 시 동일 nullifier로 덮어쓰기 허용 (이중집계 불가)"
+    },
+    "C": {
+      "rounds": 100,
+      "normal": {
+        "n": 100,
+        "avg": "222.7",
+        "min": 168,
+        "max": 534,
+        "p50": 208,
+        "p95": 292,
+        "p99": 347
+      },
+      "panic": {
+        "n": 100,
+        "avg": "213.2",
+        "min": 141,
+        "max": 318,
+        "p50": 207,
+        "p95": 270,
+        "p99": 310
+      },
+      "diffMs": "9.5",
+      "tStat": "1.769",
+      "tThreshold": 1.984,
+      "significant": false
+    },
+    "D": {
+      "rounds": 20,
+      "oneShareInsufficient": {
+        "count": 20,
+        "rate": "100%"
+      },
+      "twoShareSufficient": {
+        "count": 20,
+        "rate": "100%"
+      }
+    },
+    "E": {
+      "voteCount": 20,
+      "included": {
+        "correct": 0,
+        "total": 20,
+        "rate": "0%",
+        "n": 20,
+        "avg": "314.8",
+        "min": 219,
+        "max": 614,
+        "p50": 252,
+        "p95": 480,
+        "p99": 614
+      },
+      "excluded": {
+        "correct": 20,
+        "total": 20,
+        "rate": "100%",
+        "n": 20,
+        "avg": "255.1",
+        "min": 213,
+        "max": 311,
+        "p50": 246,
+        "p95": 300,
+        "p99": 311
+      }
+    }
+  }
+}

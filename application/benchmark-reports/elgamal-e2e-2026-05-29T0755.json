@@ -1,0 +1,108 @@
+{
+  "scenario": "S2-PS-BN254",
+  "timestamp": "2026-05-29T08:00:27.176Z",
+  "config": {
+    "N": 100,
+    "WARMUP": 10,
+    "candidates": 3,
+    "encryptionMode": "elgamal",
+    "idemix": {
+      "enabled": true,
+      "mode": "idemix-ps",
+      "impl": "PS-BN254 (B단계: 진짜 Idemix CL)",
+      "securityNote": "익명 credential — PS_ISSUER_PUBLIC_KEY_B64를 체인코드에 주입하면 pairing 기반 체인코드 직접 검증",
+      "idemixImpl": "ps",
+      "asymEnabled": true,
+      "cacheEnabled": false,
+      "cacheTtlSec": 5,
+      "cacheSize": 0
+    },
+    "url": "http://localhost:3000"
+  },
+  "summary": {
+    "total": 100,
+    "success": 100,
+    "fail": 0,
+    "failRate": 0
+  },
+  "e2eTotal": {
+    "n": 100,
+    "avg": 2388.82,
+    "stddev": 197.37,
+    "min": 2235.79,
+    "p50": 2337.42,
+    "p95": 2620.72,
+    "p99": 3037.08,
+    "max": 3832.24
+  },
+  "clientEncrypt": {
+    "n": 100,
+    "avg": 4.32,
+    "stddev": 2.82,
+    "min": 2.83,
+    "p50": 3.43,
+    "p95": 8.94,
+    "p99": 14.39,
+    "max": 25.63
+  },
+  "clientZkp": {
+    "n": 100,
+    "avg": 20.54,
+    "stddev": 4.9,
+    "min": 15.78,
+    "p50": 18.83,
+    "p95": 28.39,
+    "p99": 40.43,
+    "max": 42.73
+  },
+  "serverConfirm": {
+    "n": 100,
+    "avg": 2363.96,
+    "stddev": 192.69,
+    "min": 2211.92,
+    "p50": 2317.39,
+    "p95": 2591.38,
+    "p99": 3003.71,
+    "max": 3782.82
+  },
+  "serverOnly": {
+    "n": 100,
+    "avg": 2363.96,
+    "stddev": 192.69,
+    "min": 2211.92,
+    "p50": 2317.39,
+    "p95": 2591.38,
+    "p99": 3003.71,
+    "max": 3782.82
+  },
+  "payloadBytes": {
+    "n": 100,
+    "avg": 5517.3,
+    "stddev": 339.31,
+    "min": 4858,
+    "p50": 5692,
+    "p95": 5693,
+    "p99": 5693,
+    "max": 5693
+  },
+  "credential": {
+    "samples": 9,
+    "latency": {
+      "n": 9,
+      "avg": 29.96,
+      "stddev": 61.93,
+      "min": 4.18,
+      "p50": 6.06,
+      "p95": 204.52,
+      "p99": 204.52,
+      "max": 204.52
+    },
+    "sizeBytes": 394,
+    "credType": "PS-BN254"
+  },
+  "tally": {
+    "success": false,
+    "latencyMs": 0
+  },
+  "errors": {}
+}

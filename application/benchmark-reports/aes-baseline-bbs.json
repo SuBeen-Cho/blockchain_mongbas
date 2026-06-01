@@ -1,0 +1,50 @@
+{
+  "label": "C-BBS",
+  "timestamp": "2026-05-29T08:50:01.205Z",
+  "health": {
+    "idemix": {
+      "enabled": true,
+      "mode": "idemix-bbs",
+      "impl": "BBS+-BLS12381 (C단계: 개선 Idemix)",
+      "securityNote": "익명 credential — BBS_PUBLIC_KEY_B64를 체인코드에 주입하면 BLS12-381 BBS+ proof 체인코드 직접 검증",
+      "idemixImpl": "bbs",
+      "asymEnabled": true,
+      "cacheEnabled": false,
+      "cacheTtlSec": 5,
+      "cacheSize": 0
+    },
+    "memory": {
+      "heapUsed": 17879648,
+      "heapTotal": 32014336,
+      "rss": 47300608,
+      "external": 2711386
+    }
+  },
+  "txPerRound": 100,
+  "rounds": [
+    {
+      "targetTps": 1,
+      "txCount": 100,
+      "success": 100,
+      "fail": 0,
+      "failRate": 0,
+      "actualTps": 0.38,
+      "elapsedSec": 261.45,
+      "latency": {
+        "n": 100,
+        "avg": 2611,
+        "min": 2192.8,
+        "p50": 2306,
+        "p95": 4334.5,
+        "p99": 4970.6,
+        "max": 6419
+      },
+      "credential": {
+        "credType": "BBS+-BLS12381",
+        "sizeBytes": 352,
+        "latencyMs": 78.33
+      },
+      "errors": {}
+    }
+  ]
+}

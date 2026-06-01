@@ -572,6 +572,7 @@ services:
   voting-chaincode:
     container_name: voting-chaincode
     image: voting-chaincode:1.0
+    pull_policy: never
     environment:
       - CHAINCODE_SERVER_ADDRESS=0.0.0.0:7052
       - CHAINCODE_ID=voting_1.0   # deploy 후 실제 패키지 ID로 교체 필요

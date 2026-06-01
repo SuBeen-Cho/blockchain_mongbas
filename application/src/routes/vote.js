@@ -176,7 +176,7 @@ router.post('/', async (req, res) => {
       return res.status(409).json({ error: '이미 투표한 선거입니다.', nullifierHash });
     }
     console.error('[vote] CastVote error:', err.message);
-    res.status(500).json({ error: '투표 처리 중 오류가 발생했습니다.' });
+    res.status(500).json({ error: '투표 처리 중 오류가 발생했습니다.', debug: err.message });
   } finally {
     gateway.close();
   }

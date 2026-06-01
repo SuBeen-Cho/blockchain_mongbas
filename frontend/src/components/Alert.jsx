@@ -36,7 +36,7 @@ const icons = {
 
 export default function Alert({ variant = 'info', title, children, className = '' }) {
   return (
-    <div className={`rounded-xl border p-4 ${variants[variant]} ${className}`}>
+    <div className={`rounded-xl border p-4 ${variants[variant]} ${className}`} role={variant === 'error' ? 'alert' : 'status'} aria-live="polite">
       <div className="flex gap-3">
         {icons[variant]}
         <div className="flex-1 min-w-0">

@@ -28,7 +28,7 @@ export default function Stepper({ steps, current }) {
                 {isComplete ? <CheckIcon /> : i + 1}
               </div>
               <span className={`
-                mt-1.5 text-[11px] font-medium whitespace-nowrap
+                mt-1.5 text-[10px] sm:text-[11px] font-medium text-center leading-tight
                 transition-colors duration-200
                 ${isCurrent ? 'text-blue-600' : isComplete ? 'text-slate-600' : 'text-slate-400'}
               `}>

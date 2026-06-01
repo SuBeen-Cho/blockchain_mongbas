@@ -1,0 +1,108 @@
+{
+  "scenario": "S1-Ed25519",
+  "timestamp": "2026-05-29T07:50:13.140Z",
+  "config": {
+    "N": 100,
+    "WARMUP": 10,
+    "candidates": 3,
+    "encryptionMode": "elgamal",
+    "idemix": {
+      "enabled": true,
+      "mode": "idemix-hmac",
+      "impl": "Ed25519-asymmetric",
+      "securityNote": "공개키 서명 credential — 체인코드 직접 검증 완료, 익명 credential은 아님",
+      "idemixImpl": "hmac",
+      "asymEnabled": true,
+      "cacheEnabled": false,
+      "cacheTtlSec": 5,
+      "cacheSize": 0
+    },
+    "url": "http://localhost:3000"
+  },
+  "summary": {
+    "total": 100,
+    "success": 100,
+    "fail": 0,
+    "failRate": 0
+  },
+  "e2eTotal": {
+    "n": 100,
+    "avg": 2194.08,
+    "stddev": 57.66,
+    "min": 2134.74,
+    "p50": 2181.11,
+    "p95": 2292.68,
+    "p99": 2340.15,
+    "max": 2589.01
+  },
+  "clientEncrypt": {
+    "n": 100,
+    "avg": 4.15,
+    "stddev": 1.37,
+    "min": 2.8,
+    "p50": 3.59,
+    "p95": 7.04,
+    "p99": 8.46,
+    "max": 9.49
+  },
+  "clientZkp": {
+    "n": 100,
+    "avg": 19.99,
+    "stddev": 3.32,
+    "min": 15.91,
+    "p50": 18.89,
+    "p95": 26.51,
+    "p99": 28.89,
+    "max": 32.76
+  },
+  "serverConfirm": {
+    "n": 100,
+    "avg": 2169.94,
+    "stddev": 58.34,
+    "min": 2110.95,
+    "p50": 2156.41,
+    "p95": 2270.47,
+    "p99": 2317.87,
+    "max": 2566.39
+  },
+  "serverOnly": {
+    "n": 100,
+    "avg": 2169.94,
+    "stddev": 58.34,
+    "min": 2110.95,
+    "p50": 2156.41,
+    "p95": 2270.47,
+    "p99": 2317.87,
+    "max": 2566.39
+  },
+  "payloadBytes": {
+    "n": 100,
+    "avg": 5532.95,
+    "stddev": 326.69,
+    "min": 4855,
+    "p50": 5691,
+    "p95": 5692,
+    "p99": 5692,
+    "max": 5692
+  },
+  "credential": {
+    "samples": 9,
+    "latency": {
+      "n": 9,
+      "avg": 1.45,
+      "stddev": 1.07,
+      "min": 0.58,
+      "p50": 0.99,
+      "p95": 4.06,
+      "p99": 4.06,
+      "max": 4.06
+    },
+    "sizeBytes": 271,
+    "credType": "Ed25519-asym"
+  },
+  "tally": {
+    "success": false,
+    "latencyMs": 0
+  },
+  "errors": {}
+}

@@ -1,0 +1,130 @@
+{
+  "label": "Ed25519",
+  "timestamp": "2026-05-12T10:36:26.992Z",
+  "health": {
+    "idemix": {
+      "enabled": true,
+      "mode": "idemix-hmac",
+      "impl": "Ed25519-asymmetric",
+      "securityNote": "공개키 서명 credential — 체인코드 직접 검증 완료, 익명 credential은 아님",
+      "idemixImpl": "hmac",
+      "asymEnabled": true,
+      "cacheEnabled": false,
+      "cacheTtlSec": 5,
+      "cacheSize": 0
+    },
+    "memory": {
+      "heapUsed": 18130184,
+      "heapTotal": 31752192,
+      "rss": 82903040,
+      "external": 2711378
+    }
+  },
+  "txPerRound": 15,
+  "rounds": [
+    {
+      "targetTps": 1,
+      "txCount": 15,
+      "success": 0,
+      "fail": 15,
+      "failRate": 100,
+      "actualTps": 0,
+      "elapsedSec": 15.02,
+      "latency": {
+        "n": 0,
+        "avg": 0,
+        "min": 0,
+        "p50": 0,
+        "p95": 0,
+        "p99": 0,
+        "max": 0
+      },
+      "credential": {
+        "credType": "Ed25519-asym",
+        "sizeBytes": 267,
+        "latencyMs": 5.06
+      },
+      "errors": {
+        "500:투표 처리 중 오류가 발생했습니다.": 15
+      }
+    },
+    {
+      "targetTps": 5,
+      "txCount": 15,
+      "success": 0,
+      "fail": 15,
+      "failRate": 100,
+      "actualTps": 0,
+      "elapsedSec": 3.02,
+      "latency": {
+        "n": 0,
+        "avg": 0,
+        "min": 0,
+        "p50": 0,
+        "p95": 0,
+        "p99": 0,
+        "max": 0
+      },
+      "credential": {
+        "credType": "Ed25519-asym",
+        "sizeBytes": 267,
+        "latencyMs": 2.08
+      },
+      "errors": {
+        "500:투표 처리 중 오류가 발생했습니다.": 15
+      }
+    },
+    {
+      "targetTps": 10,
+      "txCount": 15,
+      "success": 0,
+      "fail": 15,
+      "failRate": 100,
+      "actualTps": 0,
+      "elapsedSec": 1.52,
+      "latency": {
+        "n": 0,
+        "avg": 0,
+        "min": 0,
+        "p50": 0,
+        "p95": 0,
+        "p99": 0,
+        "max": 0
+      },
+      "credential": {
+        "credType": "Ed25519-asym",
+        "sizeBytes": 268,
+        "latencyMs": 1.54
+      },
+      "errors": {
+        "500:투표 처리 중 오류가 발생했습니다.": 15
+      }
+    },
+    {
+      "targetTps": 20,
+      "txCount": 15,
+      "success": 0,
+      "fail": 15,
+      "failRate": 100,
+      "actualTps": 0,
+      "elapsedSec": 0.76,
+      "latency": {
+        "n": 0,
+        "avg": 0,
+        "min": 0,
+        "p50": 0,
+        "p95": 0,
+        "p99": 0,
+        "max": 0
+      },
+      "credential": {
+        "credType": "Ed25519-asym",
+        "sizeBytes": 268,
+        "latencyMs": 1.5
+      },
+      "errors": {
+        "500:투표 처리 중 오류가 발생했습니다.": 15
+      }
+    }
+  ]
+}

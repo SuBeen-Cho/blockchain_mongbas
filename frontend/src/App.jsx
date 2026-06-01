@@ -37,14 +37,16 @@ export default function App() {
             </div>
 
             {/* 탭 내비게이션 */}
-            <nav className="flex items-center h-full">
+            <nav className="flex items-center h-full" role="tablist">
               {TABS.map(t => (
                 <button
                   key={t.id}
+                  role="tab"
+                  aria-selected={tab === t.id}
                   onClick={() => setTab(t.id)}
                   className={`
                     relative h-full px-5 flex items-center gap-2 text-sm font-medium
-                    transition-colors duration-200
+                    transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:ring-inset
                     ${tab === t.id
                       ? 'text-blue-600'
                       : 'text-slate-500 hover:text-slate-800'

@@ -1,0 +1,149 @@
+{
+  "phase": "HMAC",
+  "note": "HMAC-SHA256 credential (대칭키 개발 기준)",
+  "idemixInfo": {
+    "enabled": true,
+    "mode": "idemix-hmac",
+    "impl": "HMAC-SHA256",
+    "securityNote": "대칭키 서명 — 체인코드 직접 검증 완료 (CREDENTIAL_SECRET 환경변수 공유)",
+    "idemixImpl": "hmac",
+    "asymEnabled": false,
+    "cacheEnabled": false,
+    "cacheTtlSec": 5,
+    "cacheSize": 0
+  },
+  "timestamp": "2026-05-12T10:29:22.521Z",
+  "issuance": {
+    "n": 50,
+    "latency": {
+      "n": 50,
+      "avg": 0.48,
+      "stddev": 0.95,
+      "min": 0.23,
+      "p50": 0.29,
+      "p90": 0.58,
+      "p95": 0.66,
+      "p99": 7.1,
+      "max": 7.1
+    },
+    "credType": "HMAC-SHA256",
+    "credSizeBytes": 200
+  },
+  "authLatency": {
+    "n": 50,
+    "latency": {
+      "n": 50,
+      "avg": 0.23,
+      "stddev": 0.06,
+      "min": 0.17,
+      "p50": 0.22,
+      "p90": 0.25,
+      "p95": 0.33,
+      "p99": 0.57,
+      "max": 0.57
+    }
+  },
+  "concurrencyTPS": [
+    {
+      "label": "HMAC-c1",
+      "concurrency": 1,
+      "durationSec": 4,
+      "tps": 11587.8,
+      "errorCount": 0,
+      "errorRate": 0,
+      "latency": {
+        "n": 46351,
+        "avg": 0.08,
+        "stddev": 0.14,
+        "min": 0.06,
+        "p50": 0.08,
+        "p90": 0.09,
+        "p95": 0.1,
+        "p99": 0.16,
+        "max": 12.7
+      }
+    },
+    {
+      "label": "HMAC-c5",
+      "concurrency": 5,
+      "durationSec": 4,
+      "tps": 21377.3,
+      "errorCount": 0,
+      "errorRate": 0,
+      "latency": {
+        "n": 85509,
+        "avg": 0.23,
+        "stddev": 0.33,
+        "min": 0.05,
+        "p50": 0.17,
+        "p90": 0.34,
+        "p95": 0.36,
+        "p99": 0.58,
+        "max": 23.59
+      }
+    },
+    {
+      "label": "HMAC-c10",
+      "concurrency": 10,
+      "durationSec": 4,
+      "tps": 21487.8,
+      "errorCount": 0,
+      "errorRate": 0,
+      "latency": {
+        "n": 85951,
+        "avg": 0.46,
+        "stddev": 0.5,
+        "min": 0.06,
+        "p50": 0.38,
+        "p90": 0.73,
+        "p95": 0.78,
+        "p99": 1.3,
+        "max": 34.49
+      }
+    },
+    {
+      "label": "HMAC-c20",
+      "concurrency": 20,
+      "durationSec": 4,
+      "tps": 22091.5,
+      "errorCount": 0,
+      "errorRate": 0,
+      "latency": {
+        "n": 88366,
+        "avg": 0.9,
+        "stddev": 0.57,
+        "min": 0.19,
+        "p50": 0.8,
+        "p90": 1.02,
+        "p95": 1.58,
+        "p99": 4.26,
+        "max": 24.62
+      }
+    }
+  ],
+  "stressTest": {
+    "label": "HMAC-stress",
+    "concurrency": 20,
+    "durationSec": 15,
+    "tps": 21754.1,
+    "errorCount": 0,
+    "errorRate": 0,
+    "latency": {
+      "n": 326312,
+      "avg": 0.92,
+      "stddev": 0.75,
+      "min": 0.07,
+      "p50": 0.8,
+      "p90": 1.13,
+      "p95": 1.59,
+      "p99": 4.37,
+      "max": 31.81
+    }
+  },
+  "memoryAfter": {
+    "heapUsed": 47246072,
+    "heapTotal": 137396224,
+    "rss": 186712064,
+    "external": 3201408
+  }
+}

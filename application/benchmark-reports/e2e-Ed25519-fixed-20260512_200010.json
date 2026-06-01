@@ -1,0 +1,122 @@
+{
+  "label": "Ed25519",
+  "timestamp": "2026-05-12T11:04:11.301Z",
+  "health": {
+    "idemix": {
+      "enabled": true,
+      "mode": "idemix-hmac",
+      "impl": "Ed25519-asymmetric",
+      "securityNote": "공개키 서명 credential — 체인코드 직접 검증 완료, 익명 credential은 아님",
+      "idemixImpl": "hmac",
+      "asymEnabled": true,
+      "cacheEnabled": false,
+      "cacheTtlSec": 5,
+      "cacheSize": 0
+    },
+    "memory": {
+      "heapUsed": 18469640,
+      "heapTotal": 30965760,
+      "rss": 81084416,
+      "external": 2711378
+    }
+  },
+  "txPerRound": 25,
+  "rounds": [
+    {
+      "targetTps": 1,
+      "txCount": 25,
+      "success": 25,
+      "fail": 0,
+      "failRate": 0,
+      "actualTps": 0.46,
+      "elapsedSec": 53.85,
+      "latency": {
+        "n": 25,
+        "avg": 2153.2,
+        "min": 2096,
+        "p50": 2144,
+        "p95": 2231,
+        "p99": 2278.4,
+        "max": 2278.4
+      },
+      "credential": {
+        "credType": "Ed25519-asym",
+        "sizeBytes": 267,
+        "latencyMs": 7.81
+      },
+      "errors": {}
+    },
+    {
+      "targetTps": 5,
+      "txCount": 25,
+      "success": 25,
+      "fail": 0,
+      "failRate": 0,
+      "actualTps": 0.45,
+      "elapsedSec": 55.25,
+      "latency": {
+        "n": 25,
+        "avg": 2208.8,
+        "min": 2120.2,
+        "p50": 2198.1,
+        "p95": 2344.9,
+        "p99": 2663,
+        "max": 2663
+      },
+      "credential": {
+        "credType": "Ed25519-asym",
+        "sizeBytes": 267,
+        "latencyMs": 2.15
+      },
+      "errors": {}
+    },
+    {
+      "targetTps": 10,
+      "txCount": 25,
+      "success": 25,
+      "fail": 0,
+      "failRate": 0,
+      "actualTps": 0.46,
+      "elapsedSec": 54.34,
+      "latency": {
+        "n": 25,
+        "avg": 2173.1,
+        "min": 2117,
+        "p50": 2164.6,
+        "p95": 2252.1,
+        "p99": 2275.6,
+        "max": 2275.6
+      },
+      "credential": {
+        "credType": "Ed25519-asym",
+        "sizeBytes": 268,
+        "latencyMs": 2.71
+      },
+      "errors": {}
+    },
+    {
+      "targetTps": 20,
+      "txCount": 25,
+      "success": 25,
+      "fail": 0,
+      "failRate": 0,
+      "actualTps": 0.47,
+      "elapsedSec": 53.54,
+      "latency": {
+        "n": 25,
+        "avg": 2141.4,
+        "min": 2094.6,
+        "p50": 2135.3,
+        "p95": 2198,
+        "p99": 2205,
+        "max": 2205
+      },
+      "credential": {
+        "credType": "Ed25519-asym",
+        "sizeBytes": 268,
+        "latencyMs": 3.52
+      },
+      "errors": {}
+    }
+  ]
+}

@@ -40,8 +40,18 @@ caliper/reports/*.png
 normal_times.txt
 panic_times.txt
 
-# ── AI 도구 설정 ───────────────────────────────────────────────
+# ── 시크릿 키 파일 ──────────────────────────────────────────────
+application/.env.keys
+
+# ── 런타임 생성 로그 / 산출물 ───────────────────────────────────
+application/audit-logs/
+application/benchmark-reports/*.log
+caliper/reports/*.log
+frontend/dist/
+
+# ── AI 도구 설정 / 핸드오프 ────────────────────────────────────
 CLAUDE.md
+HANDOFF.md
 
 # ── OS ─────────────────────────────────────────────────────────
 .DS_Store

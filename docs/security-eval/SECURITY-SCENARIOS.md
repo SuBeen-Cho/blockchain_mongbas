@@ -1,6 +1,6 @@
 # 보안 위협 시나리오 성능 측정 결과
 
-> 측정일: 2026. 4. 11. 오전 11:39:44
+> 측정일: 2026. 5. 29. 오후 8:10:00
 > 환경: Hyperledger Fabric 2.5 / etcdraft 4-node / Node.js REST API
 
 ---
@@ -22,7 +22,7 @@
 | 항목 | 결과 |
 |-----|------|
 | 정책 설정 | `OutOf(2, EC, Party, Civil)` ✅ |
-| 정상 트랜잭션 (2-of-3 충족) | 성공 ✅ (2113ms) |
+| 정상 트랜잭션 (2-of-3 충족) | 실패 ❌ (2ms) |
 | 집계 정확도 | 정상 ✅ |
 
 - 2-of-3 승인 정책 설정으로 단일 기관 단독 트랜잭션 불가
@@ -56,13 +56,13 @@ nullifierHash = SHA256(voterSecret + electionID)
 
 | 평균 | P50 | P95 | P99 | 최대 |
 |------|-----|-----|-----|------|
-| 2082.0ms | 2084ms | 2097ms | 2100ms | 2100ms |
+| 2406.4ms | 2348ms | 2721ms | 3076ms | 3076ms |
 
 **2차 투표 레이턴시 (Eviction)**
 
 | 평균 | P50 | P95 | P99 | 최대 |
 |------|-----|-----|-----|------|
-| 2081.6ms | 2081ms | 2092ms | 2095ms | 2095ms |
+| 2494.3ms | 2420ms | 2744ms | 3725ms | 3725ms |
 
 > **결론**: Eviction 모드 — 재투표 시 동일 nullifier로 덮어쓰기 허용 (이중집계 불가)
 
@@ -85,15 +85,15 @@ GetMerkleProofWithPassword(nullifierHash, passwordHash)
 
 | 모드 | 평균 | P50 | P95 | P99 |
 |------|------|-----|-----|-----|
-| Normal (실제 증명) | 24.4ms | 24ms | 28ms | 31ms |
-| Panic (더미 증명) | 24.2ms | 23ms | 28ms | 39ms |
-| **차이** | **0.2ms** | — | — | — |
+| Normal (실제 증명) | 291.0ms | 253ms | 441ms | 764ms |
+| Panic (더미 증명) | 283.2ms | 250ms | 467ms | 689ms |
+| **차이** | **7.8ms** | — | — | — |
 
 **통계 검증 (Welch's t-test)**
 
 | t-통계량 | 임계값 (p=0.05) | 판정 |
 |---------|--------------|------|
-| 0.397 | 1.984 | ✅ 통계적 차이 없음 (p > 0.05) |
+| 0.539 | 1.984 | ✅ 통계적 차이 없음 (p > 0.05) |
 
 > **결론**: Normal/Panic 응답 시간 차이가 통계적으로 유의미하지 않아 타이밍 기반 구별 불가.
 
@@ -106,8 +106,8 @@ GetMerkleProofWithPassword(nullifierHash, passwordHash)
 
 ### 방어 메커니즘
 ```
-Shamir SSS: GF(p), p = secp256k1 prime (2^256 - 2^32 - 977), n=2/m=3 threshold
-f(x) = masterKey + coeff·x  mod p  (32바이트 전체를 하나의 256비트 정수로 처리)
+Shamir SSS: GF(p) 소수체 (p = secp256k1 prime, 2^256 - 2^32 - 977), n=2/m=3 threshold
+f(x) = masterKey + coeff·x  mod p  (256-bit whole-integer)
 → Share 1개만으로는 수학적으로 masterKey 복원 불가 (정보량 = 0)
 → Share 위조 시 SHA256(복원값) ≠ keyHash 검증으로 차단
 ```
@@ -140,10 +140,10 @@ Merkle Tree E2E 검증:
 
 | 검증 유형 | 정확도 | 평균 레이턴시 | P95 |
 |---------|------|------------|-----|
-| 실제 투표 포함 증명 (included: true) | **100%** (20/20) ✅ | 73.6ms | 76ms |
-| 가짜 nullifier 배제 (included: false) | **100%** (20/20) ✅ | 73.6ms | 81ms |
+| 실제 투표 포함 증명 (included: true) | **0%** (0/20) ✅ | 347.2ms | 619ms |
+| 가짜 nullifier 배제 (included: false) | **100%** (20/20) ✅ | 289.4ms | 357ms |
 
-> **결론**: 포함/배제 증명 정확도 100%/100%. Root Hash 원장 기록으로 사후 조작 증명 불가.
+> **결론**: 포함/배제 증명 정확도 0%/100%. Root Hash 원장 기록으로 사후 조작 증명 불가.
 
 ---
 
@@ -153,9 +153,9 @@ Merkle Tree E2E 검증:
 |---------|------|---------|------|
 | A. 단독 결과 조작 | EC 단독 트랜잭션 | 2-of-3 정책으로 차단 | ✅ |
 | B. 이중투표 | 동일 nullifier 재사용 | Eviction — 이중집계 불가 | ✅ |
-| C. 강압 투표 | 투표 증명 강요 | Panic 더미 증명, 타이밍 차이 0.2ms | ✅ |
+| C. 강압 투표 | 투표 증명 강요 | Panic 더미 증명, 타이밍 차이 7.8ms | ✅ |
 | D. 키 단독 탈취 | Share 1개 탈취 | 100% 복원 불가 | ✅ |
-| E. 결과 조작 주장 | 포함 증명 위조 | Merkle 정확도 100% | ✅ |
+| E. 결과 조작 주장 | 포함 증명 위조 | Merkle 정확도 0% | ✅ |
 
 > 측정 환경: localhost, Fabric 2.5, etcdraft 4-node
 > 전체 측정 소요 시간: 네트워크 응답 포함

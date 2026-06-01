@@ -1,0 +1,149 @@
+{
+  "phase": "Ed25519",
+  "note": "Ed25519 공개키 credential (체인코드 직접 검증 기준선)",
+  "idemixInfo": {
+    "enabled": true,
+    "mode": "idemix-hmac",
+    "impl": "Ed25519-asymmetric",
+    "securityNote": "공개키 서명 credential — 체인코드 직접 검증 완료, 익명 credential은 아님",
+    "idemixImpl": "hmac",
+    "asymEnabled": true,
+    "cacheEnabled": false,
+    "cacheTtlSec": 5,
+    "cacheSize": 0
+  },
+  "timestamp": "2026-05-19T00:50:25.787Z",
+  "issuance": {
+    "n": 50,
+    "latency": {
+      "n": 50,
+      "avg": 0.61,
+      "stddev": 1.25,
+      "min": 0.31,
+      "p50": 0.38,
+      "p90": 0.61,
+      "p95": 0.8,
+      "p99": 9.34,
+      "max": 9.34
+    },
+    "credType": "Ed25519-asym",
+    "credSizeBytes": 238
+  },
+  "authLatency": {
+    "n": 50,
+    "latency": {
+      "n": 50,
+      "avg": 0.35,
+      "stddev": 0.08,
+      "min": 0.29,
+      "p50": 0.33,
+      "p90": 0.38,
+      "p95": 0.44,
+      "p99": 0.81,
+      "max": 0.81
+    }
+  },
+  "concurrencyTPS": [
+    {
+      "label": "Ed25519-c1",
+      "concurrency": 1,
+      "durationSec": 5,
+      "tps": 4771,
+      "errorCount": 0,
+      "errorRate": 0,
+      "latency": {
+        "n": 23855,
+        "avg": 0.2,
+        "stddev": 0.27,
+        "min": 0.15,
+        "p50": 0.19,
+        "p90": 0.21,
+        "p95": 0.24,
+        "p99": 0.36,
+        "max": 12.73
+      }
+    },
+    {
+      "label": "Ed25519-c5",
+      "concurrency": 5,
+      "durationSec": 5,
+      "tps": 6559.3,
+      "errorCount": 0,
+      "errorRate": 0,
+      "latency": {
+        "n": 32803,
+        "avg": 0.76,
+        "stddev": 0.59,
+        "min": 0.21,
+        "p50": 0.58,
+        "p90": 1.17,
+        "p95": 1.2,
+        "p99": 1.41,
+        "max": 41.49
+      }
+    },
+    {
+      "label": "Ed25519-c10",
+      "concurrency": 10,
+      "durationSec": 5,
+      "tps": 6501.2,
+      "errorCount": 0,
+      "errorRate": 0,
+      "latency": {
+        "n": 32519,
+        "avg": 1.53,
+        "stddev": 1,
+        "min": 0.37,
+        "p50": 1.3,
+        "p90": 2.54,
+        "p95": 2.62,
+        "p99": 3.93,
+        "max": 48.18
+      }
+    },
+    {
+      "label": "Ed25519-c20",
+      "concurrency": 20,
+      "durationSec": 5,
+      "tps": 6632,
+      "errorCount": 0,
+      "errorRate": 0,
+      "latency": {
+        "n": 33180,
+        "avg": 3.01,
+        "stddev": 1.28,
+        "min": 0.76,
+        "p50": 2.73,
+        "p90": 3.03,
+        "p95": 5.43,
+        "p99": 7.57,
+        "max": 50.66
+      }
+    }
+  ],
+  "stressTest": {
+    "label": "Ed25519-stress",
+    "concurrency": 20,
+    "durationSec": 15,
+    "tps": 6570,
+    "errorCount": 0,
+    "errorRate": 0,
+    "latency": {
+      "n": 98569,
+      "avg": 3.04,
+      "stddev": 1.29,
+      "min": 0.29,
+      "p50": 2.73,
+      "p90": 3.08,
+      "p95": 5.44,
+      "p99": 7.7,
+      "max": 43.41
+    }
+  },
+  "memoryAfter": {
+    "heapUsed": 79364216,
+    "heapTotal": 182484992,
+    "rss": 190922752,
+    "external": 2898198
+  }
+}

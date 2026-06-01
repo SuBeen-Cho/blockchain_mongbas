@@ -36,6 +36,7 @@ export default function VerifyPage() {
   }
 
   async function verify() {
+    if (!electionID) return setError('선거 ID를 입력하세요.');
     setLoading(true); setError(''); setResult(null);
     try {
       let hash = nullifierHash;
@@ -83,6 +84,7 @@ export default function VerifyPage() {
   }
 
   async function verifyBulletinBoardPublic() {
+    if (!electionID) return setError('선거 ID를 입력하세요.');
     setLoading(true); setError(''); setBbResult(null);
     try {
       const bbRes = await fetch(`${API}/elections/${electionID}/bulletin-board`);
@@ -111,6 +113,7 @@ export default function VerifyPage() {
   }
 
   async function verifyElGamalZKP() {
+    if (!electionID) return setError('선거 ID를 입력하세요.');
     setLoading(true); setError(''); setZkpResult(null);
     try {
       const res = await fetch(`${API}/elections/${electionID}/verify-elgamal`, {
@@ -125,6 +128,7 @@ export default function VerifyPage() {
   }
 
   async function verifyReceiptFree() {
+    if (!electionID) return setError('선거 ID를 입력하세요.');
     setLoading(true); setError(''); setRfResult(null);
     try {
       let hash = nullifierHash;
@@ -177,7 +181,7 @@ export default function VerifyPage() {
       {/* 검증 방식 선택 — 아이콘 카드 */}
       <div>
         <h3 className="text-sm font-semibold text-slate-700 mb-3">검증 방식</h3>
-        <div className="grid grid-cols-3 sm:grid-cols-5 gap-3">
+        <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
           {MODES.map(m => (
             <button
               key={m.id}
@@ -304,7 +308,7 @@ export default function VerifyPage() {
 
       {/* ── Merkle / Deniable 결과 ── */}
       {result && (
-        <div className="bg-white rounded-2xl border border-emerald-200 shadow-sm overflow-hidden">
+        <div className="bg-white rounded-2xl border border-emerald-200 shadow-sm">
           <div className="bg-emerald-50 px-6 py-4 border-b border-emerald-200 flex items-center gap-3">
             <div className="w-10 h-10 bg-emerald-100 rounded-full flex items-center justify-center">
               <svg className="w-5 h-5 text-emerald-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
@@ -326,7 +330,7 @@ export default function VerifyPage() {
             )}
             {result.proof && (
               <details className="text-xs">
-                <summary className="cursor-pointer font-medium text-slate-500 hover:text-slate-700 transition-colors">
+                <summary className="cursor-pointer font-medium text-slate-500 hover:text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500 rounded px-1 transition-colors">
                   Merkle Proof 상세 보기
                 </summary>
                 <pre className="mt-2 bg-slate-50 border border-slate-200 rounded-lg p-3 overflow-auto font-mono text-xs">
@@ -340,7 +344,7 @@ export default function VerifyPage() {
 
       {/* ── Bulletin Board 결과 ── */}
       {bbResult && (
-        <div className={`bg-white rounded-2xl border shadow-sm overflow-hidden ${
+        <div className={`bg-white rounded-2xl border shadow-sm ${
           bbResult.clientVerification.verified ? 'border-emerald-200' : 'border-red-200'
         }`}>
           <div className={`px-6 py-4 border-b flex items-center gap-3 ${
@@ -363,7 +367,7 @@ export default function VerifyPage() {
             </div>
           </div>
           <div className="p-6 space-y-4">
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div className="bg-slate-50 rounded-lg p-4 space-y-2">
                 <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">브라우저 검증</p>
                 <VerifyItem label="재집계 일치" ok={bbResult.clientVerification.tallyVerification?.tallyMatch} />
@@ -386,7 +390,7 @@ export default function VerifyPage() {
                 {Object.entries(bbResult.bulletinBoard.tallyResults).sort(([,a],[,b]) => b - a).map(([c, n]) => (
                   <p key={c} className="text-sm"><span className="font-semibold">{c}</span>: <span className="font-mono">{n}표</span></p>
                 ))}
-                <p className="text-xs text-slate-400 mt-2">총 {bbResult.bulletinBoard.totalBallots}표</p>
+                <p className="text-xs text-slate-400 mt-2">총 {Object.values(bbResult.bulletinBoard.tallyResults).reduce((a,b) => a+b, 0)}표</p>
               </div>
             )}
           </div>
@@ -395,7 +399,7 @@ export default function VerifyPage() {
 
       {/* ── ElGamal ZKP 결과 ── */}
       {zkpResult && (
-        <div className={`bg-white rounded-2xl border shadow-sm overflow-hidden ${zkpResult.isValid ? 'border-emerald-200' : 'border-red-200'}`}>
+        <div className={`bg-white rounded-2xl border shadow-sm ${zkpResult.isValid ? 'border-emerald-200' : 'border-red-200'}`}>
           <div className={`px-6 py-4 border-b flex items-center gap-3 ${zkpResult.isValid ? 'bg-emerald-50 border-emerald-200' : 'bg-red-50 border-red-200'}`}>
             <div className={`w-10 h-10 rounded-full flex items-center justify-center ${zkpResult.isValid ? 'bg-emerald-100' : 'bg-red-100'}`}>
               <svg className={`w-5 h-5 ${zkpResult.isValid ? 'text-emerald-600' : 'text-red-600'}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
@@ -410,7 +414,7 @@ export default function VerifyPage() {
             </div>
           </div>
           <div className="p-6 space-y-4">
-            <div className="grid grid-cols-3 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
               <div className="bg-slate-50 rounded-lg p-4 text-center">
                 <p className="text-2xl font-bold text-emerald-600">{zkpResult.verified}</p>
                 <p className="text-xs text-slate-500 mt-1">검증 성공</p>
@@ -437,7 +441,7 @@ export default function VerifyPage() {
 
       {/* ── Receipt-Free 결과 ── */}
       {rfResult && (
-        <div className={`bg-white rounded-2xl border shadow-sm overflow-hidden ${rfResult.included ? 'border-emerald-200' : 'border-amber-200'}`}>
+        <div className={`bg-white rounded-2xl border shadow-sm ${rfResult.included ? 'border-emerald-200' : 'border-amber-200'}`}>
           <div className={`px-6 py-4 border-b flex items-center gap-3 ${rfResult.included ? 'bg-emerald-50 border-emerald-200' : 'bg-amber-50 border-amber-200'}`}>
             <div className={`w-10 h-10 rounded-full flex items-center justify-center ${rfResult.included ? 'bg-emerald-100' : 'bg-amber-100'}`}>
               {rfResult.included ? (
