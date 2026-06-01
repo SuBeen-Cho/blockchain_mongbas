@@ -55,6 +55,9 @@ frontend/dist/
 # ── AI 도구 설정 / 핸드오프 ────────────────────────────────────
 CLAUDE.md
 HANDOFF.md
+docs/CODEX_NEXT_STEPS.md
+docs/server_run_guide.md
+caliper/report.html
 
 # ── OS ─────────────────────────────────────────────────────────
 .DS_Store
