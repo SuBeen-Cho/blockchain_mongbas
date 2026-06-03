@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { computeMerkleRootFromProof } from '../utils/crypto.js';
 
 /**
@@ -23,6 +23,12 @@ export default function TrackPage({ electionId }) {
   const [busy, setBusy] = useState(false);
   const [res, setRes] = useState(null);   // 성공 결과
   const [fail, setFail] = useState('');   // 실패(변조) 메시지
+  const matchRef = useRef(null);
+
+  // 결과가 나오면 하이라이트된 '내 줄'을 화면 중앙으로 자동 스크롤
+  useEffect(() => {
+    if (res && matchRef.current) matchRef.current.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  }, [res]);
 
   // ?c= 추적번호 딥링크 → 자동 입력·자동 추적 (폰 영수증 QR에서도 활용 가능)
   useEffect(() => {
@@ -112,7 +118,7 @@ export default function TrackPage({ electionId }) {
               <Step n="2" t="공개 게시판에서 '당신의 줄' 찾기" />
               <div style={{ maxHeight: 200, overflow: 'auto', borderRadius: 8, border: '1px solid #e2e8f0' }}>
                 {res.ballots.map((b, i) => (
-                  <div key={i} style={{ padding: '8px 12px', fontFamily: 'monospace', fontSize: 12,
+                  <div key={i} ref={i === res.idx ? matchRef : null} style={{ padding: '8px 12px', fontFamily: 'monospace', fontSize: 12,
                     background: i === res.idx ? '#fef9c3' : i % 2 ? '#f8fafc' : '#fff',
                     fontWeight: i === res.idx ? 700 : 400, color: i === res.idx ? '#854d0e' : '#475569',
                     borderLeft: i === res.idx ? '4px solid #eab308' : '4px solid transparent' }}>
@@ -120,7 +126,8 @@ export default function TrackPage({ electionId }) {
                   </div>
                 ))}
               </div>
-              <p style={{ color: '#854d0e', fontSize: 13, marginTop: 8 }}>↑ {res.idx + 1}번째 줄이 당신의 표입니다 (전체 {res.total}건).</p>
+              <p style={{ color: '#854d0e', fontSize: 13, marginTop: 8 }}>↑ {res.idx + 1}번째 줄이 당신의 표입니다.</p>
+              <p style={{ color: '#94a3b8', fontSize: 11, marginTop: 2 }}>게시판에는 강압 저항을 위한 디코이(decoy) 기록이 섞여 있어 전체 {res.total}건입니다. 실제 집계 표 수는 아래 ④를 보세요.</p>
             </div>
 
             {/* 3. Merkle 봉인 */}
