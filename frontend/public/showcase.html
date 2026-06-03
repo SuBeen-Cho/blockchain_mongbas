@@ -35,8 +35,11 @@
   /* ───── HERO ───── */
   .hero{min-height:100vh;display:flex;flex-direction:column;justify-content:center;
     position:relative;padding-top:80px}
-  #unicorn{position:absolute;inset:0;z-index:-1;opacity:.55;
-    -webkit-mask-image:linear-gradient(180deg,#000 60%,transparent);mask-image:linear-gradient(180deg,#000 60%,transparent)}
+  #unicorn{position:absolute;inset:0;z-index:-2;opacity:.42;
+    -webkit-mask-image:linear-gradient(180deg,#000 55%,transparent);mask-image:linear-gradient(180deg,#000 55%,transparent)}
+  .hero-scrim{position:absolute;inset:0;z-index:-1;pointer-events:none;
+    background:linear-gradient(90deg,rgba(5,6,12,.94) 0%,rgba(5,6,12,.7) 42%,rgba(5,6,12,.25) 72%,transparent 100%),
+               linear-gradient(0deg,var(--bg) 2%,transparent 30%)}
   .hero h1{font-size:clamp(44px,8.4vw,128px);font-weight:900}
   .hero h1 .ln{display:block;overflow:hidden}
   .hero h1 .ln span{display:inline-block}
@@ -164,7 +167,8 @@
 <main>
   <!-- HERO -->
   <header class="hero" id="top">
-    <div id="unicorn" data-us-project="jGXYSFzNxRakpi9mEF4l"></div>
+    <div id="unicorn" data-us-project="CSxwejnPjJyEnMGpyrna"></div>
+    <div class="hero-scrim"></div>
     <div class="floatcards" id="fcards"></div>
     <div>
       <span class="eyebrow">● 익명 전자투표 · Hyperledger Fabric 2.5</span>
