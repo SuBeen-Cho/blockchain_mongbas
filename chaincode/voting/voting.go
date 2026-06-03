@@ -239,6 +239,11 @@ type VoteTally struct {
 	// [PAPER-2] tallied-as-recorded 검증용 증명
 	TallyProofHash   string            `json:"tallyProofHash,omitempty" metadata:",optional"`   // 모든 복호화 기록의 해시
 	DecryptionProofs []DecryptionProof `json:"decryptionProofs,omitempty" metadata:",optional"` // 개별 투표 복호화 증명
+	// [P2] ElGamal threshold: 키 분산 후에는 종료 시 복호화하지 않고 암호문 집계만 저장.
+	//   2-of-3 조각 복원 후에 복호화되어 Results가 채워지고 Decrypted=true가 된다.
+	Decrypted bool   `json:"decrypted" metadata:",optional"`         // 결과 복호화 완료 여부
+	EncAggC1  string `json:"encAggC1,omitempty" metadata:",optional"` // 동형 집계 암호문 c1 (복호화 대기 시)
+	EncAggC2  string `json:"encAggC2,omitempty" metadata:",optional"` // 동형 집계 암호문 c2 (복호화 대기 시)
 }
 
 // DecryptionProof [PAPER-2] 개별 투표의 복호화 정확성 증명
@@ -941,9 +946,21 @@ func (c *VotingContract) CreateElection(
 
 	var elgamalPubKey *ElGamalPublicKey
 
-	// AES 키 생성 (모든 모드에서 공통 — Shamir 분산 + 더미 Nullifier 암호화용)
-	ekInput := fmt.Sprintf("ENCRYPTION_%s_%s", electionID, txID)
-	ekRaw := sha256.Sum256([]byte(ekInput))
+	// [P2 보안] AES 마스터 키 생성 — 비밀 seed(transient) 기반.
+	//   기존: 공개 txID 해시 → 원장을 읽는 누구나 키 재계산 가능(취약점).
+	//   변경: 선거 생성 시 외부에서 생성한 비밀 seed를 transient(masterSeed)로 받아 유도.
+	//         transient는 오더러/원장에 기록되지 않으므로 키가 공개 데이터로 재계산 불가.
+	//         seed 미제공 시에만 하위호환으로 txID 기반 사용(주의: 그 경우 재계산 가능).
+	var ekRaw [32]byte
+	if tr, tErr := ctx.GetStub().GetTransient(); tErr == nil {
+		if ms, ok := tr["masterSeed"]; ok && len(ms) >= 16 {
+			ekRaw = sha256.Sum256(append([]byte("ENCRYPTION::"), ms...))
+		} else {
+			ekRaw = sha256.Sum256([]byte(fmt.Sprintf("ENCRYPTION_%s_%s", electionID, txID)))
+		}
+	} else {
+		ekRaw = sha256.Sum256([]byte(fmt.Sprintf("ENCRYPTION_%s_%s", electionID, txID)))
+	}
 	ekKey := "ENCRYPTION_KEY_" + electionID
 	ekHexStr := hex.EncodeToString(ekRaw[:])
 	if pdcErr := ctx.GetStub().PutPrivateData(VotePrivatePDC, ekKey, []byte(ekHexStr)); pdcErr != nil {
@@ -951,17 +968,17 @@ func (c *VotingContract) CreateElection(
 	}
 
 	if encryptionMode == "elgamal" {
-		// [PAPER-11] ElGamal 키쌍 생성 — 결정론적 (txID 기반)
-		keySeed := sha256.Sum256([]byte(fmt.Sprintf("ELGAMAL_KEY_%s_%s", electionID, txID)))
-		privKey, pubKey := elgamalGenerateKeyPair(keySeed[:])
+		// [P2 보안] ElGamal 키를 AES 마스터키에 바인딩 → 동일 Shamir 흐름이 둘 다 보호.
+		//   keySeed = SHA256("ELGAMAL::" + aesKey). aesKey가 비밀이므로 ElGamal 키도 비밀.
+		//   2-of-3 복원으로 aesKey가 복구되면 동일 공식으로 ElGamal 키를 재유도(verifyKeyReconstruction).
+		privKey, pubKey := elgamalGenerateKeyPair(elgamalKeySeedFromAES(ekRaw[:]))
 		elgamalPubKey = pubKey
 
-		// 비밀키를 PDC에 저장
 		pkKey := "ELGAMAL_PRIVKEY_" + electionID
 		if pdcErr := ctx.GetStub().PutPrivateData(VotePrivatePDC, pkKey, []byte(privKey.Text(16))); pdcErr != nil {
 			return fmt.Errorf("ElGamal 비밀키 PDC 저장 실패: %w", pdcErr)
 		}
-		log.Printf("[CreateElection] ElGamal 키쌍 생성 완료 — pubKey.Y: %s...", pubKey.Y[:16])
+		log.Printf("[CreateElection] ElGamal 키쌍 생성(AES 바인딩) 완료 — pubKey.Y: %s...", pubKey.Y[:16])
 	} else {
 		log.Printf("[CreateElection] AES 암호화 키 생성 완료 — PDC key: %s, hex: %s...", ekKey, ekHexStr[:16])
 	}
@@ -1145,13 +1162,7 @@ func (c *VotingContract) CloseElection(
 		return nil, fmt.Errorf("이미 종료된 선거입니다: %s", electionID)
 	}
 
-	// 집계 실행
-	tally, err := c.TallyVotes(ctx, electionID)
-	if err != nil {
-		return nil, err
-	}
-
-	// 선거 상태를 CLOSED로 업데이트
+	// 선거 상태를 CLOSED로 업데이트 (집계/키분산 전에 CLOSED 상태가 선행되어야 함)
 	election.Status = "CLOSED"
 	b, err := json.Marshal(election)
 	if err != nil {
@@ -1161,6 +1172,30 @@ func (c *VotingContract) CloseElection(
 		return nil, fmt.Errorf("선거 상태 업데이트 실패: %w", err)
 	}
 
+	if election.EncryptionMode == "elgamal" {
+		// [P2 보안] ElGamal: 종료 시 결과를 복호화하지 않는다.
+		//   1) InitKeySharing — AES 마스터키를 Shamir 2-of-3 분할하고 AES/ElGamal 키를 PDC에서 삭제.
+		//   2) TallyVotes — 키가 없으므로 암호문 집계만 저장(복호화 대기, Decrypted=false).
+		//   결과 복호화는 2개 기관이 조각을 제출(SubmitKeyShare)하여 키가 복원된 후 자동 수행된다.
+		//   → "단일 기관 단독 복호화 불가 + 공개 데이터로 키 재계산 불가"가 성립.
+		// 1) 암호문 집계만(복호화 X) — 키를 읽지 않으므로 이어지는 키 삭제와 순서 무관.
+		tally, terr := c.tallyVotesInternal(ctx, electionID, nil, true)
+		if terr != nil {
+			return nil, terr
+		}
+		// 2) 키 분산(Shamir 분할 + AES/ElGamal 키 PDC 삭제). 같은 tx 내 삭제는 다음 tx부터 적용.
+		//    doInitKeySharing은 상태 체크를 건너뜀(이 tx에서 방금 CLOSED로 쓴 값은 GetState로 안 보임).
+		if _, ksErr := c.doInitKeySharing(ctx, electionID); ksErr != nil {
+			return nil, fmt.Errorf("키 분산 초기화 실패: %w", ksErr)
+		}
+		return tally, nil
+	}
+
+	// AES(레거시): 종료 즉시 복호화 집계 (기존 동작 유지)
+	tally, err := c.TallyVotes(ctx, electionID)
+	if err != nil {
+		return nil, err
+	}
 	return tally, nil
 }
 
@@ -1586,7 +1621,20 @@ func (c *VotingContract) TallyVotes(
 	if err := requireElectionAdmin(ctx); err != nil {
 		return nil, err
 	}
+	return c.tallyVotesInternal(ctx, electionID, nil, false)
+}
 
+// tallyVotesInternal [P2] 집계 핵심 로직 (내부용 — contractapi 미노출).
+//   providedKey != nil → 그 키로 복호화 (복원 직후 in-memory 키; PDC 미조회).
+//                        (같은 tx에서 PutPrivateData한 키는 GetPrivateData로 안 보이므로 직접 전달)
+//   aggregateOnly=true → 복호화 없이 암호문 집계만 (종료 시; 키 미조회).
+//   기본값             → ElGamal은 PDC에서 키 조회 후 복호화 (기존 동작).
+func (c *VotingContract) tallyVotesInternal(
+	ctx contractapi.TransactionContextInterface,
+	electionID string,
+	providedKey *big.Int,
+	aggregateOnly bool,
+) (*VoteTally, error) {
 	// 선거 존재 확인
 	election, err := c.GetElection(ctx, electionID)
 	if err != nil {
@@ -1614,13 +1662,21 @@ func (c *VotingContract) TallyVotes(
 	encKey, ekErr := getEncryptionKey(ctx, electionID)
 	useAES := ekErr == nil && encKey != nil
 	var elgamalPrivKey *big.Int
-	useElGamal := election.EncryptionMode == "elgamal"
-	if useElGamal {
-		var pkErr error
-		elgamalPrivKey, pkErr = getElGamalPrivateKey(ctx, electionID)
-		if pkErr != nil {
-			log.Printf("[TallyVotes] ElGamal 비밀키 조회 실패 (AES 폴백) — %v", pkErr)
-			useElGamal = false
+	// [P2] 동형 집계(암호문 곱)는 키 불필요, 최종 복호화에만 키 필요.
+	aggregateElGamal := election.EncryptionMode == "elgamal"
+	canDecryptElGamal := false
+	if aggregateElGamal && !aggregateOnly {
+		if providedKey != nil {
+			elgamalPrivKey = providedKey
+			canDecryptElGamal = true
+		} else {
+			k, pkErr := getElGamalPrivateKey(ctx, electionID)
+			if pkErr == nil && k != nil {
+				elgamalPrivKey = k
+				canDecryptElGamal = true
+			} else {
+				log.Printf("[tallyVotes] ElGamal 비밀키 없음 — 암호문 집계만 수행(복원 대기) — %v", pkErr)
+			}
 		}
 	}
 
@@ -1673,7 +1729,7 @@ func (c *VotingContract) TallyVotes(
 			continue
 		}
 
-		if useElGamal {
+		if aggregateElGamal {
 			// [PAPER-13] Exponential ElGamal 동형 집계
 			// 개별 복호화 없이 암호문을 곱셈으로 누적
 			// Π E(g^m_i) = E(g^(Σm_i)) → 한 번만 복호화
@@ -1712,8 +1768,10 @@ func (c *VotingContract) TallyVotes(
 		}
 	}
 
-	// [PAPER-13] ElGamal 동형 집계 완료 — 누적 암호문 한 번만 복호화
-	if useElGamal && homomorphicCount > 0 {
+	// [P2] ElGamal 동형 집계 완료. 키가 있으면 복호화, 없으면(분산 후) 암호문 집계만 저장.
+	tallyDecrypted := true
+	encAggC1, encAggC2 := "", ""
+	if aggregateElGamal && homomorphicCount > 0 && canDecryptElGamal {
 		// g^sum = accC2 * accC1^(-x) mod p
 		gSum, decErr := expElGamalDecryptToGm(elgamalPrivKey, accC1.Text(16), accC2.Text(16))
 		if decErr != nil {
@@ -1764,6 +1822,14 @@ func (c *VotingContract) TallyVotes(
 
 		log.Printf("[TallyVotes] 동형 집계 완료 — sum=%d, counts=%v, 투표수=%d",
 			sum, counts, homomorphicCount)
+	} else if aggregateElGamal && homomorphicCount > 0 {
+		// [P2] 복호화 보류 — 키 분산 후이므로 암호문 집계만 저장(Results는 0 유지).
+		//   2-of-3 조각 복원 시 verifyKeyReconstruction이 키를 복구하고 재집계하여 복호화한다.
+		tallyDecrypted = false
+		encAggC1 = accC1.Text(16)
+		encAggC2 = accC2.Text(16)
+		log.Printf("[TallyVotes] 암호문 집계 저장(복호화 대기) — election: %s, homomorphicCount=%d",
+			electionID, homomorphicCount)
 	}
 
 	// [PAPER-2] 전체 집계 증명 해시 계산: 모든 DecryptionProof의 정렬된 해시
@@ -1777,6 +1843,9 @@ func (c *VotingContract) TallyVotes(
 		ClosedAt:         closedAt,
 		TallyProofHash:   tallyProofHash,
 		DecryptionProofs: decProofs,
+		Decrypted:        tallyDecrypted,
+		EncAggC1:         encAggC1,
+		EncAggC2:         encAggC2,
 	}
 
 	// 집계 결과를 원장에 영구 기록 (키: "TALLY_<electionID>")
@@ -2425,7 +2494,16 @@ func (c *VotingContract) InitKeySharing(
 	if election.Status != "CLOSED" {
 		return nil, fmt.Errorf("키 분산은 선거 종료(CLOSED) 후에만 가능합니다 (현재: %s)", election.Status)
 	}
+	return c.doInitKeySharing(ctx, electionID)
+}
 
+// doInitKeySharing [P2] 상태 체크 없이 키 분산을 수행 (CloseElection 내부 호출용).
+//   CloseElection은 같은 tx에서 방금 CLOSED로 PutState하므로 GetState로는 ACTIVE로 보임 →
+//   상태 체크를 분리하여 내부 호출 시 우회. 공개 InitKeySharing은 상태 체크 후 이 함수를 호출.
+func (c *VotingContract) doInitKeySharing(
+	ctx contractapi.TransactionContextInterface,
+	electionID string,
+) (*KeySharingStatus, error) {
 	statusKey := "KEYSHARING_" + electionID
 	if existingBytes, _ := ctx.GetStub().GetState(statusKey); existingBytes != nil {
 		return nil, fmt.Errorf("이미 키 분산이 초기화된 선거입니다: %s", electionID)
@@ -2506,6 +2584,15 @@ func (c *VotingContract) InitKeySharing(
 		log.Printf("[InitKeySharing] encryptionKey 삭제 실패 (무시) — %v", delErr)
 	} else {
 		log.Printf("[InitKeySharing] encryptionKey PDC 삭제 완료 — 이후 Shamir 복원 필수")
+	}
+
+	// [P2 보안] ElGamal 비밀키도 PDC에서 삭제 — 복원 전까지 복호화 불가.
+	//   ElGamal 키는 AES 마스터키에 바인딩되어 있어, 2-of-3 복원 시 재유도된다.
+	pkKey := "ELGAMAL_PRIVKEY_" + electionID
+	if delErr := ctx.GetStub().DelPrivateData(VotePrivatePDC, pkKey); delErr != nil {
+		log.Printf("[InitKeySharing] ElGamal privKey 삭제 (무시) — %v", delErr)
+	} else {
+		log.Printf("[InitKeySharing] ElGamal privKey PDC 삭제 완료")
 	}
 
 	log.Printf("[InitKeySharing] 완료 — election: %s, keyHash: %s...", electionID, keyHash[:16])
@@ -2682,6 +2769,24 @@ func (c *VotingContract) verifyKeyReconstruction(
 			log.Printf("[verifyKeyReconstruction] 복원 키 PDC 저장 실패 — %v", err)
 		} else {
 			log.Printf("[verifyKeyReconstruction] 복원 성공 + encryptionKey PDC 복원 — election: %s", electionID)
+		}
+		// [P2 보안] ElGamal 모드: 복원된 AES 마스터키로부터 ElGamal 비밀키를 재유도해 복원하고,
+		//   재집계(TallyVotes)하여 종료 시 보류했던 결과를 복호화한다.
+		//   → 2-of-3 조각이 모이기 전에는 어떤 단일 기관도 결과를 복호화할 수 없다.
+		if el, elErr := c.GetElection(ctx, electionID); elErr == nil && el.EncryptionMode == "elgamal" {
+			egPriv, _ := elgamalGenerateKeyPair(elgamalKeySeedFromAES(reconstructed))
+			// PDC에 ElGamal 키 복원 (이후 tx에서 사용 가능하도록)
+			pkKey := "ELGAMAL_PRIVKEY_" + electionID
+			if perr := ctx.GetStub().PutPrivateData(VotePrivatePDC, pkKey, []byte(egPriv.Text(16))); perr != nil {
+				log.Printf("[verifyKeyReconstruction] ElGamal 키 복원 저장 실패 — %v", perr)
+			}
+			// 같은 tx에서 복호화: 방금 PutPrivateData한 키는 GetPrivateData로 안 보이므로
+			//   복원한 in-memory 키(egPriv)를 직접 전달하여 보류 중이던 결과를 복호화한다.
+			if _, terr := c.tallyVotesInternal(ctx, electionID, egPriv, false); terr != nil {
+				log.Printf("[verifyKeyReconstruction] 복원 후 복호화 실패 — %v", terr)
+			} else {
+				log.Printf("[verifyKeyReconstruction] ElGamal 결과 복호화 완료 — election: %s", electionID)
+			}
 		}
 	} else {
 		log.Printf("[verifyKeyReconstruction] 복원 실패: 해시 불일치 (got %s, want %s)", recHash[:8], status.KeyHash[:8])
@@ -3562,6 +3667,13 @@ func getEncryptionKey(ctx contractapi.TransactionContextInterface, electionID st
 
 // elgamalGenerateKeyPair 결정론적 ElGamal 키쌍 생성
 // seed에서 비밀키 x를 유도 → Fabric 결정론성 보장
+// elgamalKeySeedFromAES [P2] AES 마스터키로부터 ElGamal 키 seed를 결정론적으로 유도.
+// CreateElection(최초 생성)과 verifyKeyReconstruction(복원 후 재유도)에서 동일하게 사용.
+func elgamalKeySeedFromAES(aesKey []byte) []byte {
+	s := sha256.Sum256(append([]byte("ELGAMAL::"), aesKey...))
+	return s[:]
+}
+
 func elgamalGenerateKeyPair(seed []byte) (x *big.Int, pubKey *ElGamalPublicKey) {
 	// x = SHA256(seed) mod q, x != 0
 	xHash := sha256.Sum256(seed)

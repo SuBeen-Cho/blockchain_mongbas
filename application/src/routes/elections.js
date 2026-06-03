@@ -203,8 +203,12 @@ router.post('/', async (req, res) => {
     const args = [electionID, title, description || '', JSON.stringify(candidates), String(actualStartTime), String(endTime)];
     const proposalOpts = { arguments: args };
     if (mode === 'elgamal') {
+      // [P2 보안] ElGamal 키를 공개 txID가 아닌 "비밀 seed"로 유도하도록 masterSeed를 transient로 전달.
+      //   transient는 오더러/원장에 기록되지 않으므로 키가 공개 데이터로 재계산되지 않는다.
+      //   서버는 seed를 저장/로깅하지 않고 즉시 폐기한다(trusted dealer 가정).
       proposalOpts.transientData = {
         encryptionMode: Buffer.from('elgamal'),
+        masterSeed: crypto.randomBytes(32),
       };
     }
     const proposal = contract.newProposal('CreateElection', proposalOpts);
