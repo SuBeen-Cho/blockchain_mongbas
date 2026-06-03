@@ -98,6 +98,13 @@ export default function ControlPage() {
       }
       setResults(t.results); setDecrypted(!!t.decrypted);
       addLog(t.decrypted ? `복호화 완료: ${JSON.stringify(t.results)}` : '복호화 대기 중');
+      // 검증(내 표 추적)용 데이터 준비: Merkle 트리 + 게시판 공개
+      setBusy('검증 데이터 준비 중...');
+      try {
+        await J(`/elections/${encodeURIComponent(eid)}/merkle`, { method: 'POST' });
+        await J(`/elections/${encodeURIComponent(eid)}/publish-audit`, { method: 'POST' });
+        addLog('Merkle 트리 + 게시판 공개 완료 (내 표 추적 검증 준비됨)');
+      } catch (e) { addLog('검증 데이터 준비 경고: ' + e.message); }
     } catch (e) { addLog('오류: ' + e.message); }
     setBusy('');
   }

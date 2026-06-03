@@ -3,6 +3,7 @@ import ReactDOM from 'react-dom/client';
 import App from './App.jsx';
 import KioskPage from './pages/KioskPage.jsx';
 import ControlPage from './pages/ControlPage.jsx';
+import TrackPage from './pages/TrackPage.jsx';
 import './index.css';
 
 // [부스 시연] URL 쿼리 기반 라우팅 (react-router 미사용 — 경량)
@@ -17,6 +18,8 @@ if (appMode === 'kiosk') {
   rootEl = <KioskPage electionId={params.get('e')} />;
 } else if (appMode === 'control') {
   rootEl = <ControlPage />;
+} else if (appMode === 'track') {
+  rootEl = <TrackPage electionId={params.get('e')} />;
 } else {
   rootEl = <App />;
 }
