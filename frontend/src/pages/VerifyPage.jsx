@@ -2,10 +2,15 @@
  * VerifyPage.jsx — E2E 검증 (아이콘 카드 방식)
  */
 
-import { useState } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { computeMerkleRootFromProof, computeNullifier, computePasswordHash, verifyBulletinBoard, verifyChaumPedersen } from '../utils/crypto.js';
 import HashDisplay from '../components/HashDisplay.jsx';
 import Alert from '../components/Alert.jsx';
+import MerkleTreeDiagram from '../components/verify-animations/MerkleTreeDiagram.jsx';
+import DeniableDiagram from '../components/verify-animations/DeniableDiagram.jsx';
+import BulletinBoardPipeline from '../components/verify-animations/BulletinBoardPipeline.jsx';
+import ReceiptFreeDiagram from '../components/verify-animations/ReceiptFreeDiagram.jsx';
+import ElGamalZKPDiagram from '../components/verify-animations/ElGamalZKPDiagram.jsx';
 
 const API = '/api';
 
@@ -26,19 +31,33 @@ export default function VerifyPage() {
 
   const [loading, setLoading] = useState(false);
   const [result,  setResult]  = useState(null);
+  const [prevDeniableResult, setPrevDeniableResult] = useState(null);
   const [error,   setError]   = useState('');
   const [bbResult,  setBbResult]  = useState(null);
   const [rfResult,  setRfResult]  = useState(null);
   const [zkpResult, setZkpResult] = useState(null);
+  const [verifySteps, setVerifySteps] = useState([]);
+  const animRef = useRef(null);
+
+  // 검증 시작 시 애니메이션 영역으로 자동 스크롤
+  useEffect(() => {
+    if (verifySteps.length === 1 && animRef.current) {
+      animRef.current.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+  }, [verifySteps]);
 
   function resetResults() {
-    setResult(null); setBbResult(null); setRfResult(null); setZkpResult(null); setError('');
+    setResult(null); setPrevDeniableResult(null); setBbResult(null); setRfResult(null); setZkpResult(null); setError('');
   }
 
   async function verify() {
     if (!electionID) return setError('선거 ID를 입력하세요.');
-    setLoading(true); setError(''); setResult(null);
+    setLoading(true); setError(''); setVerifySteps([]);
+    if (mode === 'deniable' && result) setPrevDeniableResult(result);
+    setResult(null);
     try {
+      // Step 1: Nullifier 조회
+      setVerifySteps(['nullifier']);
       let hash = nullifierHash;
       if (!hash && voterSecret && electionID) {
         const bfRes = await fetch(`${API}/elections/${electionID}/blinding-factor`);
@@ -48,7 +67,10 @@ export default function VerifyPage() {
         setNullifierHash(hash);
       }
       if (!hash) throw new Error('nullifierHash 또는 (voterSecret + electionID)가 필요합니다.');
+      setVerifySteps(s => [...s, 'nullifier_done']);
 
+      // Step 2: Merkle Proof 수신
+      setVerifySteps(s => [...s, 'proof']);
       let res, data;
       if (mode === 'deniable' && password) {
         const pwHash = await computePasswordHash(password, hash);
@@ -61,19 +83,26 @@ export default function VerifyPage() {
       }
       data = await res.json();
       if (!res.ok) throw new Error(data.error);
+      setVerifySteps(s => [...s, 'proof_done']);
 
       const proofPayload = data.proof && !Array.isArray(data.proof) ? data.proof : data;
       const proofPath = Array.isArray(data.proof) ? data.proof : Array.isArray(data.proof?.proof) ? data.proof.proof : [];
       const leafHash = proofPayload.leafHash || data.leafHash || '';
 
+      // Step 3: Root 재계산
+      setVerifySteps(s => [...s, 'compute']);
       const rootRes = await fetch(`${API}/elections/${electionID}/merkle`);
       const rootData = await rootRes.json();
       if (!rootRes.ok) throw new Error(rootData.error || 'Merkle root 조회 실패');
-
       const computedRoot = await computeMerkleRootFromProof(leafHash, proofPath);
+      setVerifySteps(s => [...s, 'compute_done']);
+
+      // Step 4: Chain Root 비교
+      setVerifySteps(s => [...s, 'compare']);
       const chainRoot = rootData.rootHash;
       const localVerified = computedRoot === chainRoot;
       if (!localVerified) throw new Error('Merkle proof 검증 실패: root 불일치');
+      setVerifySteps(s => [...s, 'compare_done']);
 
       setResult({
         nullifierHash: hash, ...data,
@@ -85,18 +114,24 @@ export default function VerifyPage() {
 
   async function verifyBulletinBoardPublic() {
     if (!electionID) return setError('선거 ID를 입력하세요.');
-    setLoading(true); setError(''); setBbResult(null);
+    setLoading(true); setError(''); setBbResult(null); setVerifySteps([]);
     try {
+      setVerifySteps(['bb_fetch']);
       const bbRes = await fetch(`${API}/elections/${electionID}/bulletin-board`);
       const bbData = await bbRes.json();
       if (!bbRes.ok) throw new Error(bbData.error || 'Bulletin Board 조회 실패');
+      setVerifySteps(s => [...s, 'bb_fetch_done', 'bb_decrypt']);
 
       const verification = await verifyBulletinBoard(bbData);
+      setVerifySteps(s => [...s, 'bb_decrypt_done', 'bb_server']);
+
       const serverRes = await fetch(`${API}/elections/${electionID}/verify-public`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ electionID }),
       });
       const serverData = await serverRes.json();
+      setVerifySteps(s => [...s, 'bb_server_done', 'bb_compare']);
+      setVerifySteps(s => [...s, 'bb_compare_done']);
 
       setBbResult({
         clientVerification: verification,
@@ -114,14 +149,16 @@ export default function VerifyPage() {
 
   async function verifyElGamalZKP() {
     if (!electionID) return setError('선거 ID를 입력하세요.');
-    setLoading(true); setError(''); setZkpResult(null);
+    setLoading(true); setError(''); setZkpResult(null); setVerifySteps([]);
     try {
+      setVerifySteps(['zkp_fetch']);
       const res = await fetch(`${API}/elections/${electionID}/verify-elgamal`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ electionID }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'ZKP 검증 실패');
+      setVerifySteps(s => [...s, 'zkp_fetch_done', 'zkp_verify', 'zkp_verify_done', 'zkp_compare', 'zkp_compare_done']);
       setZkpResult(data);
     } catch (e) { setError(e.message); }
     finally { setLoading(false); }
@@ -129,8 +166,9 @@ export default function VerifyPage() {
 
   async function verifyReceiptFree() {
     if (!electionID) return setError('선거 ID를 입력하세요.');
-    setLoading(true); setError(''); setRfResult(null);
+    setLoading(true); setError(''); setRfResult(null); setVerifySteps([]);
     try {
+      setVerifySteps(['rf_query']);
       let hash = nullifierHash;
       if (!hash && voterSecret && electionID) {
         const bfRes = await fetch(`${API}/elections/${electionID}/blinding-factor`);
@@ -306,6 +344,24 @@ export default function VerifyPage() {
       {/* 에러 */}
       {error && <Alert variant="error">{error}</Alert>}
 
+      {/* ── 검증 흐름 애니메이션 ── */}
+      <div ref={animRef}>
+        {(loading || verifySteps.length > 0) && (mode === 'simple' || mode === 'deniable') && (
+          mode === 'deniable'
+            ? <DeniableDiagram verifySteps={verifySteps} result={result} prevResult={prevDeniableResult} />
+            : <MerkleTreeDiagram verifySteps={verifySteps} result={result} />
+        )}
+        {(loading || verifySteps.length > 0) && mode === 'bulletin' && (
+          <BulletinBoardPipeline verifySteps={verifySteps} result={bbResult} />
+        )}
+        {(loading || verifySteps.length > 0) && mode === 'receipt-free' && (
+          <ReceiptFreeDiagram verifySteps={verifySteps} result={rfResult} />
+        )}
+        {(loading || verifySteps.length > 0) && mode === 'elgamal-zkp' && (
+          <ElGamalZKPDiagram verifySteps={verifySteps} result={zkpResult} />
+        )}
+      </div>
+
       {/* ── Merkle / Deniable 결과 ── */}
       {result && (
         <div className="bg-white rounded-2xl border border-emerald-200 shadow-sm">
@@ -317,7 +373,12 @@ export default function VerifyPage() {
             </div>
             <div>
               <p className="font-bold text-emerald-800">검증 성공</p>
-              <p className="text-xs text-emerald-600">투표가 집계에 포함됨 — Merkle proof 검증 완료</p>
+              <p className="text-xs text-emerald-600">투표가 집계에 포함됨 — Merkle proof 검증 완료
+                {mode === 'deniable'
+                  ? <span className="ml-2 px-1.5 py-0.5 bg-red-200/60 text-red-800 rounded text-[10px] font-bold">Coercion Resistance</span>
+                  : <span className="ml-2 px-1.5 py-0.5 bg-emerald-200/60 text-emerald-800 rounded text-[10px] font-bold">Recorded-as-Cast</span>
+                }
+              </p>
             </div>
           </div>
           <div className="p-6 space-y-4">
@@ -326,7 +387,13 @@ export default function VerifyPage() {
               <HashDisplay label="Merkle Leaf Hash" value={result.leafHash || result.proof?.leafHash} />
             )}
             {result.localVerification?.chainRoot && (
-              <HashDisplay label="Chain Root Hash" value={result.localVerification.chainRoot} />
+              <HashDisplay label="Chain Root Hash (블록체인 저장)" value={result.localVerification.chainRoot} />
+            )}
+            {result.localVerification?.computedRoot && result.localVerification.computedRoot === result.localVerification.chainRoot && (
+              <div className="flex items-center gap-2 text-xs text-emerald-600 bg-emerald-50 rounded-lg px-3 py-2 border border-emerald-200">
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" /></svg>
+                <span>직접 계산한 Root = 블록체인 Root → <span className="font-bold">투표가 변조 없이 포함되어 있음을 증명</span></span>
+              </div>
             )}
             {result.proof && (
               <details className="text-xs">
@@ -337,6 +404,26 @@ export default function VerifyPage() {
                   {JSON.stringify(result.proof, null, 2)}
                 </pre>
               </details>
+            )}
+
+            {/* Deniable 비교 패널 */}
+            {mode === 'deniable' && prevDeniableResult && (
+              <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 space-y-2">
+                <p className="text-xs font-semibold text-amber-800">이전 검증 결과와 비교</p>
+                <div className="grid grid-cols-2 gap-3 text-[11px]">
+                  <div>
+                    <p className="font-semibold text-slate-500 mb-1">이전 (다른 비밀번호)</p>
+                    <p className="font-mono text-slate-600 break-all">{prevDeniableResult.localVerification?.leafHash || prevDeniableResult.proof?.leafHash || prevDeniableResult.leafHash || '-'}</p>
+                  </div>
+                  <div>
+                    <p className="font-semibold text-slate-500 mb-1">현재</p>
+                    <p className="font-mono text-slate-600 break-all">{result.localVerification?.leafHash || result.proof?.leafHash || result.leafHash || '-'}</p>
+                  </div>
+                </div>
+                <p className="text-[11px] text-amber-700 font-medium">
+                  두 결과 모두 "검증 성공"이지만 Leaf Hash가 다름 — 강압자가 어느 것이 진짜인지 구분할 수 없습니다 (Coercion Resistance)
+                </p>
+              </div>
             )}
           </div>
         </div>
@@ -363,7 +450,9 @@ export default function VerifyPage() {
               <p className={`font-bold ${bbResult.clientVerification.verified ? 'text-emerald-800' : 'text-red-800'}`}>
                 Universal Verification {bbResult.clientVerification.verified ? '성공' : '실패'}
               </p>
-              <p className="text-xs text-slate-500">클라이언트 + 서버 이중 검증</p>
+              <p className="text-xs text-slate-500">클라이언트 + 서버 이중 검증
+                <span className="ml-2 px-1.5 py-0.5 bg-blue-200/60 text-blue-800 rounded text-[10px] font-bold">Universal Verifiability</span>
+              </p>
             </div>
           </div>
           <div className="p-6 space-y-4">
@@ -410,7 +499,9 @@ export default function VerifyPage() {
               <p className={`font-bold ${zkpResult.isValid ? 'text-emerald-800' : 'text-red-800'}`}>
                 Chaum-Pedersen ZKP {zkpResult.isValid ? '검증 성공' : '검증 실패'}
               </p>
-              <p className="text-xs text-slate-500">비밀키 없이 복호화 정확성 증명</p>
+              <p className="text-xs text-slate-500">비밀키 없이 복호화 정확성 증명
+                <span className="ml-2 px-1.5 py-0.5 bg-purple-200/60 text-purple-800 rounded text-[10px] font-bold">Tallied-as-Recorded</span>
+              </p>
             </div>
           </div>
           <div className="p-6 space-y-4">
@@ -454,10 +545,21 @@ export default function VerifyPage() {
               <p className={`font-bold ${rfResult.included ? 'text-emerald-800' : 'text-amber-800'}`}>
                 {rfResult.included ? '투표가 집계에 포함되어 있습니다' : '해당 투표가 발견되지 않습니다'}
               </p>
-              <p className="text-xs text-slate-500">총 투표수: {rfResult.totalVotes}표</p>
+              <p className="text-xs text-slate-500">총 투표수: {rfResult.totalVotes}표
+                <span className="ml-2 px-1.5 py-0.5 bg-amber-200/60 text-amber-800 rounded text-[10px] font-bold">Receipt-Freeness</span>
+              </p>
             </div>
           </div>
-          <div className="p-6">
+          <div className="p-6 space-y-3">
+            <div className="bg-slate-50 rounded-lg p-4 space-y-2">
+              <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Receipt-Free 원리</p>
+              <div className="space-y-1.5 text-[11px] text-slate-600">
+                <p>1. 서버는 nullifier 존재 여부만 확인 → <span className="font-semibold">포함/미포함</span>만 반환</p>
+                <p>2. 후보자 정보, Merkle proof, 암호문 등 <span className="font-semibold text-red-600">일체 미반환</span></p>
+                <p>3. 따라서 유권자는 <span className="font-semibold">자신이 투표했다는 사실</span>만 확인 가능</p>
+                <p>4. 강압자에게 "누구를 찍었는지" 증명하는 receipt 생성이 <span className="font-semibold text-red-600">원천 불가</span></p>
+              </div>
+            </div>
             <Alert variant="info">
               후보자 정보, Merkle proof 등 증명 데이터는 반환되지 않습니다 — receipt 생성 불가 (Receipt-Free 속성)
             </Alert>

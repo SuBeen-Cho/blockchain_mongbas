@@ -66,6 +66,11 @@ export async function computePasswordHash(password, nullifierHash) {
  */
 export async function computeMerkleRootFromProof(leafHash, proof = []) {
   if (!leafHash) throw new Error('leafHash가 필요합니다.');
+  // 단일 리프 트리(proof 비어있음): 체인코드 computeMerkleRoot와 동일하게 root = SHA256(leaf).
+  // (이 처리가 없으면 표가 1개인 선거에서 client root=leaf ≠ chain root=SHA256(leaf) 로 검증 실패)
+  if (!proof || proof.length === 0) {
+    return await sha256(leafHash);
+  }
   let current = leafHash;
   for (const node of proof) {
     if (!node?.hash || !node?.position) {

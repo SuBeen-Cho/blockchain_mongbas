@@ -444,6 +444,21 @@ export default function VoterPage() {
               <span className="px-2 py-0.5 bg-purple-100 text-purple-700 rounded text-[11px] font-bold">ElGamal</span>
             )}
           </label>
+          {blindMode && encryptionKey && (
+            <div className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs ${isElGamal ? 'bg-purple-50 border border-purple-200 text-purple-700' : 'bg-blue-50 border border-blue-200 text-blue-700'}`}>
+              <svg className="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" /></svg>
+              <span>{isElGamal
+                ? 'Exponential ElGamal 동형 암호화 — 서버가 투표를 복호화하지 않고 암호문 상태로 집계. Chaum-Pedersen ZKP로 유효성 검증.'
+                : 'AES-256-GCM 대칭 암호화 — 후보 ID가 브라우저에서 암호화되어 서버는 평문을 볼 수 없음.'
+              }</span>
+            </div>
+          )}
+          {!blindMode && (
+            <div className="flex items-center gap-2 px-4 py-2.5 bg-amber-50 border border-amber-200 rounded-xl text-xs text-amber-700">
+              <svg className="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L4.082 16.5c-.77.833.192 2.5 1.732 2.5z" /></svg>
+              <span>Blind Mode OFF — 후보 ID가 평문으로 서버에 전달됩니다. Blind Mode를 켜면 클라이언트에서 암호화하여 서버가 투표 내용을 알 수 없게 됩니다.</span>
+            </div>
+          )}
 
           {/* Panic Credential */}
           <label className={`rounded-xl border p-4 transition-colors duration-200 flex items-center gap-3 cursor-pointer ${panicCredential ? 'border-red-300 bg-red-50/50' : 'border-slate-200 bg-slate-50'}`}>
@@ -485,6 +500,7 @@ export default function VoterPage() {
           <details className="rounded-xl border border-slate-200 overflow-hidden">
             <summary className="px-4 py-3 cursor-pointer text-sm font-medium text-slate-600 hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-inset transition-colors duration-200">
               Deniable Verification 비밀번호 설정 (선택)
+              <span className="ml-2 text-[10px] text-slate-400 font-normal">— 강압 상황 대비 가짜 검증 결과 제공</span>
             </summary>
             <div className="px-4 pb-4 space-y-3 border-t border-slate-100 pt-3">
               <p className="text-xs text-slate-500">
@@ -642,12 +658,15 @@ export default function VoterPage() {
             <div className="rounded-xl border-2 border-purple-200 bg-purple-50/30 overflow-hidden">
               <div className="px-4 py-3 flex items-center gap-2">
                 <span className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-purple-100 text-purple-600 text-xs font-bold">B</span>
-                <span className="text-sm font-semibold text-purple-800">Benaloh Challenge — 암호화 정확성 검증</span>
+                <span className="text-sm font-semibold text-purple-800">Benaloh Challenge — 의도대로 암호화됐는지 검증</span>
                 <span className="ml-auto text-[10px] text-purple-500 bg-purple-100 px-2 py-0.5 rounded-full font-medium">Cast-as-Intended</span>
               </div>
               <div className="px-4 pb-4 space-y-3 border-t border-purple-100 pt-3">
                 <p className="text-xs text-slate-600">
-                  투표 제출 전 암호화가 올바르게 수행되었는지 독립 검증합니다. Audit된 투표는 폐기되므로 안전합니다.
+                  투표 제출 전에 암호화가 내 의도대로 수행되었는지 독립 검증합니다.
+                  Audit를 요청하면 서버가 암호화 키를 공개하여 복호화 결과를 확인할 수 있고,
+                  키가 공개된 투표는 비밀이 깨지므로 <span className="font-semibold text-purple-700">자동으로 무효 처리</span>됩니다.
+                  따라서 실제 투표는 Audit 후 새로 제출해야 합니다.
                 </p>
 
                 {benalohStep === 'idle' && (
@@ -682,9 +701,9 @@ export default function VoterPage() {
                   <div className="space-y-3">
                     <Alert variant={benalohAuditResult.clientVerified ? 'success' : 'error'}
                            title={benalohAuditResult.clientVerified ? '브라우저 독립 검증 성공' : '검증 실패'}>
-                      <p className="text-xs">후보: {benalohAuditResult.candidateID}</p>
+                      <p className="text-xs">복호화 결과: <span className="font-semibold">{benalohAuditResult.candidateID}</span> — 내 선택과 일치합니다.</p>
                       {benalohAuditResult.clientVerified && (
-                        <p className="text-xs text-slate-500 mt-1">이 투표는 폐기되었습니다. 아래 버튼으로 실제 투표를 제출하세요.</p>
+                        <p className="text-xs text-slate-500 mt-1">검증을 위해 암호화 키가 공개되었으므로 이 투표는 무효 처리됩니다. 아래에서 실제 투표를 새로 제출하세요.</p>
                       )}
                     </Alert>
                     <button
@@ -765,10 +784,13 @@ export default function VoterPage() {
                   {!panicMode && (
                     <button
                       onClick={() => { setPanicMode(true); setPanicCredential(true); }}
-                      className="h-12 px-5 rounded-xl border-2 border-red-200 text-red-500 text-xs font-medium
-                        hover:bg-red-50 transition-all duration-200"
-                      title="강압 상황에서 누르세요"
-                    >Panic</button>
+                      className="h-12 px-4 rounded-xl border-2 border-red-200 text-red-500 text-xs font-medium
+                        hover:bg-red-50 transition-all duration-200 flex items-center gap-1.5"
+                      title="강압 상황에서 누르세요 — 투표는 정상처럼 보이지만 집계에서 제외됩니다"
+                    >
+                      <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L4.082 16.5c-.77.833.192 2.5 1.732 2.5z" /></svg>
+                      <span>강압 상황<br/><span className="text-[9px] text-red-400">집계 제외</span></span>
+                    </button>
                   )}
                 </div>
               </div>
@@ -813,7 +835,17 @@ export default function VoterPage() {
                 Panic Credential (집계 제외)
               </span>
             )}
+            {result.isRevote && (
+              <span className="px-3 py-1 bg-amber-100 text-amber-700 rounded-full text-xs font-semibold">
+                재투표 (이전 투표 대체 — Last-Vote-Wins)
+              </span>
+            )}
           </div>
+          {result.isRevote && (
+            <Alert variant="warning">
+              이전 투표가 이 투표로 대체되었습니다. 동일한 voterSecret으로 투표하면 마지막 투표만 집계에 반영됩니다 (Last-Vote-Wins 정책).
+            </Alert>
+          )}
 
           {/* 추적 번호 */}
           {result.nullifierHash && (
@@ -823,8 +855,17 @@ export default function VoterPage() {
                 이 추적 번호로 "검증" 탭에서 투표 포함 여부를 확인할 수 있습니다.
                 재투표 시 최종 1표만 유효합니다.
               </p>
+              <div className="bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 text-xs text-amber-700 text-center">
+                <span className="font-semibold">voterSecret을 안전하게 보관하세요</span> — 검증 탭에서 투표 포함 여부를 확인하려면 이 값이 필요합니다. 서버에 저장되지 않으므로 분실 시 복구 불가.
+              </div>
             </div>
           )}
+
+          {/* 블록체인 합의 정보 */}
+          <div className="flex items-center gap-2 px-4 py-2.5 bg-blue-50 border border-blue-200 rounded-xl text-xs text-blue-700">
+            <svg className="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" /></svg>
+            <span><span className="font-bold">2-of-3 다기관 합의</span>로 블록체인에 기록됨 — 선관위, 참관정당, 시민단체 중 2개 이상 기관이 서명하여 단일 기관 조작이 원천 차단됩니다.</span>
+          </div>
 
           {/* 보안 속성 */}
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">

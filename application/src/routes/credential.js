@@ -54,6 +54,20 @@ const VOTER_REGISTRY = new Map([
   ['admin',  { secret: 'adminpw',  eligible: false }], // 관리자는 투표 불가
 ]);
 
+// ── [부스 시연용] 데모 유권자 풀 ────────────────────────────────
+// 전시 부스에서 다수의 폰이 동시에 투표할 수 있도록 데모 자격증명을 추가한다.
+// - demo001..demo100: 폰마다 고유 enrollmentID를 배정 → eligibility(자격검증) 시연용
+// - demo(공용): 여러 폰이 공유 가능한 간편 자격증명. 실제 표 구분은 폰별 voterSecret로
+//   계산되는 nullifierHash가 담당하므로 자격증명 공유는 프라이버시/중복에 영향 없음.
+// 운영 환경(NODE_ENV=production)에서는 추가하지 않는다.
+if (process.env.NODE_ENV !== 'production') {
+  for (let i = 1; i <= 100; i++) {
+    const id = `demo${String(i).padStart(3, '0')}`;
+    VOTER_REGISTRY.set(id, { secret: `${id}pw`, eligible: true });
+  }
+  VOTER_REGISTRY.set('demo', { secret: 'demopw', eligible: true });
+}
+
 // ════════════════════════════════════════════════════════════════
 // [B단계] HMAC-SHA256 자격증명 발급
 // ════════════════════════════════════════════════════════════════

@@ -279,6 +279,22 @@ export default function AdminPage() {
             </div>
           </div>
         )}
+
+        {/* 개표 결과 요약 — 종료 후 항상 표시 */}
+        {res.tally?.results && (
+          <div className="bg-gradient-to-r from-blue-50 to-emerald-50 border border-blue-200 rounded-xl p-4 mt-3">
+            <div className="flex items-center gap-2 mb-2">
+              <svg className="w-4 h-4 text-blue-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" /></svg>
+              <span className="text-xs font-bold text-blue-800">개표 결과 (총 {res.tally.totalVotes}표)</span>
+              {res.tally.panicFiltered > 0 && <span className="text-[10px] px-1.5 py-0.5 bg-red-100 text-red-600 rounded font-semibold">Panic {res.tally.panicFiltered}건 제외</span>}
+            </div>
+            <div className="flex flex-wrap gap-3">
+              {Object.entries(res.tally.results).sort(([,a],[,b]) => b - a).map(([c, n]) => (
+                <span key={c} className="text-sm font-semibold text-slate-800">{c}: <span className="text-blue-700">{n}표</span></span>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
 
       {/* ═══════ 1. 선거 생성 ═══════ */}
@@ -302,18 +318,30 @@ export default function AdminPage() {
             <label className="block text-xs font-medium text-slate-500 mb-1">후보자</label>
             <input className={`w-full ${INPUT}`} placeholder="쉼표로 구분 (예: 김길동, 가길동, 길동김)" value={newCandidates} onChange={e => setNewCandidates(e.target.value)} />
           </div>
-          <div className="flex items-center gap-3">
-            <span className="text-xs font-medium text-slate-500">암호화:</span>
-            {['aes', 'elgamal'].map(m => (
-              <button key={m} onClick={() => setNewEncMode(m)}
-                className={`px-3 py-1.5 rounded-lg border text-sm font-medium transition-all duration-200 ${
-                  newEncMode === m ? 'border-blue-500 bg-blue-50 text-blue-700' : 'border-slate-200 text-slate-600 hover:border-blue-300'
-                }`}
-              >{m === 'aes' ? 'AES-256-GCM' : 'ElGamal'}</button>
-            ))}
+          <div className="space-y-2">
+            <div className="flex items-center gap-3">
+              <span className="text-xs font-medium text-slate-500">암호화:</span>
+              {['aes', 'elgamal'].map(m => (
+                <button key={m} onClick={() => setNewEncMode(m)}
+                  className={`px-3 py-1.5 rounded-lg border text-sm font-medium transition-all duration-200 ${
+                    newEncMode === m ? 'border-blue-500 bg-blue-50 text-blue-700' : 'border-slate-200 text-slate-600 hover:border-blue-300'
+                  }`}
+                >{m === 'aes' ? 'AES-256-GCM' : 'ElGamal'}</button>
+              ))}
+            </div>
+            <p className="text-[11px] text-slate-400 px-1">
+              {newEncMode === 'elgamal'
+                ? 'ElGamal: 동형 암호화로 복호화 없이 집계 가능 + Chaum-Pedersen ZKP로 투표 유효성 증명. 권장.'
+                : 'AES: 대칭키 암호화. 집계 시 복호화 필요. ElGamal 대비 보안성 낮음.'}
+            </p>
           </div>
           {err.create && <Alert variant="error">{err.create}</Alert>}
-          {res.create && <SuccessBanner>선거가 생성되었습니다 — ID: {res.create.electionID}</SuccessBanner>}
+          {res.create && (
+            <div className="space-y-2">
+              <SuccessBanner>선거가 생성되었습니다 — ID: {res.create.electionID}</SuccessBanner>
+              <p className="text-[11px] text-blue-600 px-1">2-of-3 endorsement: 선관위 + 참관정당 + 시민단체 중 2개 이상 기관이 서명하여 블록체인에 기록됨</p>
+            </div>
+          )}
           <Btn loading={busy.create} onClick={run('create', () => apiPost(`${API}/elections`, {
             electionID: newID || eid, title: newTitle, description: newDesc,
             candidates: newCandidates.split(',').map(s => s.trim()).filter(Boolean),
@@ -340,9 +368,22 @@ export default function AdminPage() {
       <div ref={el => sectionRefs.current[2] = el}>
         <Section title="선거 종료 + 자동 집계" number="3" open={openSection === 2} done={doneSections.has(2)} onToggle={() => toggleSection(2)}>
           <p className="text-xs text-slate-500">투표를 마감하고 집계를 시작합니다. 이 작업은 되돌릴 수 없습니다.</p>
+          {currentStatus === 'CLOSED' && (
+            <Alert variant="info">이미 종료된 선거입니다.</Alert>
+          )}
           {err.close && <Alert variant="error">{err.close}</Alert>}
           {res.close && <SuccessBanner>선거가 종료되고 집계가 완료되었습니다.</SuccessBanner>}
-          <Btn variant="danger" loading={busy.close} onClick={run('close', () => apiPost(`${API}/elections/${eid}/close`), 2, 3)}>
+          <Btn variant="danger" loading={busy.close} onClick={run('close', async () => {
+            const closeData = await apiPost(`${API}/elections/${eid}/close`);
+            // 종료 후 자동으로 집계 결과 + 상태 조회
+            const [tallyData, infoData] = await Promise.all([
+              apiGet(`${API}/elections/${eid}/tally`).catch(() => null),
+              apiGet(`${API}/elections/${eid}`).catch(() => null),
+            ]);
+            if (tallyData) setRes(r => ({ ...r, tally: tallyData }));
+            if (infoData) setRes(r => ({ ...r, info: infoData }));
+            return closeData;
+          }, 2, 3)}>
             선거 종료
           </Btn>
         </Section>
@@ -354,9 +395,21 @@ export default function AdminPage() {
           {err.tally && <Alert variant="error">{err.tally}</Alert>}
           {res.tally && (
             <div className="space-y-4">
-              <p className="text-sm text-slate-600">
-                총 투표수: <span className="font-bold text-slate-900 text-lg">{res.tally.totalVotes}</span>표
-              </p>
+              <div className="flex flex-wrap items-baseline gap-4">
+                <p className="text-sm text-slate-600">
+                  총 투표수: <span className="font-bold text-slate-900 text-lg">{res.tally.totalVotes}</span>표
+                </p>
+                {res.tally.panicFiltered > 0 && (
+                  <span className="px-2.5 py-1 bg-red-50 border border-red-200 text-red-600 rounded-lg text-xs font-semibold">
+                    Panic 투표 {res.tally.panicFiltered}건 제외됨
+                  </span>
+                )}
+                {res.tally.evictedCount > 0 && (
+                  <span className="px-2.5 py-1 bg-amber-50 border border-amber-200 text-amber-600 rounded-lg text-xs font-semibold">
+                    재투표(덮어쓰기) {res.tally.evictedCount}건
+                  </span>
+                )}
+              </div>
               {res.tally.results && Object.entries(res.tally.results)
                 .sort(([,a],[,b]) => b - a)
                 .map(([candidate, count], idx) => {
@@ -429,7 +482,18 @@ export default function AdminPage() {
               <input className={`w-full text-xs font-mono bg-white ${INPUT}`} readOnly value={shareHex} />
             )}
             {err.submitShare && <Alert variant="error">{err.submitShare}</Alert>}
-            {res.submitShare && <SuccessBanner>Share {shareIdx}이 제출되었습니다.</SuccessBanner>}
+            {res.submitShare && (
+              <div className="space-y-2">
+                <SuccessBanner>Share {shareIdx}이 제출되었습니다.</SuccessBanner>
+                <div className="flex items-center gap-3 text-xs text-slate-600">
+                  <span>제출: <span className="font-bold">{res.submitShare.submittedCount || '?'}</span> / {res.submitShare.totalShares || 3}</span>
+                  <span>Threshold: <span className="font-bold">{res.submitShare.threshold || 2}</span></span>
+                  {res.submitShare.isDecrypted && (
+                    <span className="px-2 py-0.5 bg-emerald-100 text-emerald-700 rounded-full font-bold">키 복원 완료</span>
+                  )}
+                </div>
+              </div>
+            )}
           </div>
 
           {/* 복원 현황 */}
@@ -461,7 +525,18 @@ export default function AdminPage() {
             암호화 키와 투표를 공개하여 누구나 독립 검증 가능하게 합니다.
           </p>
           {err.publishAudit && <Alert variant="error">{err.publishAudit}</Alert>}
-          {res.publishAudit && <SuccessBanner>Audit 데이터가 공개되었습니다 — 검증 탭에서 누구나 확인 가능합니다.</SuccessBanner>}
+          {res.publishAudit && (
+            <div className="space-y-2">
+              <SuccessBanner>Audit 데이터가 공개되었습니다 — 검증 탭에서 누구나 확인 가능합니다.</SuccessBanner>
+              <div className="flex flex-wrap gap-2 text-xs">
+                {res.publishAudit.totalBallots != null && (
+                  <span className="px-2 py-1 bg-blue-50 border border-blue-200 text-blue-700 rounded-lg font-medium">공개 투표: {res.publishAudit.totalBallots}건</span>
+                )}
+                <span className="px-2 py-1 bg-emerald-50 border border-emerald-200 text-emerald-700 rounded-lg font-medium">암호화 키 공개됨</span>
+                <span className="px-2 py-1 bg-purple-50 border border-purple-200 text-purple-700 rounded-lg font-medium">셔플 증명 포함</span>
+              </div>
+            </div>
+          )}
           <Btn loading={busy.publishAudit} onClick={run('publishAudit', () => apiPost(`${API}/elections/${eid}/publish-audit`, { electionID: eid }), 6, 7)}>
             Audit Data 공개
           </Btn>

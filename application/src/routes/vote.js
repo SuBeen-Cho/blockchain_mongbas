@@ -163,12 +163,26 @@ router.post('/', async (req, res) => {
       throw new Error(`트랜잭션 커밋 실패 (status: ${status.code})`);
     }
 
+    // 투표 후 nullifier 조회해서 evictCount 확인
+    let evictCount = 0;
+    try {
+      const nullifierBytes = await contract.evaluateTransaction('GetNullifier', nullifierHash);
+      if (nullifierBytes && nullifierBytes.length > 0) {
+        const nullifierObj = JSON.parse(Buffer.from(nullifierBytes).toString('utf8'));
+        evictCount = nullifierObj.evictCount || 0;
+      }
+    } catch (_) { /* 조회 실패 시 무시 — evictCount=0 */ }
+
     res.json({
-      message : '투표가 완료되었습니다.',
+      message : evictCount > 0
+        ? `재투표가 완료되었습니다. (이전 투표를 대체 — ${evictCount}회차)`
+        : '투표가 완료되었습니다.',
       electionID,
       candidateID: isBlindMode ? '(blind)' : candidateID,
       nullifierHash,
       blindMode: isBlindMode,
+      isRevote: evictCount > 0,
+      evictCount,
     });
   } catch (err) {
     // 재투표 불가 시 체인코드가 에러 반환
