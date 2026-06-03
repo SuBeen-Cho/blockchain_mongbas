@@ -6,13 +6,16 @@
 <title>Mongbas — 누구도 못 보지만, 누구나 검증하는 투표</title>
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css" />
 <style>
+  @property --a1{syntax:'<color>';inherits:true;initial-value:#6366f1}
+  @property --a2{syntax:'<color>';inherits:true;initial-value:#22d3ee}
   :root{
     --bg:#05060c; --bg2:#0a0c18; --ink:#f4f5fb; --sub:#9aa3c0;
     --indigo:#6366f1; --violet:#a855f7; --cyan:#22d3ee; --pink:#ec4899; --lime:#a3e635;
     --grad:linear-gradient(110deg,#6366f1,#a855f7 45%,#22d3ee);
+    --a1:#6366f1; --a2:#22d3ee;
   }
   *{box-sizing:border-box;margin:0;padding:0}
-  html{scroll-behavior:smooth}
+  html{scroll-behavior:smooth;transition:--a1 1.1s ease,--a2 1.1s ease}
   body{
     background:var(--bg); color:var(--ink);
     font-family:'Pretendard Variable',Pretendard,system-ui,-apple-system,sans-serif;
@@ -21,8 +24,16 @@
   /* 고정 3D 캔버스 (스크롤 따라오는 3D 오브젝트) */
   #three{position:fixed;inset:0;z-index:0;pointer-events:none;opacity:.9}
   .veil{position:fixed;inset:0;z-index:1;pointer-events:none;
-    background:radial-gradient(1200px 800px at 70% -10%,rgba(99,102,241,.18),transparent 60%),
-               radial-gradient(900px 700px at 10% 110%,rgba(34,211,238,.12),transparent 60%)}
+    background:
+      radial-gradient(1000px 780px at 80% -8%, color-mix(in srgb,var(--a1) 34%,transparent), transparent 60%),
+      radial-gradient(900px 760px at 4% 16%, color-mix(in srgb,var(--a2) 24%,transparent), transparent 58%),
+      radial-gradient(1100px 840px at 16% 112%, color-mix(in srgb,var(--a2) 26%,transparent), transparent 60%),
+      radial-gradient(760px 660px at 96% 80%, color-mix(in srgb,var(--a1) 18%,transparent), transparent 55%)}
+  /* 살짝 떠다니는 노이즈/광 레이어 */
+  .veil2{position:fixed;inset:-20%;z-index:1;pointer-events:none;opacity:.5;
+    background:conic-gradient(from 0deg at 50% 50%, transparent, color-mix(in srgb,var(--a1) 10%,transparent), transparent 30%, color-mix(in srgb,var(--a2) 10%,transparent), transparent 60%);
+    animation:spin 40s linear infinite}
+  @keyframes spin{to{transform:rotate(360deg)}}
   main{position:relative;z-index:2}
   section{padding:clamp(80px,12vh,160px) clamp(20px,6vw,96px);max-width:1280px;margin:0 auto}
   .eyebrow{display:inline-flex;align-items:center;gap:8px;font-size:14px;font-weight:700;letter-spacing:0;
@@ -99,12 +110,19 @@
   .dot.on{background:var(--cyan);width:26px;border-radius:4px}
 
   /* ───── 성능 숫자 ───── */
-  .stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:24px;margin-top:56px}
-  .stat{padding:34px;border-radius:26px;background:linear-gradient(160deg,rgba(255,255,255,.06),rgba(255,255,255,.015));
-    border:1px solid rgba(255,255,255,.12)}
-  .stat .v{font-size:clamp(48px,5.5vw,74px);font-weight:900;letter-spacing:-0.05em;line-height:1}
-  .stat .u{font-size:20px;font-weight:800;color:var(--sub);margin-left:4px}
-  .stat .l{margin-top:14px;font-size:15px;color:var(--sub);font-weight:600}
+  /* 그라데이션 반전 패널 (중요 섹션) */
+  .gradpanel{position:relative;border-radius:36px;padding:clamp(26px,4vw,52px);overflow:hidden;margin-top:48px;
+    background:linear-gradient(135deg,color-mix(in srgb,var(--a1) 86%,#05060c),color-mix(in srgb,var(--a2) 76%,#05060c));
+    box-shadow:0 50px 130px color-mix(in srgb,var(--a1) 34%,transparent),inset 0 1px 0 rgba(255,255,255,.2)}
+  .gradpanel::before{content:"";position:absolute;inset:0;pointer-events:none;
+    background:radial-gradient(720px 340px at 16% -12%,rgba(255,255,255,.32),transparent 60%);mix-blend-mode:overlay}
+  .stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:18px;position:relative}
+  .stat{padding:28px;border-radius:22px;background:rgba(255,255,255,.13);border:1px solid rgba(255,255,255,.26);
+    backdrop-filter:blur(8px);transition:transform .3s}
+  .stat:hover{transform:translateY(-6px)}
+  .stat .v{font-size:clamp(46px,5.2vw,70px);font-weight:900;letter-spacing:-0.05em;line-height:1;color:#fff;text-shadow:0 4px 24px rgba(0,0,0,.25)}
+  .stat .u{font-size:20px;font-weight:800;color:rgba(255,255,255,.82);margin-left:4px}
+  .stat .l{margin-top:12px;font-size:14px;color:rgba(255,255,255,.88);font-weight:600;line-height:1.4}
 
   /* ───── 폰 체험 ───── */
   .phonegrid{display:grid;grid-template-columns:1fr;gap:48px;align-items:center}
@@ -150,23 +168,31 @@
 
   /* 실제 화면 갤러리 */
   .gallery{display:grid;grid-template-columns:1fr 1fr;gap:24px;margin-top:48px}
-  .gcard{border-radius:22px;overflow:hidden;border:1px solid rgba(255,255,255,.12);background:rgba(255,255,255,.03);transition:transform .45s cubic-bezier(.2,.8,.2,1),box-shadow .45s}
+  .gcard{position:relative;border-radius:24px;overflow:hidden;background:#0b0e1c;
+    border:1px solid rgba(255,255,255,.12);transition:transform .45s cubic-bezier(.2,.8,.2,1),box-shadow .45s;
+    box-shadow:0 20px 50px rgba(0,0,0,.4)}
+  .gcard::after{content:"";position:absolute;inset:0;border-radius:24px;padding:1px;pointer-events:none;
+    background:linear-gradient(135deg,color-mix(in srgb,var(--a1) 70%,transparent),transparent 50%,color-mix(in srgb,var(--a2) 60%,transparent));
+    -webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);-webkit-mask-composite:xor;mask-composite:exclude;opacity:.7}
   .gcard.full{grid-column:1/-1}
-  .gcard:hover{transform:translateY(-10px);box-shadow:0 36px 80px rgba(99,102,241,.28)}
+  .gcard:hover{transform:translateY(-10px);box-shadow:0 40px 90px color-mix(in srgb,var(--a1) 30%,transparent)}
   .gcard img{width:100%;display:block;background:#0b0e1c}
-  .gcard.full img{max-height:520px;object-fit:cover;object-position:top}
-  .gcard figcaption{padding:16px 20px;font-size:15px;font-weight:700;color:#dbdef2}
-  @media(max-width:860px){.gallery{grid-template-columns:1fr}.gcard.full{grid-column:auto}}
+  .gcard:not(.full) img{height:460px;object-fit:cover;object-position:top center}
+  .gcard.full img{width:100%;height:auto;max-height:560px;object-fit:cover;object-position:top center}
+  .gcard figcaption{padding:18px 22px;font-size:15px;font-weight:700;color:#eef0fb;
+    background:linear-gradient(0deg,rgba(8,10,20,.9),transparent);position:relative}
+  @media(max-width:860px){.gallery{grid-template-columns:1fr}.gcard.full{grid-column:auto}.gcard:not(.full) img{height:auto}}
 </style>
 </head>
 <body>
 <div id="progress"></div>
 <canvas id="three"></canvas>
 <div class="veil"></div>
+<div class="veil2"></div>
 
 <main>
   <!-- HERO -->
-  <header class="hero" id="top">
+  <header class="hero scene" id="top" data-a1="#6366f1" data-a2="#22d3ee">
     <div id="unicorn" data-us-project="CSxwejnPjJyEnMGpyrna"></div>
     <div class="hero-scrim"></div>
     <div class="floatcards" id="fcards"></div>
@@ -189,7 +215,7 @@
   </header>
 
   <!-- 영상 -->
-  <section id="video">
+  <section id="video" class="scene" data-a1="#8b5cf6" data-a2="#6366f1">
     <div class="kicker reveal">90초로 보는 Mongbas</div>
     <h2 class="h2big reveal" style="margin-top:14px">한 표가 봉인되고,<br><span class="grad">검증되기까지.</span></h2>
     <p class="lede reveal">폰으로 투표하고, 영수증 하나로 내 표를 추적합니다. 실제 시연 영상을 확인하세요.</p>
@@ -204,7 +230,7 @@
   </section>
 
   <!-- 검증의 역설 -->
-  <section id="paradox">
+  <section id="paradox" class="scene" data-a1="#ec4899" data-a2="#a855f7">
     <div class="kicker reveal">The Paradox</div>
     <h2 class="h2big reveal" style="margin-top:14px">비밀이어야 한다.<br>그런데 <span class="grad">확인하고 싶다.</span></h2>
     <p class="lede reveal">투표는 누가 뭘 찍었는지 아무도 몰라야 합니다. 동시에 내 표가 제대로 세어졌는지도 알고 싶습니다.
@@ -212,7 +238,7 @@
   </section>
 
   <!-- 7대 보안 속성 (가로 스크롤 카드) -->
-  <section id="props">
+  <section id="props" class="scene" data-a1="#22d3ee" data-a2="#6366f1">
     <div class="props-head">
       <div class="kicker reveal">7 Security Properties</div>
       <h2 class="h2big reveal" style="margin-top:10px">7가지 보안 속성,<br><span class="grad">하나도 빠짐없이.</span></h2>
@@ -224,11 +250,12 @@
   </section>
 
   <!-- 성능 -->
-  <section id="perf">
+  <section id="perf" class="scene" data-a1="#10b981" data-a2="#22d3ee">
     <div class="kicker reveal">Performance — 정량 실측</div>
     <h2 class="h2big reveal" style="margin-top:14px">프라이버시는<br><span class="grad">거의 공짜였습니다.</span></h2>
     <p class="lede reveal">Apple M2 · Hyperledger Fabric 2.5 · 3개 기관 2-of-3 합의 환경에서 실측한 수치입니다.
       강력한 암호 보호를 더했는데도, 사용자가 느끼는 속도는 거의 그대로입니다.</p>
+    <div class="gradpanel reveal">
     <div class="stats">
       <div class="stat reveal"><div><span class="v" data-c="7">0</span><span class="u">/7</span></div><div class="l">학술 보안 속성 — <b style="color:#fff">100% 전부 달성</b></div></div>
       <div class="stat reveal"><div><span class="v" data-c="40.7" data-dec="1">0</span><span class="u">TPS</span></div><div class="l">최대 처리량 (초당 트랜잭션)</div></div>
@@ -237,10 +264,11 @@
       <div class="stat reveal"><div><span class="v" data-c="24">0</span><span class="u">ms</span></div><div class="l">폰에서 암호화+영지식 증명 — 체감 지연 0</div></div>
       <div class="stat reveal"><div><span class="v" data-c="0.9" data-dec="1">0</span><span class="u">ms</span></div><div class="l">강압·정상 응답 시간차 — 통계적 비구별(p&gt;0.05)</div></div>
     </div>
+    </div>
   </section>
 
   <!-- 폰 체험 -->
-  <section id="exp">
+  <section id="exp" class="scene" data-a1="#a855f7" data-a2="#ec4899">
     <div class="phonegrid">
       <div>
         <div class="kicker reveal">The Experience</div>
@@ -273,7 +301,7 @@
   </section>
 
   <!-- 실제 작동 화면 -->
-  <section id="screens">
+  <section id="screens" class="scene" data-a1="#6366f1" data-a2="#06b6d4">
     <div class="kicker reveal">It actually works</div>
     <h2 class="h2big reveal" style="margin-top:14px">컨셉이 아닙니다.<br><span class="grad">지금, 실제로 작동합니다.</span></h2>
     <p class="lede reveal">옆 체험존에서 돌아가는 바로 그 화면입니다. 폰으로 투표하고, 2개 기관이 키를 모아 개표하고, 내 표를 직접 추적합니다.</p>
@@ -285,7 +313,7 @@
   </section>
 
   <!-- 비교 -->
-  <section id="why">
+  <section id="why" class="scene" data-a1="#22d3ee" data-a2="#a855f7">
     <div class="kicker reveal">Why Mongbas</div>
     <h2 class="h2big reveal" style="margin-top:14px">기존 투표가 못 하던 것을,<br><span class="grad">전부.</span></h2>
     <div class="vs">
@@ -307,11 +335,13 @@
   </section>
 
   <!-- CTA -->
-  <section class="cta">
-    <div class="kicker reveal">Try it now</div>
-    <h2 class="reveal" style="margin-top:14px">옆 화면에서<br><span class="grad">직접 투표해보세요.</span></h2>
-    <p class="lede reveal" style="margin:22px auto 0">QR을 찍고 한 표를 던진 뒤, 당신의 추적번호로 내 표를 직접 검증해보세요.</p>
-    <div class="qr reveal">옆 컴퓨터<br>체험존</div>
+  <section class="cta scene" data-a1="#ec4899" data-a2="#8b5cf6">
+    <div class="gradpanel reveal" style="text-align:center">
+      <div class="kicker" style="color:rgba(255,255,255,.85)">Try it now</div>
+      <h2 style="margin-top:14px;color:#fff;font-size:clamp(36px,6vw,84px)">옆 화면에서<br>직접 투표해보세요.</h2>
+      <p style="margin:22px auto 0;max-width:640px;font-size:clamp(17px,1.8vw,21px);color:rgba(255,255,255,.9);font-weight:500">QR을 찍고 한 표를 던진 뒤, 당신의 추적번호로 내 표를 직접 검증해보세요.</p>
+      <div class="qr" style="background:#fff;color:#0f172a">옆 컴퓨터<br>체험존</div>
+    </div>
   </section>
 
   <footer>팀 몽바스 · 2026 캡스톤디자인 · Hyperledger Fabric 기반 익명 전자투표</footer>
@@ -321,7 +351,6 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/gsap.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/ScrollTrigger.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/@studio-freight/lenis@1.0.42/dist/lenis.min.js"></script>
 <script>
 // ===== 설정 =====
 const YT_ID = ""; // 예: "dQw4w9WgXcQ" — 넣으면 자동 임베드
@@ -411,13 +440,17 @@ if(YT_ID){
 
 // ===== GSAP 애니메이션 =====
 gsap.registerPlugin(ScrollTrigger);
-// 부드러운 스크롤(Lenis) + 진행바
-if(window.Lenis){const lenis=new Lenis({duration:1.15,smoothWheel:true});
-  lenis.on('scroll',ScrollTrigger.update);
-  gsap.ticker.add(t=>lenis.raf(t*1000));gsap.ticker.lagSmoothing(0);}
+// 진행바 (네이티브 스크롤 — 마우스 휠 즉시 반응)
 const _prog=document.getElementById('progress');
 function _updProg(){_prog.style.width=(scrollY/((document.body.scrollHeight-innerHeight)||1)*100)+'%'}
 addEventListener('scroll',_updProg,{passive:true});_updProg();
+// 섹션별 배경 색상 전환 (뷰포트 중앙 밴드에 들어온 섹션의 색으로)
+const _root=document.documentElement;
+const _io=new IntersectionObserver((es)=>{es.forEach(e=>{if(e.isIntersecting){
+  if(e.target.dataset.a1)_root.style.setProperty('--a1',e.target.dataset.a1);
+  if(e.target.dataset.a2)_root.style.setProperty('--a2',e.target.dataset.a2);
+}})},{rootMargin:'-45% 0px -45% 0px',threshold:0});
+document.querySelectorAll('.scene').forEach(s=>_io.observe(s));
 // 히어로 텍스트
 gsap.from('.hero h1 .ln span',{yPercent:120,duration:1.1,stagger:.12,ease:'power4.out',delay:.2});
 gsap.from('.hero .lead, .hero .pills',{opacity:0,y:30,duration:1,stagger:.15,delay:.7,ease:'power3.out'});
