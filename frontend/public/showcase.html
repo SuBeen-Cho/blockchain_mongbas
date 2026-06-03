@@ -15,7 +15,7 @@
     --a1:#6366f1; --a2:#22d3ee;
   }
   *{box-sizing:border-box;margin:0;padding:0}
-  html{scroll-behavior:smooth;transition:--a1 1.1s ease,--a2 1.1s ease}
+  html{transition:--a1 1.1s ease,--a2 1.1s ease}  /* scroll-behavior:smooth 제거 — 마우스 휠 즉시 반응 */
   body{
     background:var(--bg); color:var(--ink);
     font-family:'Pretendard Variable',Pretendard,system-ui,-apple-system,sans-serif;
@@ -30,10 +30,8 @@
       radial-gradient(1100px 840px at 16% 112%, color-mix(in srgb,var(--a2) 26%,transparent), transparent 60%),
       radial-gradient(760px 660px at 96% 80%, color-mix(in srgb,var(--a1) 18%,transparent), transparent 55%)}
   /* 살짝 떠다니는 노이즈/광 레이어 */
-  .veil2{position:fixed;inset:-20%;z-index:1;pointer-events:none;opacity:.5;
-    background:conic-gradient(from 0deg at 50% 50%, transparent, color-mix(in srgb,var(--a1) 10%,transparent), transparent 30%, color-mix(in srgb,var(--a2) 10%,transparent), transparent 60%);
-    animation:spin 40s linear infinite}
-  @keyframes spin{to{transform:rotate(360deg)}}
+  .veil2{position:fixed;inset:-20%;z-index:1;pointer-events:none;opacity:.4;
+    background:conic-gradient(from 0deg at 50% 50%, transparent, color-mix(in srgb,var(--a1) 12%,transparent), transparent 32%, color-mix(in srgb,var(--a2) 12%,transparent), transparent 62%)}
   main{position:relative;z-index:2}
   section{padding:clamp(80px,12vh,160px) clamp(20px,6vw,96px);max-width:1280px;margin:0 auto}
   .eyebrow{display:inline-flex;align-items:center;gap:8px;font-size:14px;font-weight:700;letter-spacing:0;
@@ -410,30 +408,35 @@ if(YT_ID){
 // ===== Three.js: 스크롤 따라오는 3D 오브젝트 =====
 (function(){
   const cv=document.getElementById('three');
-  const renderer=new THREE.WebGLRenderer({canvas:cv,alpha:true,antialias:true});
-  renderer.setPixelRatio(Math.min(devicePixelRatio,2));
+  const renderer=new THREE.WebGLRenderer({canvas:cv,alpha:true,antialias:true,powerPreference:'high-performance'});
+  renderer.setPixelRatio(Math.min(devicePixelRatio,1.5));
   const scene=new THREE.Scene();
-  const cam=new THREE.PerspectiveCamera(55,innerWidth/innerHeight,.1,100);cam.position.z=6;
-  const geo=new THREE.IcosahedronGeometry(2.1,1);
-  const mat=new THREE.MeshBasicMaterial({color:0x6366f1,wireframe:true,transparent:true,opacity:.32});
-  const mesh=new THREE.Mesh(geo,mat);scene.add(mesh);
-  const core=new THREE.Mesh(new THREE.IcosahedronGeometry(1.15,0),new THREE.MeshBasicMaterial({color:0xa855f7,wireframe:true,transparent:true,opacity:.5}));
-  scene.add(core);
-  // 점 입자
-  const pcount=900,pg=new THREE.BufferGeometry(),pp=new Float32Array(pcount*3);
-  for(let i=0;i<pcount*3;i++)pp[i]=(Math.random()-.5)*22;
+  const cam=new THREE.PerspectiveCamera(55,innerWidth/innerHeight,.1,100);cam.position.z=7;
+  // 스크롤 따라 화면을 가로지르는 메인 3D 오브젝트
+  const grp=new THREE.Group();scene.add(grp);
+  const mesh=new THREE.Mesh(new THREE.IcosahedronGeometry(1.9,1),new THREE.MeshBasicMaterial({color:0x818cf8,wireframe:true,transparent:true,opacity:.5}));
+  const core=new THREE.Mesh(new THREE.IcosahedronGeometry(1.0,0),new THREE.MeshBasicMaterial({color:0x38bdf8,wireframe:true,transparent:true,opacity:.65}));
+  grp.add(mesh);grp.add(core);
+  // 입자 (경량)
+  const pcount=450,pg=new THREE.BufferGeometry(),pp=new Float32Array(pcount*3);
+  for(let i=0;i<pcount*3;i++)pp[i]=(Math.random()-.5)*24;
   pg.setAttribute('position',new THREE.BufferAttribute(pp,3));
-  const pts=new THREE.Points(pg,new THREE.PointsMaterial({color:0x22d3ee,size:.03,transparent:true,opacity:.6}));
+  const pts=new THREE.Points(pg,new THREE.PointsMaterial({color:0x22d3ee,size:.035,transparent:true,opacity:.5}));
   scene.add(pts);
-  let sp=0;addEventListener('scroll',()=>{sp=scrollY/(document.body.scrollHeight-innerHeight||1)});
+  let target=0,sp=0;
+  addEventListener('scroll',()=>{target=scrollY/(document.body.scrollHeight-innerHeight||1)},{passive:true});
   function resize(){renderer.setSize(innerWidth,innerHeight);cam.aspect=innerWidth/innerHeight;cam.updateProjectionMatrix()}
   addEventListener('resize',resize);resize();
   (function loop(){requestAnimationFrame(loop);
-    const t=performance.now?0:0;
-    mesh.rotation.y+=.0016;mesh.rotation.x+=.0008;
-    mesh.rotation.z=sp*Math.PI*2; core.rotation.y-=.004;core.rotation.x-=.002;
-    mesh.scale.setScalar(1+sp*1.6); core.scale.setScalar(1+sp*.8);
-    pts.rotation.y+=.0004; cam.position.x=Math.sin(sp*3)*1.2;cam.lookAt(0,0,0);
+    if(document.hidden)return;
+    sp+=(target-sp)*0.06;                       // 부드럽게 추종
+    mesh.rotation.y+=.002;mesh.rotation.x+=.001;
+    core.rotation.y-=.005;core.rotation.x-=.003;
+    grp.position.x=3.4-sp*7.2;                   // 우상단 → 좌하단으로 이동
+    grp.position.y=2.1-sp*4.6;
+    grp.rotation.z=sp*Math.PI*1.5;
+    grp.scale.setScalar(0.8+sp*1.4);            // 스크롤 따라 확대
+    pts.rotation.y+=.0005;
     renderer.render(scene,cam);
   })();
 })();
