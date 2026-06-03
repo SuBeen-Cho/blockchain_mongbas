@@ -7,10 +7,8 @@ import {
 } from '../utils/crypto.js';
 
 /**
- * KioskPage — 부스 시연용 폰 투표 전용 화면 (Phase 4)
- * 진입: /?app=kiosk&e=<electionID>  (QR로 접속)
- *
- * 후보 선택 → 투표 → 큰 영수증(추적번호). 인증·암호화·ZKP는 자동.
+ * KioskPage — 부스 시연용 폰 투표 전용 화면 (Phase 4 · P7 모바일 리디자인)
+ * 진입: /?app=kiosk&e=<electionID>
  */
 const API = '/api';
 
@@ -22,16 +20,15 @@ async function J(path, opts = {}) {
   return j;
 }
 
-// 폰별 고유 데모 유권자 ID (localStorage에 유지)
 function getDemoVoter() {
   let id = localStorage.getItem('mongbas_demo_voter');
-  if (!id) {
-    const n = 1 + Math.floor(Math.random() * 100);
-    id = `demo${String(n).padStart(3, '0')}`;
-    localStorage.setItem('mongbas_demo_voter', id);
-  }
+  if (!id) { id = `demo${String(1 + Math.floor(Math.random() * 100)).padStart(3, '0')}`; localStorage.setItem('mongbas_demo_voter', id); }
   return id;
 }
+
+// ── 디자인 토큰 ──
+const C = { bg: '#f1f5f9', card: '#ffffff', ink: '#0f172a', sub: '#64748b', line: '#e2e8f0', primary: '#4f46e5', primarySoft: '#eef2ff', ok: '#16a34a', danger: '#dc2626' };
+const shadow = '0 1px 2px rgba(15,23,42,.04), 0 8px 24px rgba(15,23,42,.06)';
 
 export default function KioskPage({ electionId }) {
   const [election, setElection] = useState(null);
@@ -39,7 +36,7 @@ export default function KioskPage({ electionId }) {
   const [bf, setBf] = useState(null);
   const [cred, setCred] = useState(null);
   const [pick, setPick] = useState(null);
-  const [phase, setPhase] = useState('loading'); // loading | ready | voting | done | error
+  const [phase, setPhase] = useState('loading');
   const [err, setErr] = useState('');
   const [receipt, setReceipt] = useState(null);
 
@@ -50,15 +47,10 @@ export default function KioskPage({ electionId }) {
         const el = await J(`/elections/${encodeURIComponent(electionId)}`);
         if (el.status !== 'ACTIVE') { setErr('투표가 마감되었거나 아직 시작되지 않았습니다.'); setPhase('error'); return; }
         setElection(el);
-        if (el.encryptionMode === 'elgamal') {
-          const pk = await J(`/elections/${encodeURIComponent(electionId)}/elgamal-pubkey`);
-          setPub(pk.pubKey);
-        }
-        const b = await J(`/elections/${encodeURIComponent(electionId)}/blinding-factor`);
-        setBf(b.blindingFactor);
+        if (el.encryptionMode === 'elgamal') setPub((await J(`/elections/${encodeURIComponent(electionId)}/elgamal-pubkey`)).pubKey);
+        setBf((await J(`/elections/${encodeURIComponent(electionId)}/blinding-factor`)).blindingFactor);
         const voter = getDemoVoter();
-        const c = await J('/credential/idemix', { method: 'POST', body: JSON.stringify({ enrollmentID: voter, enrollmentSecret: `${voter}pw`, electionID: electionId }) });
-        setCred(c.credential);
+        setCred((await J('/credential/idemix', { method: 'POST', body: JSON.stringify({ enrollmentID: voter, enrollmentSecret: `${voter}pw`, electionID: electionId }) })).credential);
         setPhase('ready');
       } catch (e) { setErr(e.message); setPhase('error'); }
     })();
@@ -76,57 +68,73 @@ export default function KioskPage({ electionId }) {
       if (election.encryptionMode === 'elgamal') {
         const { c1, c2, _r } = elgamalEncrypt(pub, candidateID, pick);
         body.encryptedCandidateID = `${c1}:${c2}`;
-        const bvp = generateBallotValidityProof(pub, c1, c2, _r, pick, election.candidates.length);
-        body.ballotValidityProof = JSON.stringify(bvp);
-      } else {
-        body.candidateID = candidateID;
-      }
+        body.ballotValidityProof = JSON.stringify(generateBallotValidityProof(pub, c1, c2, _r, pick, election.candidates.length));
+      } else body.candidateID = candidateID;
       await J('/vote', { method: 'POST', headers: { 'x-idemix-credential': cred }, body: JSON.stringify(body) });
-      const short = nh.slice(0, 6).toUpperCase();
-      setReceipt({ code: `${short.slice(0, 4)}-${short.slice(4)}`, full: nh });
+      const s = nh.slice(0, 6).toUpperCase();
+      setReceipt({ code: `${s.slice(0, 4)}-${s.slice(4)}` });
       setPhase('done');
     } catch (e) { setErr(e.message); setPhase('error'); }
   }
 
-  const wrap = { minHeight: '100vh', background: '#f8fafc', fontFamily: 'system-ui, sans-serif', display: 'flex', flexDirection: 'column', alignItems: 'center', padding: 20 };
+  // 공통 셸: 가로 오버플로우 차단 + 중앙 컨테이너
+  const Shell = ({ children }) => (
+    <div style={{ boxSizing: 'border-box', width: '100%', minHeight: '100dvh', background: C.bg, overflowX: 'hidden', fontFamily: 'system-ui,-apple-system,sans-serif', color: C.ink }}>
+      <div style={{ boxSizing: 'border-box', width: '100%', maxWidth: 440, margin: '0 auto', padding: '20px 16px 40px' }}>{children}</div>
+    </div>
+  );
 
-  if (phase === 'loading') return <div style={wrap}><div style={{ marginTop: 120, color: '#64748b' }}>준비 중...</div></div>;
-  if (phase === 'error') return <div style={wrap}><div style={{ marginTop: 100, textAlign: 'center', color: '#dc2626' }}><div style={{ fontSize: 40 }}>⚠️</div><p>{err}</p></div></div>;
+  if (phase === 'loading') return <Shell><Center>준비 중…</Center></Shell>;
+  if (phase === 'error') return <Shell><Center><div style={{ fontSize: 44 }}>⚠️</div><p style={{ color: C.danger, fontWeight: 600 }}>{err}</p></Center></Shell>;
 
   if (phase === 'done') return (
-    <div style={wrap}>
-      <div style={{ marginTop: 40, width: '100%', maxWidth: 380, textAlign: 'center' }}>
-        <div style={{ fontSize: 56 }}>✅</div>
-        <h2 style={{ margin: '8px 0 4px' }}>투표 완료</h2>
-        <p style={{ color: '#64748b', fontSize: 14 }}>내 추적번호 — 검증할 때 사용하세요</p>
-        <div style={{ background: '#0f172a', color: '#fff', borderRadius: 16, padding: '24px 0', margin: '16px 0', fontSize: 44, fontWeight: 800, letterSpacing: 4 }}>
+    <Shell>
+      <div style={{ textAlign: 'center', marginTop: 28 }}>
+        <div style={{ width: 84, height: 84, borderRadius: 999, background: '#dcfce7', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto', fontSize: 44 }}>✅</div>
+        <h2 style={{ margin: '18px 0 4px', fontSize: 24 }}>투표 완료</h2>
+        <p style={{ color: C.sub, fontSize: 14, margin: 0 }}>내 추적번호 — 검증할 때 사용하세요</p>
+        <div style={{ boxSizing: 'border-box', width: '100%', background: 'linear-gradient(135deg,#4f46e5,#7c3aed)', color: '#fff', borderRadius: 20, padding: '26px 0', margin: '20px 0', fontSize: 46, fontWeight: 800, letterSpacing: 6, boxShadow: shadow }}>
           {receipt.code}
         </div>
-        <p style={{ color: '#94a3b8', fontSize: 12 }}>이 번호로 "내 표가 집계에 들어갔는지"를 변조 없이 확인할 수 있습니다.<br />(누구에게 투표했는지는 드러나지 않습니다)</p>
+        <p style={{ color: C.sub, fontSize: 13, lineHeight: 1.6 }}>이 번호로 <b style={{ color: C.ink }}>내 표가 변조 없이 집계에 들어갔는지</b> 확인할 수 있습니다.<br />누구에게 투표했는지는 드러나지 않습니다.</p>
       </div>
-    </div>
+    </Shell>
   );
 
-  // ready / voting
   return (
-    <div style={wrap}>
-      <div style={{ width: '100%', maxWidth: 380, marginTop: 20 }}>
-        <h1 style={{ fontSize: 22, textAlign: 'center' }}>{election.title}</h1>
-        <p style={{ textAlign: 'center', color: '#94a3b8', fontSize: 12, marginBottom: 20 }}>익명 투표 · 서버는 암호문만 봅니다</p>
-        {election.candidates.map((c, i) => (
-          <button key={c} onClick={() => setPick(i)} disabled={phase === 'voting'}
-            style={{ display: 'block', width: '100%', textAlign: 'left', padding: '18px 20px', marginBottom: 12, borderRadius: 14, fontSize: 18, fontWeight: 600,
-              border: pick === i ? '2px solid #2563eb' : '2px solid #e2e8f0', background: pick === i ? '#eff6ff' : '#fff', color: '#0f172a', cursor: 'pointer' }}>
-            <span style={{ display: 'inline-block', width: 26, height: 26, borderRadius: 999, border: pick === i ? '8px solid #2563eb' : '2px solid #cbd5e1', marginRight: 12, verticalAlign: 'middle' }} />
-            기호 {i + 1}　{c}
-          </button>
-        ))}
-        <button onClick={vote} disabled={pick == null || phase === 'voting'}
-          style={{ width: '100%', padding: 18, marginTop: 8, borderRadius: 14, border: 'none', fontSize: 19, fontWeight: 800, color: '#fff',
-            background: pick == null ? '#cbd5e1' : '#2563eb', cursor: pick == null ? 'not-allowed' : 'pointer' }}>
-          {phase === 'voting' ? '암호화 + 제출 중...' : '투표하기'}
-        </button>
+    <Shell>
+      <div style={{ textAlign: 'center', marginBottom: 18 }}>
+        <h1 style={{ fontSize: 23, fontWeight: 800, margin: '4px 0' }}>{election.title}</h1>
+        <div style={{ display: 'inline-flex', gap: 6, flexWrap: 'wrap', justifyContent: 'center', fontSize: 11, color: C.sub }}>
+          <Badge>🔒 익명</Badge><Badge>🛡️ 암호화</Badge><Badge>✓ 검증가능</Badge>
+        </div>
       </div>
-    </div>
+
+      {election.candidates.map((c, i) => {
+        const on = pick === i;
+        return (
+          <button key={c} onClick={() => setPick(i)} disabled={phase === 'voting'}
+            style={{ boxSizing: 'border-box', width: '100%', textAlign: 'left', display: 'flex', alignItems: 'center', gap: 14,
+              padding: '18px 18px', marginBottom: 12, borderRadius: 16, fontSize: 17, fontWeight: 700, cursor: 'pointer',
+              border: `2px solid ${on ? C.primary : C.line}`, background: on ? C.primarySoft : C.card, color: C.ink,
+              boxShadow: on ? '0 4px 14px rgba(79,70,229,.18)' : shadow, transition: 'all .15s' }}>
+            <span style={{ flex: '0 0 auto', width: 26, height: 26, borderRadius: 999, border: `2px solid ${on ? C.primary : '#cbd5e1'}`, background: on ? C.primary : '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              {on && <span style={{ width: 10, height: 10, borderRadius: 999, background: '#fff' }} />}
+            </span>
+            <span style={{ flex: 1, minWidth: 0 }}><span style={{ color: C.sub, fontSize: 13, fontWeight: 600 }}>기호 {i + 1}</span><br />{c}</span>
+          </button>
+        );
+      })}
+
+      <button onClick={vote} disabled={pick == null || phase === 'voting'}
+        style={{ boxSizing: 'border-box', width: '100%', padding: 18, marginTop: 6, borderRadius: 16, border: 'none', fontSize: 18, fontWeight: 800, color: '#fff',
+          background: pick == null ? '#cbd5e1' : C.primary, cursor: pick == null ? 'not-allowed' : 'pointer', boxShadow: pick == null ? 'none' : '0 6px 18px rgba(79,70,229,.3)' }}>
+        {phase === 'voting' ? '🔐 암호화 + 제출 중…' : '투표하기'}
+      </button>
+      <p style={{ textAlign: 'center', color: C.sub, fontSize: 12, marginTop: 14 }}>서버는 암호문만 받습니다. 평문 투표는 전송되지 않습니다.</p>
+    </Shell>
   );
 }
+
+const Center = ({ children }) => <div style={{ textAlign: 'center', marginTop: 120 }}>{children}</div>;
+const Badge = ({ children }) => <span style={{ boxSizing: 'border-box', padding: '4px 10px', borderRadius: 999, background: '#fff', border: '1px solid #e2e8f0' }}>{children}</span>;

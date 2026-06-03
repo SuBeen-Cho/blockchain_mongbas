@@ -112,14 +112,14 @@ export default function ControlPage() {
   const maxVotes = results ? Math.max(1, ...Object.values(results)) : 1;
 
   return (
-    <div style={{ minHeight: '100vh', background: '#0f172a', color: '#e2e8f0', fontFamily: 'system-ui, sans-serif', padding: 24 }}>
-      <div style={{ maxWidth: 920, margin: '0 auto' }}>
+    <div style={{ boxSizing: 'border-box', width: '100%', minHeight: '100vh', overflowX: 'hidden', background: '#0f172a', color: '#e2e8f0', fontFamily: 'system-ui,-apple-system,sans-serif', padding: 20 }}>
+      <div style={{ boxSizing: 'border-box', width: '100%', maxWidth: 920, margin: '0 auto' }}>
         <h1 style={{ fontSize: 26, marginBottom: 4 }}>🎛️ 발표자 관제판</h1>
         <div style={{ color: '#64748b', fontSize: 13, marginBottom: 20 }}>Mongbas 부스 시연 · ElGamal threshold</div>
 
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 260px', gap: 20 }}>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 20, alignItems: 'flex-start' }}>
           {/* 좌: 상태 + 컨트롤 */}
-          <div>
+          <div style={{ flex: '1 1 340px', minWidth: 0 }}>
             <div style={{ background: '#1e293b', borderRadius: 12, padding: 18, marginBottom: 16 }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <div>
@@ -166,7 +166,7 @@ export default function ControlPage() {
           </div>
 
           {/* 우: QR */}
-          <div style={{ background: '#1e293b', borderRadius: 12, padding: 18, textAlign: 'center', height: 'fit-content' }}>
+          <div style={{ flex: '1 1 240px', boxSizing: 'border-box', background: '#1e293b', borderRadius: 12, padding: 18, textAlign: 'center', height: 'fit-content' }}>
             <div style={{ fontSize: 13, color: '#94a3b8', marginBottom: 10 }}>여기 찍고 투표하세요</div>
             {qr ? <img src={qr} alt="kiosk QR" style={{ width: 220, borderRadius: 8 }} /> : <div style={{ color: '#475569', padding: 40 }}>세션을 시작하면<br />QR이 표시됩니다</div>}
             {kioskUrl && <div style={{ fontSize: 10, color: '#475569', marginTop: 10, wordBreak: 'break-all' }}>{kioskUrl}</div>}

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { computeMerkleRootFromProof } from '../utils/crypto.js';
 
 /**
@@ -23,6 +23,13 @@ export default function TrackPage({ electionId }) {
   const [busy, setBusy] = useState(false);
   const [res, setRes] = useState(null);   // 성공 결과
   const [fail, setFail] = useState('');   // 실패(변조) 메시지
+
+  // ?c= 추적번호 딥링크 → 자동 입력·자동 추적 (폰 영수증 QR에서도 활용 가능)
+  useEffect(() => {
+    const c = new URLSearchParams(window.location.search).get('c');
+    if (c && electionId) { setCode(c); track(c); }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   async function track(rawCode) {
     setBusy(true); setRes(null); setFail('');
@@ -65,8 +72,8 @@ export default function TrackPage({ electionId }) {
   const big = { background: '#0f172a', color: '#fff', borderRadius: 12, padding: '14px 0', fontSize: 30, fontWeight: 800, letterSpacing: 3, textAlign: 'center' };
 
   return (
-    <div style={{ minHeight: '100vh', background: '#f1f5f9', fontFamily: 'system-ui, sans-serif', padding: 24 }}>
-      <div style={{ maxWidth: 720, margin: '0 auto' }}>
+    <div style={{ boxSizing: 'border-box', width: '100%', minHeight: '100vh', overflowX: 'hidden', background: '#f1f5f9', fontFamily: 'system-ui,-apple-system,sans-serif', padding: '20px 16px 48px' }}>
+      <div style={{ boxSizing: 'border-box', width: '100%', maxWidth: 720, margin: '0 auto' }}>
         <h1 style={{ fontSize: 26 }}>🔎 내 표 추적</h1>
         <p style={{ color: '#64748b', fontSize: 14, marginBottom: 16 }}>택배 송장처럼, 추적번호로 <b>내 표가 변조 없이 집계에 들어갔는지</b> 확인합니다.</p>
 
