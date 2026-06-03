@@ -24,6 +24,12 @@ cd mongbas
 - **내 표 추적(노트북)**: `http://localhost:3000/?app=track`
 - **폰 키오스크**: 관제판이 띄우는 QR (터널 URL `/?app=kiosk&e=<선거ID>`)
 
+**전시용 쇼케이스(서브 컴퓨터)**: `http://localhost:3000/showcase.html`
+(서브 컴퓨터에서는 터널 URL `https://<tunnel>/showcase.html` 로 접속)
+- 일반인/부스 참여자용 화려한 전시 페이지. 인터넷 연결 필요(폰트·애니메이션 CDN).
+- **유튜브 영상 연결**: `frontend/public/showcase.html` 상단의 `const YT_ID = ""` 에
+  영상 ID를 넣고 `cd frontend && npm run build` → 히어로 아래 영상 섹션에 자동 임베드.
+
 ---
 
 ## 1. 방문자 1팀 체험 (2~3분, 반복)
