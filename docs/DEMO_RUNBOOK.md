@@ -79,5 +79,11 @@ cd mongbas
 cd application
 node scripts/p2-threshold-test.js   # ElGamal 2-of-3 threshold 복호화
 node scripts/p5-track-test.js       # 내 표 추적(게시판 매칭 + 봉인 일치 + 변조 탐지)
+node scripts/scenario-suite.js      # 재투표/종료후/빈선거/패닉제외/다중세션/단일표 (10검사)
+node scripts/scenario-suite2.js     # 대량집계/동시투표/보편검증/조각거부/receipt-free/AES (8검사)
+node scripts/rehearsal-browser.js   # 실 브라우저(Chrome) 관제판+키오스크 UI 드라이브스루 (6검사)
+npm run e2e:full                    # 전체 15-페이즈 통합 E2E
 ```
-둘 다 `✅ PASS` 면 데모 흐름 정상.
+전부 `✅ PASS` 면 데모 흐름 정상. 리허설 스크립트는 `/tmp/rehearsal-*.png` 스크린샷도 남깁니다.
+
+> 모바일 화면 점검: `"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" --headless --screenshot=/tmp/k.png --window-size=500,900 --virtual-time-budget=9000 "http://localhost:3000/?app=kiosk&e=<선거ID>"`
