@@ -234,6 +234,49 @@ router.get('/:id/live-count', (req, res) => {
   res.json({ electionID: req.params.id, totalVotes: liveCount.get(req.params.id) });
 });
 
+// ── POST /api/elections/:id/seed-votes ─────────────────────────
+// [부스 시연] 서버에서 ElGamal 투표 N개를 자동 주입 (게시판/집계 채우기).
+// Body: { count: number, dist?: number[] }  dist 미지정 시 무작위 후보.
+// 내부 HTTP로 자격증명 발급 + /api/vote 경로를 그대로 재사용한다(DISABLE_RATE_LIMITS 권장).
+router.post('/:id/seed-votes', async (req, res) => {
+  const { id } = req.params;
+  const count = Math.min(Math.max(parseInt(req.body.count, 10) || 5, 1), 50);
+  const dist = Array.isArray(req.body.dist) ? req.body.dist : null;
+  const PORT = process.env.PORT || 3000;
+  const BASE = `http://127.0.0.1:${PORT}`;
+  const { elgamalEncryptWithZKP } = require('../lib/elgamalVote');
+  const J = async (path, opts = {}) => {
+    const { headers, ...rest } = opts;
+    const r = await fetch(BASE + path, { headers: { 'Content-Type': 'application/json', ...(headers || {}) }, ...rest });
+    const t = await r.text(); let j; try { j = JSON.parse(t); } catch { j = {}; }
+    if (!r.ok) throw new Error(`${path} ${r.status} ${t.slice(0, 120)}`);
+    return j;
+  };
+  try {
+    const election = await J(`/api/elections/${encodeURIComponent(id)}`);
+    if (election.encryptionMode !== 'elgamal') return res.status(400).json({ error: 'seed-votes는 ElGamal 모드 선거만 지원합니다.' });
+    if (election.status !== 'ACTIVE') return res.status(400).json({ error: '활성(ACTIVE) 선거만 투표 주입이 가능합니다.' });
+    const cands = election.candidates;
+    const pub = (await J(`/api/elections/${encodeURIComponent(id)}/elgamal-pubkey`)).pubKey;
+    const bf = (await J(`/api/elections/${encodeURIComponent(id)}/blinding-factor`)).blindingFactor;
+    let ok = 0; const counts = {};
+    for (let i = 0; i < count; i++) {
+      const idx = dist && dist[i] != null ? dist[i] % cands.length : Math.floor(Math.random() * cands.length);
+      const voterId = `demo${String((i % 100) + 1).padStart(3, '0')}`;
+      const cred = (await J('/api/credential/idemix', { method: 'POST', body: JSON.stringify({ enrollmentID: voterId, enrollmentSecret: `${voterId}pw`, electionID: id }) })).credential;
+      const vs = crypto.randomBytes(32).toString('hex');
+      const nh = crypto.createHash('sha256').update(vs + id + bf).digest('hex');
+      const v = elgamalEncryptWithZKP(pub, idx, cands.length);
+      await J('/api/vote', { method: 'POST', headers: { 'x-idemix-credential': cred }, body: JSON.stringify({ electionID: id, encryptedCandidateID: v.encrypted, nullifierHash: nh, ballotValidityProof: JSON.stringify(v.proof) }) });
+      ok++; counts[cands[idx]] = (counts[cands[idx]] || 0) + 1;
+    }
+    res.json({ message: `${ok}표 자동 주입 완료`, injected: ok, breakdown: counts });
+  } catch (err) {
+    console.error('[seed-votes]', err.message);
+    res.status(500).json({ error: '투표 자동 주입에 실패했습니다.', debug: err.message });
+  }
+});
+
 // ── POST /api/elections/:id/close ─────────────────────────────
 // 선거 종료 + 자동 집계 트리거 (관리자)
 router.post('/:id/close', async (req, res) => {

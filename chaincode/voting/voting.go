@@ -1779,13 +1779,16 @@ func (c *VotingContract) tallyVotesInternal(
 		}
 
 		// BSGS로 이산로그 복원: sum = log_g(gSum)
+		// [P3 수정] 인코딩 sum = Σ count_i·B^i 의 실제 상한은 totalVotes·B^(numCands-1).
+		//   기존 고정 상한(10^8)은 최상위 후보(index ≥ 2)가 득표하면 초과되어 복원 실패했음.
+		//   totalVotes 기반으로 상한을 올바르게 산정하고, 메모리 안전 상한을 상향(테이블 ~sqrt).
 		numCands := len(election.Candidates)
-		maxSum := int64(1)
-		for i := 0; i < numCands; i++ {
+		maxSum := int64(totalVotes) + 1
+		for i := 0; i < numCands-1; i++ {
 			maxSum *= HomomorphicBase
 		}
-		if maxSum > 100000000 { // 안전 상한 (메모리 보호)
-			maxSum = 100000000
+		if maxSum < 1 || maxSum > 4000000000 { // 안전 상한 (BSGS 테이블 ~63k 이하)
+			maxSum = 4000000000
 		}
 
 		sum, bsgsErr := babyStepGiantStep(gSum, elgamalG, elgamalP, maxSum)
