@@ -17,6 +17,7 @@
 const crypto = require('crypto');
 const express = require('express');
 const { connectGateway, connectGatewayForShareIndex } = require('../gateway');
+const liveCount = require('../lib/liveCount');  // [부스 시연] 라이브 투표 카운터
 
 const router = express.Router();
 
@@ -213,6 +214,7 @@ router.post('/', async (req, res) => {
     if (!status.successful) {
       throw new Error(`CreateElection 트랜잭션 실패: ${status.code}`);
     }
+    try { liveCount.reset(electionID); } catch (_) { /* 카운터 리셋 실패 무시 */ }
     res.status(201).json({ message: '선거가 생성되었습니다.', electionID, encryptionMode: mode });
   } catch (err) {
     console.error('[elections] CreateElection error:', err.message);
@@ -220,6 +222,12 @@ router.post('/', async (req, res) => {
   } finally {
     gateway.close();
   }
+});
+
+// ── GET /api/elections/:id/live-count ──────────────────────────
+// [부스 시연] 진행 중 선거의 실시간 투표 수 (백엔드 인메모리 카운터 — 관제판 폴링용)
+router.get('/:id/live-count', (req, res) => {
+  res.json({ electionID: req.params.id, totalVotes: liveCount.get(req.params.id) });
 });
 
 // ── POST /api/elections/:id/close ─────────────────────────────

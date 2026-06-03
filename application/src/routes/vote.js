@@ -31,6 +31,7 @@
 const express = require('express');
 const crypto  = require('crypto');
 const { connectGateway } = require('../gateway');
+const liveCount = require('../lib/liveCount');  // [부스 시연] 라이브 투표 카운터
 
 const router = express.Router();
 
@@ -172,6 +173,11 @@ router.post('/', async (req, res) => {
         evictCount = nullifierObj.evictCount || 0;
       }
     } catch (_) { /* 조회 실패 시 무시 — evictCount=0 */ }
+
+    // [부스 시연] 라이브 카운터 — 신규 투표만 증가 (재투표는 기존 표 대체이므로 제외)
+    if (evictCount === 0) {
+      try { liveCount.increment(electionID); } catch (_) { /* 카운터 실패 무시 */ }
+    }
 
     res.json({
       message : evictCount > 0

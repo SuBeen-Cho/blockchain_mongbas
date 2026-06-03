@@ -15,7 +15,13 @@
 
 'use strict';
 
+// .env 자동 로드 (이미 설정된 환경변수는 덮어쓰지 않음).
+// ※ 미로딩 시 IDEMIX_ENABLED 등이 적용되지 않아 bypass 모드가 되고,
+//   체인코드가 bypass 자격증명을 거부하여 투표가 실패함 — 반드시 로드.
+require('dotenv').config();
+
 const express        = require('express');
+const path           = require('path');
 const session        = require('express-session');
 const cors           = require('cors');
 const rateLimit      = require('express-rate-limit');
@@ -52,6 +58,12 @@ app.use(cors({
   origin: allowedOrigins,
   credentials: true,
 }));
+
+// ── 정적 프론트엔드 서빙 (부스 시연: 단일 오리진 + cloudflared 터널) ──
+// 빌드된 SPA(frontend/dist)를 백엔드가 직접 서빙 → 폰/API 동일 출처라 CORS 무관, 터널 1개로 충분.
+// 정적 파일이 없으면 next()로 통과 → 아래 API 라우터/핸들러가 처리.
+const FRONTEND_DIST = path.join(__dirname, '../../frontend/dist');
+app.use(express.static(FRONTEND_DIST));
 
 // Rate Limiting — 전역 (15분당 300회)
 const globalLimiter = rateLimit({
@@ -163,6 +175,13 @@ app.get('/', (req, res) => {
       'CastVote의 비공개 데이터는 Transient Map으로 PDC에만 저장됩니다.',
     ],
   });
+});
+
+// ── SPA 폴백 (부스 시연: /?app=kiosk|control 등 클라이언트 라우팅 / 딥링크) ──
+// /api, /health, /(루트는 static이 index.html 제공)를 제외한 GET 경로는 SPA로.
+app.get('*', (req, res, next) => {
+  if (req.path.startsWith('/api') || req.path === '/health' || req.path === '/') return next();
+  res.sendFile(path.join(FRONTEND_DIST, 'index.html'), (err) => { if (err) next(); });
 });
 
 // ── 에러 핸들러 ─────────────────────────────────────────────────
