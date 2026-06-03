@@ -134,10 +134,10 @@ export default function ControlPage() {
             </div>
 
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, marginBottom: 16 }}>
-              <Btn onClick={newSession} bg="#2563eb">새 세션 시작</Btn>
-              <Btn onClick={() => seed(5)} disabled={!eid || status !== 'ACTIVE'} bg="#0891b2">투표 +5</Btn>
-              <Btn onClick={() => seed(10)} disabled={!eid || status !== 'ACTIVE'} bg="#0891b2">투표 +10</Btn>
-              <Btn onClick={closeAndTally} disabled={!eid || status !== 'ACTIVE'} bg="#dc2626">집계 종료 &amp; 결과</Btn>
+              <Btn onClick={newSession} disabled={!!busy} bg="#2563eb">새 세션 시작</Btn>
+              <Btn onClick={() => seed(5)} disabled={!eid || status !== 'ACTIVE' || !!busy} bg="#0891b2">투표 +5</Btn>
+              <Btn onClick={() => seed(10)} disabled={!eid || status !== 'ACTIVE' || !!busy} bg="#0891b2">투표 +10</Btn>
+              <Btn onClick={closeAndTally} disabled={!eid || status !== 'ACTIVE' || !!busy} bg="#dc2626">집계 종료 &amp; 결과</Btn>
               <Btn onClick={() => window.open(`/?app=track&e=${encodeURIComponent(eid)}`, '_blank')} disabled={!eid || status !== 'CLOSED'} bg="#7c3aed">내 표 검증 열기</Btn>
             </div>
 
