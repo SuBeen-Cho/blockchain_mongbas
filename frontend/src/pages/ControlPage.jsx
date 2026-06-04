@@ -6,7 +6,7 @@ import QRCode from 'qrcode';
  * 진입: /?app=control
  */
 const API = '/api';
-const CANDIDATES = ['김민주', '이정의', '박미래'];
+const CANDIDATES = ['치킨', '피자', '떡볶이'];
 const BAR = ['#2563eb', '#dc2626', '#16a34a', '#9333ea', '#d97706'];
 
 // ── 디자인 토큰 (가이드라인 60-30-10 / 8px 그리드) ──
@@ -130,7 +130,8 @@ export default function ControlPage() {
           {/* 좌측: 메인 */}
           <div style={{ flex: '1 1 540px', minWidth: 0, display: 'flex', flexDirection: 'column', gap: 20 }}>
             {/* 상태 카드 */}
-            <section style={card()}>
+            <section style={{ ...card(), position: 'relative', overflow: 'hidden', background: 'linear-gradient(135deg,#ffffff 60%,#f3f2ff)' }}>
+              <div style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 3, background: 'linear-gradient(90deg,#2563eb,#7c3aed,#06b6d4)' }} />
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 16 }}>
                 <div>
                   <div style={overline()}>현재 세션</div>
@@ -139,7 +140,7 @@ export default function ControlPage() {
                 </div>
                 <div style={{ textAlign: 'right' }}>
                   <div style={overline()}>실시간 투표 수</div>
-                  <div style={{ fontSize: 52, fontWeight: 800, lineHeight: 1, letterSpacing: '-0.04em', color: T.primary }}>{live}</div>
+                  <div style={{ fontSize: 56, fontWeight: 800, lineHeight: 1, letterSpacing: '-0.04em', background: 'linear-gradient(135deg,#2563eb,#7c3aed)', WebkitBackgroundClip: 'text', backgroundClip: 'text', color: 'transparent' }}>{live}</div>
                   <div style={{ fontSize: 12, color: T.faint, fontWeight: 600 }}>표</div>
                 </div>
               </div>
