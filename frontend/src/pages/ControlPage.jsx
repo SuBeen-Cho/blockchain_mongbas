@@ -13,6 +13,8 @@ import { computeMerkleRootFromProof } from '../utils/crypto.js';
  */
 const API = '/api';
 const CANDIDATES = ['치킨', '피자', '떡볶이'];
+// [부스 시연] Firebase 릴레이 — 새 세션의 키오스크 URL을 여기에 기록하면 쇼케이스 QR이 자동 동기화됨
+const FB_KIOSK = 'https://mongbas-blockchain-vote-default-rtdb.firebaseio.com/kioskUrl.json';
 
 const T = {
   font: '"Pretendard Variable",Pretendard,-apple-system,system-ui,"Apple SD Gothic Neo","Malgun Gothic",sans-serif',
@@ -88,6 +90,9 @@ export default function ControlPage() {
       await J(`/elections/${id}/activate`, { method: 'POST' });
       setEid(id); setStatus('ACTIVE'); setLive(0); setVotes([]); setShuffled(false);
       setResults(null); setDecrypted(false); setView('session'); setVres(null); setVfail(''); evRef.current = 0;
+      // [부스 시연] 이 세션의 키오스크 URL을 Firebase 릴레이에 기록 → 쇼케이스 QR 자동 동기화
+      const ku = `${window.location.origin}/?app=kiosk&e=${encodeURIComponent(id)}`;
+      try { fetch(FB_KIOSK, { method: 'PUT', body: JSON.stringify({ url: ku, electionID: id, ts: Date.now() }) }).catch(() => {}); } catch { /* noop */ }
       addLog(`새 세션 시작: ${id}`);
     } catch (e) { addLog('오류: ' + e.message); }
     setBusy('');
