@@ -36,7 +36,7 @@
   nav .wrap{display:flex;align-items:center;justify-content:space-between;height:66px}
   .brand{font-weight:900;font-size:20px;letter-spacing:-0.06em;display:flex;align-items:center;gap:8px;color:#fff;transition:color .3s}
   nav.solid .brand{color:var(--ink)}
-  .brand .dot{width:10px;height:10px;border-radius:3px;background:#fff;transform:rotate(45deg)}
+  .brand .dot{width:21px;height:21px;background:#fff;-webkit-mask:url(/logo/mongbas-symbol-white.svg) center/contain no-repeat;mask:url(/logo/mongbas-symbol-white.svg) center/contain no-repeat}
   nav.solid .brand .dot{background:var(--blue)}
   .nav-links{display:flex;gap:28px;font-size:14px;font-weight:600;color:rgba(255,255,255,.8)}
   nav.solid .nav-links{color:var(--sub)}
@@ -60,10 +60,10 @@
   /* 히어로 거대 워드마크 (MONGBAS) */
   .hero-wm{position:absolute;top:clamp(86px,13vh,140px);left:calc(max(0px, 50vw - 640px) + clamp(20px,6vw,80px));z-index:2;
     font-size:clamp(36px,8.5vw,140px);font-weight:900;letter-spacing:-0.07em;line-height:.82;
-    color:rgba(255,255,255,.95);text-shadow:0 6px 40px rgba(0,40,110,.35);pointer-events:none;
-    display:flex;align-items:center;gap:.22em}
+    color:rgba(255,255,255,.95);text-shadow:0 6px 40px rgba(0,40,110,.35);pointer-events:none}
+  .hero-wm .wmrow{display:flex;align-items:center;gap:.2em}
   .hero-wm small{display:block;font-size:.13em;font-weight:700;letter-spacing:.34em;opacity:.8;margin-top:.4em}
-  .hero-wm .wmlogo{height:.74em;width:auto;flex:none;filter:drop-shadow(0 6px 30px rgba(0,40,110,.45))}
+  .hero-wm .wmlogo{height:.72em;width:auto;flex:none;filter:drop-shadow(0 6px 30px rgba(0,40,110,.45))}
   /* coolshape 장식 */
   .csblob{position:absolute;pointer-events:none;z-index:1;filter:drop-shadow(0 20px 40px rgba(12,27,51,.12))}
   .receipt .chk img{width:46px;height:46px;object-fit:contain}
@@ -129,7 +129,7 @@
   .cli .fnote{order:1;flex:1;text-align:right}
   .cli .fbox{order:2}
   .peer .fnote{flex:1;text-align:left}
-  .fbox{position:relative;z-index:1;width:228px;flex:none;background:#fff;border:2px solid var(--blue);padding:13px 13px;font-weight:900;font-size:22px;letter-spacing:-.01em;color:var(--ink);display:flex;align-items:center;gap:9px;white-space:nowrap;box-shadow:0 8px 20px rgba(36,64,242,.08);transition:transform .2s,box-shadow .2s}
+  .fbox{position:relative;z-index:1;width:228px;flex:none;background:#fff;border:2px solid var(--blue);padding:13px 13px;font-weight:900;font-size:22px;letter-spacing:.04em;color:var(--ink);display:flex;align-items:center;gap:9px;white-space:nowrap;box-shadow:0 8px 20px rgba(36,64,242,.08);transition:transform .2s,box-shadow .2s}
   .fstep:hover .fbox{transform:translateY(-3px);box-shadow:0 16px 34px rgba(36,64,242,.22)}
   .fbox .fn{display:inline-flex;width:39px;height:39px;align-items:center;justify-content:center;background:var(--blue);color:#fff;font-size:19px;font-weight:900;flex:none}
   .fbox.solid{background:var(--blue);color:#fff;box-shadow:0 12px 28px rgba(36,64,242,.30)}
@@ -241,8 +241,9 @@
   .cta .block{text-align:center}
   .cta h2{font-size:clamp(34px,6vw,80px);color:#fff}
   .cta .qr{width:160px;height:160px;border-radius:20px;background:#fff;margin:28px auto 0;display:flex;align-items:center;justify-content:center;color:var(--ink);font-weight:800;font-size:14px;text-align:center}
-  .logomark{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;padding:clamp(64px,11vh,130px) 0}
-  .logomark img{width:clamp(56px,7vw,86px);height:auto}
+  .logomark{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:11px;padding:clamp(34px,5.5vh,68px) 0;text-decoration:none;cursor:pointer;transition:transform .2s}
+  .logomark:hover{transform:translateY(-2px)}
+  .logomark img{width:clamp(52px,6.4vw,78px);height:auto}
   .logomark span{font-size:12px;font-weight:800;letter-spacing:.26em;color:var(--blueD);opacity:.7}
   footer{padding:46px 0;border-top:1px solid var(--line);font-size:14px;color:var(--sub);text-align:center}
 </style>
@@ -262,10 +263,10 @@
   <header class="hero" id="top">
     <div id="unicorn" data-us-project="jGXYSFzNxRakpi9mEF4l"></div>
     <div class="hero-scrim"></div>
-    <div class="hero-wm"><span class="wmw">MONGBAS<small>익명 전자투표 · HYPERLEDGER FABRIC</small></span><img class="wmlogo" src="/logo/mongbas-symbol-white.svg" alt="Mongbas 로고" /></div>
+    <div class="hero-wm"><span class="wmrow">MONGBAS<img class="wmlogo" src="/logo/mongbas-symbol-white.svg" alt="Mongbas 로고" /></span><small>익명 전자투표 · HYPERLEDGER FABRIC</small></div>
     <div class="wrap">
       <h1>누구도 못 본다.<br>그런데 <span class="hl">누구나</span> 검증한다.</h1>
-      <p>당신의 한 표는 암호로 봉인되어 운영자조차 볼 수 없습니다. 그러나 “내 표가 제대로 집계됐는지”는 누구나 직접 확인할 수 있습니다.</p>
+      <p>당신의 한 표는 암호로 봉인되어 운영자조차 볼 수 없습니다.<br>그러나 “내 표가 제대로 집계됐는지”는 누구나 직접 확인할 수 있습니다.</p>
       <div class="tags"><span class="htag fill">7/7 보안 속성</span><span class="htag">2-of-3 다기관 합의</span><span class="htag">강압 저항</span></div>
     </div>
     <div class="scrollcue">SCROLL<div class="b"></div></div>
@@ -276,7 +277,7 @@
     <div class="wm reveal">PARADOX</div>
     <div class="kick reveal" style="margin-top:20px">검증의 역설</div>
     <h2 class="stmt reveal" style="margin-top:18px">투표는 <span class="ink-i">비밀</span>이어야 한다.<br>그런데 내 표가 제대로 세어졌는지 <span class="ink-i">확인</span>하고 싶다.</h2>
-    <p class="lede reveal">오랫동안 양립 불가능한 모순으로 여겨졌습니다. Mongbas는 암호학으로 이 둘을 <b style="color:var(--ink)">동시에</b> 성립시킵니다.</p>
+    <p class="lede reveal">오랫동안 양립 불가능한 모순으로 여겨졌습니다.<br>Mongbas는 암호학으로 이 둘을 <b style="color:var(--ink)">동시에</b> 성립시킵니다.</p>
   </div></section>
 
   <!-- 7대 보안 속성 (블루 블록) -->
@@ -446,7 +447,7 @@
     </div>
   </div></section>
 
-  <div class="logomark reveal"><img src="/logo/mongbas-symbol-mono.svg" alt="Mongbas" /><span>MONGBAS</span></div>
+  <a class="logomark reveal" href="#top" onclick="event.preventDefault();window.scrollTo({top:0,behavior:'smooth'})" aria-label="맨 위로"><img src="/logo/mongbas-symbol-mono.svg" alt="Mongbas" /><span>MONGBAS</span></a>
 
   <footer>팀 몽바스 · 2026 캡스톤디자인 · Hyperledger Fabric 기반 익명 전자투표</footer>
 </main>
