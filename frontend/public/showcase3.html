@@ -131,10 +131,12 @@
   .peer .fnote{flex:1;text-align:left}
   .fbox{position:relative;z-index:1;width:228px;flex:none;background:#fff;border:2px solid var(--blue);padding:13px 13px;font-weight:900;font-size:22px;letter-spacing:.04em;color:var(--ink);display:flex;align-items:center;gap:9px;white-space:nowrap;box-shadow:0 8px 20px rgba(36,64,242,.08);transition:transform .2s,box-shadow .2s}
   .fstep:hover .fbox{transform:translateY(-3px);box-shadow:0 16px 34px rgba(36,64,242,.22)}
+  /* 커넥터 방향 화살촉 (흐름 방향성) */
+  .fstep:not(:last-child) .fbox::after{content:"";position:absolute;left:50%;top:calc(100% + 11px);transform:translateX(-50%);width:0;height:0;border-left:5px solid transparent;border-right:5px solid transparent;border-top:7px solid var(--blue);z-index:1}
   .fbox .fn{display:inline-flex;width:39px;height:39px;align-items:center;justify-content:center;background:var(--blue);color:#fff;font-size:19px;font-weight:900;flex:none}
   .fbox.solid{background:var(--blue);color:#fff;box-shadow:0 12px 28px rgba(36,64,242,.30)}
   .fbox.solid .fn{background:#fff;color:var(--blue)}
-  .fnote{font-size:13.5px;font-weight:600;color:var(--sub);line-height:1.5}
+  .fnote{font-size:13.5px;font-weight:600;color:var(--sub);line-height:1.5;text-wrap:balance}
   .fhandoff{align-self:center;display:flex;flex-direction:column;align-items:center;gap:9px;color:var(--blue);font-weight:900;font-size:11px;letter-spacing:.05em;text-align:center;white-space:nowrap}
   .fhandoff .arr{display:flex;align-items:center;justify-content:center;width:46px;height:46px;border-radius:50%;background:var(--blue);color:#fff;font-size:17px;box-shadow:0 10px 26px rgba(36,64,242,.34);animation:hopulse 2.4s ease-in-out infinite}
   @keyframes hopulse{0%,100%{box-shadow:0 10px 26px rgba(36,64,242,.34)}50%{box-shadow:0 10px 26px rgba(36,64,242,.34),0 0 0 8px rgba(36,64,242,.10)}}
