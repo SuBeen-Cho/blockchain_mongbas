@@ -60,8 +60,10 @@
   /* 히어로 거대 워드마크 (MONGBAS) */
   .hero-wm{position:absolute;top:clamp(86px,13vh,140px);left:calc(max(0px, 50vw - 640px) + clamp(20px,6vw,80px));z-index:2;
     font-size:clamp(36px,8.5vw,140px);font-weight:900;letter-spacing:-0.07em;line-height:.82;
-    color:rgba(255,255,255,.95);text-shadow:0 6px 40px rgba(0,40,110,.35);pointer-events:none}
+    color:rgba(255,255,255,.95);text-shadow:0 6px 40px rgba(0,40,110,.35);pointer-events:none;
+    display:flex;align-items:center;gap:.22em}
   .hero-wm small{display:block;font-size:.13em;font-weight:700;letter-spacing:.34em;opacity:.8;margin-top:.4em}
+  .hero-wm .wmlogo{height:.74em;width:auto;flex:none;filter:drop-shadow(0 6px 30px rgba(0,40,110,.45))}
   /* coolshape 장식 */
   .csblob{position:absolute;pointer-events:none;z-index:1;filter:drop-shadow(0 20px 40px rgba(12,27,51,.12))}
   .receipt .chk img{width:46px;height:46px;object-fit:contain}
@@ -127,9 +129,9 @@
   .cli .fnote{order:1;flex:1;text-align:right}
   .cli .fbox{order:2}
   .peer .fnote{flex:1;text-align:left}
-  .fbox{position:relative;z-index:1;width:228px;flex:none;background:#fff;border:2px solid var(--blue);padding:13px 14px;font-weight:900;font-size:20.5px;letter-spacing:-.045em;color:var(--ink);display:flex;align-items:center;gap:10px;white-space:nowrap;box-shadow:0 8px 20px rgba(36,64,242,.08);transition:transform .2s,box-shadow .2s}
+  .fbox{position:relative;z-index:1;width:228px;flex:none;background:#fff;border:2px solid var(--blue);padding:13px 13px;font-weight:900;font-size:22px;letter-spacing:-.01em;color:var(--ink);display:flex;align-items:center;gap:9px;white-space:nowrap;box-shadow:0 8px 20px rgba(36,64,242,.08);transition:transform .2s,box-shadow .2s}
   .fstep:hover .fbox{transform:translateY(-3px);box-shadow:0 16px 34px rgba(36,64,242,.22)}
-  .fbox .fn{display:inline-flex;width:36px;height:36px;align-items:center;justify-content:center;background:var(--blue);color:#fff;font-size:17px;font-weight:900;flex:none}
+  .fbox .fn{display:inline-flex;width:39px;height:39px;align-items:center;justify-content:center;background:var(--blue);color:#fff;font-size:19px;font-weight:900;flex:none}
   .fbox.solid{background:var(--blue);color:#fff;box-shadow:0 12px 28px rgba(36,64,242,.30)}
   .fbox.solid .fn{background:#fff;color:var(--blue)}
   .fnote{font-size:13.5px;font-weight:600;color:var(--sub);line-height:1.5}
@@ -239,6 +241,9 @@
   .cta .block{text-align:center}
   .cta h2{font-size:clamp(34px,6vw,80px);color:#fff}
   .cta .qr{width:160px;height:160px;border-radius:20px;background:#fff;margin:28px auto 0;display:flex;align-items:center;justify-content:center;color:var(--ink);font-weight:800;font-size:14px;text-align:center}
+  .logomark{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;padding:clamp(64px,11vh,130px) 0}
+  .logomark img{width:clamp(56px,7vw,86px);height:auto}
+  .logomark span{font-size:12px;font-weight:800;letter-spacing:.26em;color:var(--blueD);opacity:.7}
   footer{padding:46px 0;border-top:1px solid var(--line);font-size:14px;color:var(--sub);text-align:center}
 </style>
 </head>
@@ -257,7 +262,7 @@
   <header class="hero" id="top">
     <div id="unicorn" data-us-project="jGXYSFzNxRakpi9mEF4l"></div>
     <div class="hero-scrim"></div>
-    <div class="hero-wm">MONGBAS<small>익명 전자투표 · HYPERLEDGER FABRIC</small></div>
+    <div class="hero-wm"><span class="wmw">MONGBAS<small>익명 전자투표 · HYPERLEDGER FABRIC</small></span><img class="wmlogo" src="/logo/mongbas-symbol-white.svg" alt="Mongbas 로고" /></div>
     <div class="wrap">
       <h1>누구도 못 본다.<br>그런데 <span class="hl">누구나</span> 검증한다.</h1>
       <p>당신의 한 표는 암호로 봉인되어 운영자조차 볼 수 없습니다. 그러나 “내 표가 제대로 집계됐는지”는 누구나 직접 확인할 수 있습니다.</p>
@@ -440,6 +445,8 @@
       <div class="qr">옆 컴퓨터<br>체험존</div>
     </div>
   </div></section>
+
+  <div class="logomark reveal"><img src="/logo/mongbas-symbol-mono.svg" alt="Mongbas" /><span>MONGBAS</span></div>
 
   <footer>팀 몽바스 · 2026 캡스톤디자인 · Hyperledger Fabric 기반 익명 전자투표</footer>
 </main>
