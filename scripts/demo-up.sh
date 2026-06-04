@@ -39,7 +39,7 @@ pkill -f "cloudflared tunnel" 2>/dev/null || true; sleep 1
 URL=""
 for try in 1 2 3 4; do
   : > "$TLOG"
-  nohup cloudflared tunnel --url http://localhost:3000 > "$TLOG" 2>&1 &
+  nohup cloudflared tunnel --url http://localhost:3000 --protocol http2 > "$TLOG" 2>&1 &
   for i in $(seq 1 15); do sleep 2; URL=$(grep -oE 'https://[a-z0-9-]+\.trycloudflare\.com' "$TLOG" | head -1); [ -n "$URL" ] && break; done
   [ -n "$URL" ] && break
   echo "      터널 시도 $try 실패 → 재시도"; pkill -f "cloudflared tunnel" 2>/dev/null; sleep 2
