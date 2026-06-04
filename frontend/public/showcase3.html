@@ -110,6 +110,34 @@
   @media(max-width:920px){.pgrid{grid-template-columns:repeat(2,1fr)}}
   @media(max-width:560px){.pgrid{grid-template-columns:1fr}.pitem{min-height:0}}
 
+  /* CastVote 파이프라인 (좌우 2열 + 바깥 공백 설명) */
+  .flow{display:grid;grid-template-columns:1fr auto 1fr;gap:clamp(12px,1.8vw,32px);margin-top:50px;align-items:start}
+  .fcol{display:flex;flex-direction:column;gap:26px}
+  .fhead{font-size:15px;font-weight:900;letter-spacing:-.02em;color:var(--ink);padding-bottom:12px;border-bottom:2px solid var(--blue);margin-bottom:4px}
+  .fhead small{font-weight:700;color:var(--sub);font-size:11px;letter-spacing:.03em;margin-left:6px}
+  .fstep{display:grid;gap:clamp(10px,1.3vw,20px);align-items:center}
+  .cli .fstep{grid-template-columns:1fr minmax(118px,200px)}
+  .peer .fstep{grid-template-columns:minmax(118px,200px) 1fr}
+  .fbox{position:relative;background:#fff;border:2px solid var(--blue);padding:14px 15px;font-weight:800;font-size:14.5px;letter-spacing:-.02em;color:var(--ink);display:flex;align-items:center;gap:9px;box-shadow:0 8px 20px rgba(36,64,242,.08)}
+  .cli .fbox{grid-column:2}
+  .peer .fbox{grid-column:1}
+  .fbox .fn{display:inline-flex;width:23px;height:23px;align-items:center;justify-content:center;background:var(--blue);color:#fff;font-size:12px;font-weight:900;flex:none}
+  .fbox.solid{background:var(--blue);color:#fff}
+  .fbox.solid .fn{background:#fff;color:var(--blue)}
+  .fstep:not(:last-child) .fbox::after{content:"";position:absolute;top:100%;left:50%;transform:translateX(-50%);width:2px;height:26px;background:var(--blueLine)}
+  .fnote{font-size:13px;font-weight:600;color:var(--sub);line-height:1.46}
+  .cli .fnote{grid-column:1;text-align:right}
+  .peer .fnote{grid-column:2;text-align:left}
+  .fhandoff{align-self:center;display:flex;flex-direction:column;align-items:center;gap:6px;color:var(--blue);font-weight:900;font-size:11px;letter-spacing:.05em;text-align:center;white-space:nowrap}
+  .fhandoff .arr{font-size:24px;line-height:1}
+  @media(max-width:900px){
+    .flow{grid-template-columns:1fr;gap:18px}
+    .cli .fstep,.peer .fstep{grid-template-columns:1fr}
+    .cli .fbox,.peer .fbox{grid-column:1;order:1}
+    .cli .fnote,.peer .fnote{grid-column:1;order:2;text-align:left}
+    .fhandoff{flex-direction:row;gap:10px}.fhandoff .arr{transform:rotate(90deg)}
+  }
+
   /* 성능 — 에디토리얼 숫자 */
   .nums{display:grid;grid-template-columns:repeat(4,1fr);gap:0;margin-top:40px;border-top:2px solid var(--ink)}
   .num.big{grid-column:span 2;border-top:2px solid var(--blue)}
@@ -244,6 +272,35 @@
     <div class="kick reveal">7 Security Properties</div>
     <h2 class="stmt reveal" style="margin-top:14px">7가지 보안 속성, <span class="mark">하나도 빠짐없이.</span></h2>
     <div class="propband reveal" style="margin-top:40px"><div class="pgrid" id="pgrid"></div></div>
+  </div></section>
+
+  <!-- CastVote 파이프라인 -->
+  <section id="flow"><div class="wrap">
+    <div class="kick reveal">CastVote Pipeline · 처리 흐름</div>
+    <h2 class="stmt reveal" style="margin-top:14px">한 표가 어떻게 <span class="mark">봉인</span>되어<br>집계로 들어가나.</h2>
+    <p class="lede reveal">투표자 단말에서 암호화와 증명을 마친 한 표가, 검증 피어의 다단계 검증을 거쳐 공개 원장에 기록되기까지.</p>
+    <div class="flow reveal">
+      <div class="fcol cli">
+        <div class="fhead">투표자 단말 <small>Voter Client · 폰</small></div>
+        <div class="fstep"><div class="fbox solid"><span class="fn">0</span>자격증명 제시</div><div class="fnote">누가 찍는지 숨긴 채 ‘자격 있음’만 익명으로 증명</div></div>
+        <div class="fstep"><div class="fbox"><span class="fn">1</span>고유표식 생성</div><div class="fnote">1인 1표용 일회용 번호 생성 — 신원은 노출 안 됨</div></div>
+        <div class="fstep"><div class="fbox"><span class="fn">2</span>후보 암호화</div><div class="fnote">폰에서 ElGamal로 암호화, 평문은 밖으로 안 나감</div></div>
+        <div class="fstep"><div class="fbox"><span class="fn">3</span>영지식 증명</div><div class="fnote">후보값은 숨긴 채 ‘정상 범위의 한 표’를 수학적으로 증명</div></div>
+        <div class="fstep"><div class="fbox"><span class="fn">4</span>비공개 전송</div><div class="fnote">암호문·증명만 전송 — 오더러·공개원장엔 기록 안 됨</div></div>
+      </div>
+      <div class="fhandoff"><span>핸드오프</span><span class="arr">▶</span><span>암호문·증명만</span></div>
+      <div class="fcol peer">
+        <div class="fhead">검증 피어 <small>Endorsing Peer · 2-of-3</small></div>
+        <div class="fstep"><div class="fbox"><span class="fn">1</span>형식·범위 검사</div><div class="fnote">입력이 규격에 맞는지 확인</div></div>
+        <div class="fstep"><div class="fbox"><span class="fn">2</span>선거 상태 확인</div><div class="fnote">지금 투표 가능한 선거인지</div></div>
+        <div class="fstep"><div class="fbox"><span class="fn">3</span>자격증명 검증</div><div class="fnote">제출된 자격증명이 유효한지</div></div>
+        <div class="fstep"><div class="fbox"><span class="fn">4</span>중복·재투표 처리</div><div class="fnote">같은 표식이면 마지막 표 우선 (Last-Vote-Wins)</div></div>
+        <div class="fstep"><div class="fbox"><span class="fn">5</span>증명 검증</div><div class="fnote">정상적인 한 표인지 수학적으로 확인</div></div>
+        <div class="fstep"><div class="fbox"><span class="fn">6</span>표 봉인(커밋)</div><div class="fnote">나중에 못 바꾸도록 표를 봉인</div></div>
+        <div class="fstep"><div class="fbox"><span class="fn">7</span>PDC 저장</div><div class="fnote">신원 관련 데이터는 비공개 영역(PDC)에만</div></div>
+        <div class="fstep"><div class="fbox solid"><span class="fn">8</span>공개 원장 기록</div><div class="fnote">암호문·증명만 공개 — 비밀키 없이 누구나 검증</div></div>
+      </div>
+    </div>
   </div></section>
 
   <!-- 성능 -->
