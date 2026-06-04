@@ -118,7 +118,7 @@
   @media(max-width:900px){.nums{grid-template-columns:repeat(2,1fr)}.num.big{grid-column:span 2}}
   @media(max-width:560px){.nums{grid-template-columns:1fr}.num.big{grid-column:span 1}}
   .num{padding:30px 16px 26px;border-bottom:1px solid var(--line);position:relative;cursor:help;transition:background .2s}
-  .num:hover{background:var(--blueSoft)}
+  .num:hover{background:var(--blue)}
   /* 툴팁 (마우스 오버 시 상세 설명 카드) */
   .num .tip{position:absolute;left:0;bottom:calc(100% + 12px);width:280px;max-width:80vw;background:var(--blue);color:#fff;
     padding:16px 18px;font-size:13px;font-weight:500;line-height:1.55;opacity:0;visibility:hidden;transform:translateY(8px);
@@ -131,6 +131,7 @@
   .num .v .u{font-size:24px;font-weight:800;color:var(--blue);margin-left:4px}
   .num .l{margin-top:14px;font-size:15px;color:var(--sub);font-weight:600;max-width:300px}
   .num.pop .v{color:var(--blue)}
+  .num:hover .v,.num:hover .v .u,.num:hover .l{color:#fff}
 
   /* 체험 — 폰 */
   .expg{display:grid;grid-template-columns:1fr;gap:48px;align-items:center}
