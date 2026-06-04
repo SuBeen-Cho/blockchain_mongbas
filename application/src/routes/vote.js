@@ -32,6 +32,7 @@ const express = require('express');
 const crypto  = require('crypto');
 const { connectGateway } = require('../gateway');
 const liveCount = require('../lib/liveCount');  // [부스 시연] 라이브 투표 카운터
+const demoLive  = require('../lib/demoLive');   // [부스 시연] 라이브 암호문 표 + 셔플 + 이벤트 버스
 
 const router = express.Router();
 
@@ -178,6 +179,8 @@ router.post('/', async (req, res) => {
     if (evictCount === 0) {
       try { liveCount.increment(electionID); } catch (_) { /* 카운터 실패 무시 */ }
     }
+    // [부스 시연] 라이브 암호문 표 — 도착한 암호문(c1:c2)+ZKP결과 기록 (재투표는 행 교체)
+    try { demoLive.recordVote(electionID, { nullifierHash, ciphertext: encryptedCandidateID, zkpValid: true }); } catch (_) { /* 무시 */ }
 
     res.json({
       message : evictCount > 0

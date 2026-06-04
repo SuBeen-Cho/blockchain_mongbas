@@ -18,6 +18,7 @@ const crypto = require('crypto');
 const express = require('express');
 const { connectGateway, connectGatewayForShareIndex } = require('../gateway');
 const liveCount = require('../lib/liveCount');  // [부스 시연] 라이브 투표 카운터
+const demoLive  = require('../lib/demoLive');   // [부스 시연] 라이브 암호문 표 + 셔플 + 이벤트 버스
 
 const router = express.Router();
 
@@ -218,7 +219,7 @@ router.post('/', async (req, res) => {
     if (!status.successful) {
       throw new Error(`CreateElection 트랜잭션 실패: ${status.code}`);
     }
-    try { liveCount.reset(electionID); } catch (_) { /* 카운터 리셋 실패 무시 */ }
+    try { liveCount.reset(electionID); demoLive.reset(electionID); } catch (_) { /* 리셋 실패 무시 */ }
     res.status(201).json({ message: '선거가 생성되었습니다.', electionID, encryptionMode: mode });
   } catch (err) {
     console.error('[elections] CreateElection error:', err.message);
@@ -232,6 +233,27 @@ router.post('/', async (req, res) => {
 // [부스 시연] 진행 중 선거의 실시간 투표 수 (백엔드 인메모리 카운터 — 관제판 폴링용)
 router.get('/:id/live-count', (req, res) => {
   res.json({ electionID: req.params.id, totalVotes: liveCount.get(req.params.id) });
+});
+
+// ── GET /:id/live-votes ────────────────────────────────────────
+// [부스 시연] 도착한 암호문 표를 실시간 제공 (대시보드가 폴링) — 새로고침 없이 누적/셔플 반영
+router.get('/:id/live-votes', (req, res) => {
+  res.json({ electionID: req.params.id, ...demoLive.listVotes(req.params.id) });
+});
+
+// ── POST /:id/demo-event ───────────────────────────────────────
+// [부스 시연] 모바일 → 대시보드 이벤트 (예: 검증하기 누름). Body: { type, payload }
+router.post('/:id/demo-event', (req, res) => {
+  const { type, payload } = req.body || {};
+  if (!type) return res.status(400).json({ error: 'type 필요' });
+  demoLive.pushEvent(req.params.id, String(type), payload || {});
+  res.json({ ok: true });
+});
+
+// ── GET /:id/demo-events?since=N ───────────────────────────────
+// [부스 시연] 대시보드가 폴링해 모바일 액션을 감지 (검증 뷰 전환 등)
+router.get('/:id/demo-events', (req, res) => {
+  res.json({ electionID: req.params.id, ...demoLive.listEvents(req.params.id, req.query.since) });
 });
 
 // ── POST /api/elections/:id/seed-votes ─────────────────────────
@@ -595,6 +617,8 @@ router.post('/:id/publish-audit', requireValidElectionID, async (req, res) => {
   try {
     const result = await contract.submitTransaction('PublishAuditData', req.params.id);
     const bb = JSON.parse(Buffer.from(result).toString('utf8'));
+    // [부스 시연] 게시판 공개 = 셔플 시점 → 라이브 표도 도착순서를 섞어 시간 상관(timing) 제거 시각화
+    try { demoLive.shuffle(req.params.id); demoLive.pushEvent(req.params.id, 'tally-published', {}); } catch (_) { /* 무시 */ }
     res.json({
       message: '감사 데이터 게시 완료',
       electionID: bb.electionID,

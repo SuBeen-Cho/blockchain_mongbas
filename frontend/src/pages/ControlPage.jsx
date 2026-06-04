@@ -1,22 +1,25 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import QRCode from 'qrcode';
+import { computeMerkleRootFromProof } from '../utils/crypto.js';
 
 /**
- * ControlPage — 발표자 관제판 (P7 라이트 대시보드 리디자인 · UI 가이드라인 적용)
+ * ControlPage — 발표자 관제판 (Editorial Cobalt 개편)
  * 진입: /?app=control
+ *
+ *  · 실시간 암호문 표(폴링) — 모바일 투표가 새로고침 없이 표/카운터에 누적
+ *  · 개표 탭 = 즉시 종료 + 개표 뷰 전환(결과 + 집계 수학식)
+ *  · 검증 탭 = 실제 Merkle 검증(추적번호→게시판→봉인 일치). 모바일 "검증하기"가 이 뷰를 띄움
+ *  · 셔플 시각화 — 게시판 공개 시 도착 순서를 섞어 timing 상관 제거
  */
 const API = '/api';
 const CANDIDATES = ['치킨', '피자', '떡볶이'];
-const BAR = ['#2563eb', '#dc2626', '#16a34a', '#9333ea', '#d97706'];
 
-// ── 디자인 토큰 (가이드라인 60-30-10 / 8px 그리드) ──
 const T = {
   font: '"Pretendard Variable",Pretendard,-apple-system,system-ui,"Apple SD Gothic Neo","Malgun Gothic",sans-serif',
-  bg: '#f8fafc', card: '#ffffff', border: '#e2e8f0', ink: '#0f172a', sub: '#64748b', faint: '#94a3b8',
-  primary: '#2563eb', primaryDark: '#1d4ed8', success: '#16a34a', successBg: '#f0fdf4',
-  danger: '#dc2626', dangerBg: '#fef2f2', violet: '#7c3aed',
-  shadow: '0 1px 3px rgba(15,23,42,.08), 0 1px 2px rgba(15,23,42,.04)',
+  blue: '#2440F2', blueD: '#1A2BC9', blueSky: '#4D74FF', blueSoft: '#cdd6ff', blueLine: '#c3cdfb',
+  paper: '#ffffff', paper2: '#eef1ff', ink: '#0a0f24', sub: '#54607a', line: '#d7dcfb', panel: '#f5f7ff',
 };
+const tr = (s, n = 10) => (s ? `${s.slice(0, n)}…${s.slice(-4)}` : '—');
 
 async function J(path, opts = {}) {
   const { headers, ...rest } = opts;
@@ -29,29 +32,51 @@ async function J(path, opts = {}) {
 export default function ControlPage() {
   const [eid, setEid] = useState(null);
   const [status, setStatus] = useState('-');
+  const [view, setView] = useState('session');     // session | tally | verify
   const [live, setLive] = useState(0);
+  const [votes, setVotes] = useState([]);          // 라이브 암호문 표
+  const [shuffled, setShuffled] = useState(false);
   const [results, setResults] = useState(null);
   const [decrypted, setDecrypted] = useState(false);
   const [qr, setQr] = useState('');
   const [busy, setBusy] = useState('');
   const [log, setLog] = useState([]);
-  const pollRef = useRef(null);
+  const [vres, setVres] = useState(null);          // 검증 결과
+  const [vfail, setVfail] = useState('');
+  const [vcode, setVcode] = useState('');
+  const pollRef = useRef(null); const evRef = useRef(0);
   const kioskUrl = eid ? `${window.location.origin}/?app=kiosk&e=${encodeURIComponent(eid)}` : '';
-  const addLog = useCallback((m) => setLog((l) => [`${new Date().toLocaleTimeString()} ${m}`, ...l].slice(0, 8)), []);
+  const addLog = useCallback((m) => setLog((l) => [`${new Date().toLocaleTimeString()} ${m}`, ...l].slice(0, 10)), []);
 
   useEffect(() => {
-    if (kioskUrl) QRCode.toDataURL(kioskUrl, { width: 280, margin: 1, color: { dark: '#0f172a', light: '#ffffff' } }).then(setQr).catch(() => setQr(''));
+    if (kioskUrl) QRCode.toDataURL(kioskUrl, { width: 320, margin: 1, color: { dark: '#0a0f24', light: '#ffffff' } }).then(setQr).catch(() => setQr(''));
     else setQr('');
   }, [kioskUrl]);
 
+  // ── 폴링: 라이브 카운트/표 + 모바일 이벤트 ──
   useEffect(() => {
     clearInterval(pollRef.current);
-    if (eid && status === 'ACTIVE') {
-      pollRef.current = setInterval(async () => {
-        try { const c = await J(`/elections/${encodeURIComponent(eid)}/live-count`); setLive(c.totalVotes); } catch { /* noop */ }
-      }, 2000);
-    }
+    if (!eid) return;
+    const tick = async () => {
+      try {
+        if (status === 'ACTIVE') {
+          const c = await J(`/elections/${encodeURIComponent(eid)}/live-count`); setLive(c.totalVotes);
+        }
+        const lv = await J(`/elections/${encodeURIComponent(eid)}/live-votes`);
+        setVotes(lv.votes || []); setShuffled(!!lv.shuffled);
+        const ev = await J(`/elections/${encodeURIComponent(eid)}/demo-events?since=${evRef.current}`);
+        if (ev.events && ev.events.length) {
+          evRef.current = ev.lastSeq;
+          for (const e of ev.events) {
+            if (e.type === 'verify') { setVcode(e.payload?.code || e.payload?.nullifier || ''); setView('verify'); runVerify(e.payload?.code || e.payload?.nullifier || ''); }
+          }
+        }
+      } catch { /* noop */ }
+    };
+    tick();
+    pollRef.current = setInterval(tick, 1500);
     return () => clearInterval(pollRef.current);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [eid, status]);
 
   async function newSession() {
@@ -61,223 +86,364 @@ export default function ControlPage() {
       const now = Math.floor(Date.now() / 1000);
       await J('/elections', { method: 'POST', body: JSON.stringify({ electionID: id, title: '2026 모의 선거', candidates: CANDIDATES, encryptionMode: 'elgamal', endTime: now + 24 * 3600 }) });
       await J(`/elections/${id}/activate`, { method: 'POST' });
-      setEid(id); setStatus('ACTIVE'); setLive(0); setResults(null); setDecrypted(false);
+      setEid(id); setStatus('ACTIVE'); setLive(0); setVotes([]); setShuffled(false);
+      setResults(null); setDecrypted(false); setView('session'); setVres(null); setVfail(''); evRef.current = 0;
       addLog(`새 세션 시작: ${id}`);
     } catch (e) { addLog('오류: ' + e.message); }
     setBusy('');
   }
 
   async function seed(n) {
-    if (!eid) return;
+    if (!eid || status !== 'ACTIVE') return;
     setBusy(`투표 ${n}건 자동 주입 중…`);
     try {
       const r = await J(`/elections/${encodeURIComponent(eid)}/seed-votes`, { method: 'POST', body: JSON.stringify({ count: n }) });
       addLog(`자동 주입: ${r.injected}표`);
-      const c = await J(`/elections/${encodeURIComponent(eid)}/live-count`); setLive(c.totalVotes);
     } catch (e) { addLog('오류: ' + e.message); }
     setBusy('');
   }
 
-  async function closeAndTally() {
+  // 개표 = 즉시 종료 + 집계 + 게시판 공개 → 개표 뷰
+  async function tallyNow() {
     if (!eid) return;
-    if (!window.confirm('집계를 종료합니다. 되돌릴 수 없습니다. 진행할까요?')) return;
-    setBusy('종료 + 키 분산 중…');
+    if (status === 'CLOSED') { setView('tally'); return; }
+    setView('tally'); setBusy('선거 종료 중…');
     try {
       await J(`/elections/${encodeURIComponent(eid)}/close`, { method: 'POST' });
-      setStatus('CLOSED'); addLog('선거 종료 — 결과는 2개 기관 조각 복원 후 복호화');
-      setBusy('기관 조각 복원 중 (2-of-3)…');
+      setStatus('CLOSED'); addLog('선거 종료 — 2개 기관 조각 복원 시작');
+      setBusy('2-of-3 키 조각 복원 중…');
       for (const idx of ['1', '2']) {
         const s = await J(`/elections/${encodeURIComponent(eid)}/shares/${idx}`);
         await J(`/elections/${encodeURIComponent(eid)}/shares`, { method: 'POST', body: JSON.stringify({ shareIndex: idx, shareHex: s.shareHex }) });
         addLog(`조각 ${idx}/2 제출`);
       }
-      setBusy('결과 복호화 확인 중…');
+      setBusy('복호화 확인 중…');
       let t = null;
-      for (let i = 0; i < 10; i++) {
-        t = await J(`/elections/${encodeURIComponent(eid)}/tally`);
-        if (t.decrypted) break;
-        await new Promise((r) => setTimeout(r, 800));
-      }
+      for (let i = 0; i < 12; i++) { t = await J(`/elections/${encodeURIComponent(eid)}/tally`); if (t.decrypted) break; await new Promise((r) => setTimeout(r, 800)); }
       setResults(t.results); setDecrypted(!!t.decrypted);
-      addLog(t.decrypted ? `복호화 완료` : '복호화 대기 중');
-      setBusy('검증 데이터 준비 중…');
+      addLog(t.decrypted ? '복호화 완료' : '복호화 대기');
+      setBusy('Merkle 게시판 공개 중…');
       try {
         await J(`/elections/${encodeURIComponent(eid)}/merkle`, { method: 'POST' });
         await J(`/elections/${encodeURIComponent(eid)}/publish-audit`, { method: 'POST' });
-        addLog('Merkle 트리 + 게시판 공개 완료 (내 표 추적 검증 준비됨)');
-      } catch (e) { addLog('검증 데이터 준비 경고: ' + e.message); }
+        addLog('Merkle 트리 + 게시판 공개 (셔플 적용 · 검증 준비됨)');
+      } catch (e) { addLog('게시판 경고: ' + e.message); }
     } catch (e) { addLog('오류: ' + e.message); }
     setBusy('');
   }
 
-  const maxVotes = results ? Math.max(1, ...Object.values(results)) : 1;
+  // 실제 검증: 추적번호 → 게시판 매칭 → Merkle 봉인 재계산
+  async function runVerify(rawCode, tampered = false) {
+    if (!eid) return;
+    setBusy('검증 중…'); setVres(null); setVfail('');
+    try {
+      const prefix = String(rawCode || '').replace(/[^0-9a-fA-F]/g, '').toLowerCase();
+      if (prefix.length < 4) throw new Error('추적번호를 입력하세요 (4자 이상).');
+      const board = await J(`/elections/${encodeURIComponent(eid)}/bulletin-board`);
+      const ballots = board.encryptedBallots || [];
+      const idx = ballots.findIndex((b) => (b.nullifierHash || '').toLowerCase().startsWith(prefix));
+      if (idx < 0) { setVfail(`추적번호 "${rawCode}" 를 게시판에서 찾을 수 없습니다. ${tampered ? '(한 글자 변조 → 추적 실패)' : '(조작·오타 번호는 추적 불가)'}`); setBusy(''); return; }
+      const full = ballots[idx].nullifierHash;
+      const merkle = await J(`/elections/${encodeURIComponent(eid)}/merkle`);
+      const pr = await J(`/elections/${encodeURIComponent(eid)}/proof/${full}`);
+      const computedRoot = await computeMerkleRootFromProof(pr.leafHash, pr.proof);
+      const sealMatch = computedRoot === merkle.rootHash;
+      setVres({ full, idx, total: ballots.length, ballots, leafHash: pr.leafHash, chainRoot: merkle.rootHash, computedRoot, sealMatch, cipher: ballots[idx].encryptedCandidateID });
+      addLog(`검증: ${tr(full, 8)} → ${sealMatch ? '봉인 일치 ✓' : '불일치 ✗'}`);
+    } catch (e) { setVfail(e.message); }
+    setBusy('');
+  }
+  function tamper() {
+    const hex = String(vcode).replace(/[^0-9a-fA-F]/g, '');
+    if (!hex) return;
+    const flipped = (parseInt(hex[hex.length - 1], 16) ^ 1).toString(16);
+    runVerify(hex.slice(0, -1) + flipped, true);
+  }
+
   const totalRes = results ? Object.values(results).reduce((a, b) => a + b, 0) : 0;
-  const disabled = !!busy;
+  const maxRes = results ? Math.max(1, ...Object.values(results)) : 1;
+  const dis = !!busy;
 
   return (
-    <div style={{ boxSizing: 'border-box', width: '100%', minHeight: '100vh', overflowX: 'hidden', background: T.bg, color: T.ink, fontFamily: T.font, letterSpacing: '-0.01em', wordBreak: 'keep-all' }}>
-      <div style={{ boxSizing: 'border-box', maxWidth: 1120, margin: '0 auto', padding: '32px 24px 64px' }}>
-        {/* 헤더 */}
-        <header style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 24 }}>
-          <Logo />
+    <div style={{ display: 'flex', minHeight: '100vh', background: T.paper, color: T.ink, fontFamily: T.font, letterSpacing: '-0.02em', wordBreak: 'keep-all' }}>
+      {/* ── 사이드바 ── */}
+      <aside style={{ width: 244, flex: 'none', background: T.panel, borderRight: `1px solid ${T.line}`, padding: '22px 18px', display: 'flex', flexDirection: 'column', gap: 8, position: 'sticky', top: 0, height: '100vh', boxSizing: 'border-box' }}>
+        <button onClick={() => { setView('session'); window.scrollTo({ top: 0, behavior: 'smooth' }); }} style={{ display: 'flex', alignItems: 'center', gap: 10, background: 'none', border: 'none', cursor: 'pointer', padding: 0, marginBottom: 18 }}>
+          <img src="/logo/mongbas-symbol-blue.svg" alt="" style={{ width: 30, height: 30 }} />
+          <span style={{ fontSize: 19, fontWeight: 900, letterSpacing: '-0.05em', color: T.ink }}>MONGBAS</span>
+        </button>
+        <Nav label="관제" sub="실시간 투표" active={view === 'session'} onClick={() => setView('session')} />
+        <Nav label="개표" sub="종료 + 집계" active={view === 'tally'} onClick={tallyNow} accent />
+        <Nav label="검증" sub="Merkle 봉인" active={view === 'verify'} onClick={() => setView('verify')} />
+        <div style={{ height: 1, background: T.line, margin: '14px 0' }} />
+        <div style={{ fontSize: 11, fontWeight: 900, letterSpacing: '0.14em', color: T.sub, marginBottom: 6 }}>세션 제어</div>
+        <SBtn onClick={newSession} disabled={dis} solid>＋ 새 세션 시작</SBtn>
+        <SBtn onClick={() => seed(5)} disabled={dis || status !== 'ACTIVE'}>투표 +5</SBtn>
+        <SBtn onClick={() => seed(10)} disabled={dis || status !== 'ACTIVE'}>투표 +10</SBtn>
+        <div style={{ marginTop: 'auto', fontSize: 11, color: T.sub, fontWeight: 700 }}>
+          {busy ? <span style={{ color: T.blue }}>⏳ {busy}</span> : <span>ElGamal · 2-of-3 임계</span>}
+        </div>
+      </aside>
+
+      {/* ── 메인 ── */}
+      <main style={{ flex: 1, minWidth: 0, padding: '26px clamp(20px,3vw,40px) 60px', boxSizing: 'border-box' }}>
+        <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', gap: 16, marginBottom: 22, flexWrap: 'wrap' }}>
           <div>
-            <h1 style={{ margin: 0, fontSize: 24, fontWeight: 700, lineHeight: 1.2 }}>발표자 관제판</h1>
-            <p style={{ margin: '2px 0 0', fontSize: 13, color: T.sub, fontWeight: 500 }}>Mongbas 부스 시연 · ElGamal 2-of-3 threshold</p>
+            <h1 style={{ margin: 0, fontSize: 'clamp(26px,3vw,36px)', fontWeight: 900, letterSpacing: '-0.04em' }}>
+              {view === 'tally' ? '개표 결과' : view === 'verify' ? '내 표 검증' : '발표자 관제판'}
+            </h1>
+            <p style={{ margin: '4px 0 0', fontSize: 13, color: T.sub, fontWeight: 600, fontFamily: 'monospace' }}>{eid || 'Mongbas 부스 시연 · 익명 전자투표'}</p>
           </div>
+          <Status status={status} />
         </header>
 
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 24, alignItems: 'flex-start' }}>
-          {/* 좌측: 메인 */}
-          <div style={{ flex: '1 1 540px', minWidth: 0, display: 'flex', flexDirection: 'column', gap: 20 }}>
-            {/* 상태 카드 */}
-            <section style={{ ...card(), position: 'relative', overflow: 'hidden', background: 'linear-gradient(135deg,#ffffff 60%,#f3f2ff)' }}>
-              <div style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 3, background: 'linear-gradient(90deg,#2563eb,#7c3aed,#06b6d4)' }} />
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 16 }}>
-                <div>
-                  <div style={overline()}>현재 세션</div>
-                  <div style={{ fontSize: 18, fontWeight: 700, marginTop: 4, fontFamily: 'monospace', wordBreak: 'break-all' }}>{eid || '—'}</div>
-                  <StatusBadge status={status} />
-                </div>
-                <div style={{ textAlign: 'right' }}>
-                  <div style={overline()}>실시간 투표 수</div>
-                  <div style={{ fontSize: 56, fontWeight: 800, lineHeight: 1, letterSpacing: '-0.04em', background: 'linear-gradient(135deg,#2563eb,#7c3aed)', WebkitBackgroundClip: 'text', backgroundClip: 'text', color: 'transparent' }}>{live}</div>
-                  <div style={{ fontSize: 12, color: T.faint, fontWeight: 600 }}>표</div>
-                </div>
-              </div>
-            </section>
+        {!eid && <Empty />}
 
-            {/* 컨트롤 카드 */}
-            <section style={card()}>
-              <div style={overline()}>세션 제어</div>
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, marginTop: 14 }}>
-                <Btn onClick={newSession} disabled={disabled} variant="primary">＋ 새 세션 시작</Btn>
-                <Btn onClick={() => seed(5)} disabled={disabled || status !== 'ACTIVE'} variant="ghost">투표 +5</Btn>
-                <Btn onClick={() => seed(10)} disabled={disabled || status !== 'ACTIVE'} variant="ghost">투표 +10</Btn>
-                <Btn onClick={closeAndTally} disabled={disabled || status !== 'ACTIVE'} variant="danger">집계 종료 &amp; 결과</Btn>
-                <Btn onClick={() => window.open(`/?app=track&e=${encodeURIComponent(eid)}`, '_blank')} disabled={status !== 'CLOSED'} variant="violet">내 표 검증 열기 ↗</Btn>
-              </div>
-              {busy && (
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 14, fontSize: 14, color: T.primaryDark, fontWeight: 600 }}>
-                  <Spinner /> {busy}
-                </div>
-              )}
-            </section>
-
-            {/* 결과 카드 */}
-            {results && (
-              <section style={card()}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <div style={overline()}>개표 결과</div>
-                  <span style={pill(decrypted ? T.success : T.danger, decrypted ? T.successBg : T.dangerBg)}>
-                    {decrypted ? '복호화 완료' : '복호화 대기 (2-of-3 필요)'}
-                  </span>
-                </div>
-                <div style={{ marginTop: 16, display: 'flex', flexDirection: 'column', gap: 14 }}>
-                  {CANDIDATES.map((c, i) => {
-                    const v = results[c] ?? 0;
-                    return (
-                      <div key={c}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 14, fontWeight: 600, marginBottom: 6 }}>
-                          <span>{c}</span><span style={{ color: T.sub }}>{v}표 · {totalRes ? Math.round(v / totalRes * 100) : 0}%</span>
-                        </div>
-                        <div style={{ background: '#eef2f6', borderRadius: 8, height: 12, overflow: 'hidden' }}>
-                          <div style={{ width: `${(v / maxVotes) * 100}%`, height: '100%', background: BAR[i % BAR.length], borderRadius: 8, transition: 'width .6s cubic-bezier(.4,0,.2,1)' }} />
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              </section>
-            )}
-
-            {/* 로그 */}
-            <section style={{ ...card(), padding: 16 }}>
-              <div style={overline()}>활동 로그</div>
-              <div style={{ marginTop: 10, fontFamily: 'monospace', fontSize: 12, color: T.sub, display: 'flex', flexDirection: 'column', gap: 4 }}>
-                {log.length === 0 ? <span style={{ color: T.faint }}>아직 활동이 없습니다.</span> : log.map((l, i) => <div key={i} style={{ opacity: i === 0 ? 1 : 0.65 }}>{l}</div>)}
-              </div>
-            </section>
-          </div>
-
-          {/* 우측: QR */}
-          <aside style={{ flex: '1 1 280px', boxSizing: 'border-box', ...card(), textAlign: 'center', position: 'sticky', top: 24 }}>
-            <div style={overline()}>여기 찍고 투표하세요</div>
-            <div style={{ marginTop: 16, display: 'flex', justifyContent: 'center' }}>
-              {qr ? (
-                <img src={qr} alt="kiosk QR" style={{ width: 240, height: 240, borderRadius: 12, border: `1px solid ${T.border}` }} />
-              ) : (
-                <div style={{ width: 240, height: 240, borderRadius: 12, background: '#f1f5f9', display: 'flex', alignItems: 'center', justifyContent: 'center', color: T.faint, fontSize: 14, fontWeight: 500, padding: 20 }}>
-                  새 세션을 시작하면<br />QR이 표시됩니다
-                </div>
-              )}
+        {eid && view === 'session' && (
+          <>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(180px,1fr))', gap: 14, marginBottom: 18 }}>
+              <KPI label="실시간 투표수" value={live} unit="표" big />
+              <KPI label="후보" value={CANDIDATES.length} unit="명" sub="치킨·피자·떡볶이" />
+              <KPI label="암호화" value="ElGamal" unit="+ZKP" sub="동형암호" small />
+              <KPI label="검증 합의" value="2-of-3" unit="" sub="3개 기관" small />
             </div>
-            {kioskUrl && <div style={{ marginTop: 12, fontSize: 11, color: T.faint, wordBreak: 'break-all', fontFamily: 'monospace' }}>{kioskUrl}</div>}
-          </aside>
-        </div>
-      </div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1.6fr) minmax(0,1fr)', gap: 18, alignItems: 'start' }}>
+              <VoteTable votes={votes} shuffled={shuffled} status={status} />
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
+                <QRCard qr={qr} url={kioskUrl} />
+                <LogCard log={log} />
+              </div>
+            </div>
+          </>
+        )}
+
+        {eid && view === 'tally' && <TallyView results={results} decrypted={decrypted} total={totalRes} max={maxRes} busy={busy} votes={votes} shuffled={shuffled} />}
+
+        {eid && view === 'verify' && (
+          <VerifyView code={vcode} setCode={setVcode} run={() => runVerify(vcode)} tamper={tamper} res={vres} fail={vfail} busy={busy} status={status} />
+        )}
+      </main>
     </div>
   );
 }
 
 // ── 컴포넌트 ──
-function card() {
-  return { boxSizing: 'border-box', background: T.card, border: `1px solid ${T.border}`, borderRadius: 16, padding: 24, boxShadow: T.shadow };
+const box = { background: T.paper, border: `1.5px solid ${T.line}`, padding: 20, boxSizing: 'border-box' };
+const over = { fontSize: 11, fontWeight: 900, letterSpacing: '0.14em', color: T.sub, textTransform: 'uppercase' };
+
+function Nav({ label, sub, active, onClick, accent }) {
+  return (
+    <button onClick={onClick} style={{
+      display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 1, textAlign: 'left',
+      padding: '11px 13px', border: `1.5px solid ${active ? T.blue : 'transparent'}`, cursor: 'pointer',
+      background: active ? T.blue : (accent ? T.paper2 : 'transparent'), color: active ? '#fff' : T.ink,
+      fontFamily: 'inherit', transition: 'background .15s',
+    }}>
+      <span style={{ fontSize: 15, fontWeight: 900, letterSpacing: '-0.03em' }}>{label}</span>
+      <span style={{ fontSize: 11, fontWeight: 700, color: active ? 'rgba(255,255,255,.8)' : T.sub }}>{sub}</span>
+    </button>
+  );
 }
-function overline() {
-  return { fontSize: 12, fontWeight: 700, letterSpacing: '0.04em', color: T.faint, textTransform: 'uppercase' };
-}
-function pill(color, bg) {
-  return { fontSize: 12, fontWeight: 700, color, background: bg, padding: '5px 12px', borderRadius: 999 };
-}
-function StatusBadge({ status }) {
-  const map = {
-    ACTIVE: { t: '진행중', c: T.success, bg: T.successBg },
-    CLOSED: { t: '종료됨', c: T.danger, bg: T.dangerBg },
-    '-': { t: '대기', c: T.sub, bg: '#f1f5f9' },
-  };
-  const m = map[status] || map['-'];
-  return <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, marginTop: 10, ...pill(m.c, m.bg) }}>
-    <span style={{ width: 7, height: 7, borderRadius: 999, background: m.c }} /> {m.t}
-  </span>;
-}
-function Btn({ children, onClick, disabled, variant }) {
-  const styles = {
-    primary: { bg: T.primary, color: '#fff', border: 'transparent', hover: T.primaryDark },
-    danger: { bg: T.danger, color: '#fff', border: 'transparent', hover: '#b91c1c' },
-    violet: { bg: T.violet, color: '#fff', border: 'transparent', hover: '#6d28d9' },
-    ghost: { bg: '#fff', color: T.ink, border: T.border, hover: '#f8fafc' },
-  }[variant] || {};
+function SBtn({ children, onClick, disabled, solid }) {
   const [h, setH] = useState(false);
   return (
     <button onClick={onClick} disabled={disabled} onMouseEnter={() => setH(true)} onMouseLeave={() => setH(false)}
       style={{
-        boxSizing: 'border-box', height: 44, padding: '0 18px', borderRadius: 10, fontSize: 14, fontWeight: 600,
-        fontFamily: 'inherit', cursor: disabled ? 'not-allowed' : 'pointer',
-        background: disabled ? '#e2e8f0' : (h ? styles.hover : styles.bg),
-        color: disabled ? '#94a3b8' : styles.color,
-        border: `1px solid ${disabled ? '#e2e8f0' : styles.border}`,
-        transition: 'background .18s ease, transform .18s ease, box-shadow .18s ease',
+        height: 40, padding: '0 14px', fontSize: 13.5, fontWeight: 900, fontFamily: 'inherit', textAlign: 'left',
+        cursor: disabled ? 'not-allowed' : 'pointer', letterSpacing: '-0.02em',
+        background: disabled ? '#e6e9f5' : solid ? (h ? T.blueD : T.blue) : (h ? T.paper2 : T.paper),
+        color: disabled ? '#a6adc8' : solid ? '#fff' : T.blue,
+        border: `1.5px solid ${disabled ? '#e6e9f5' : T.blue}`, transition: 'background .15s, transform .15s',
         transform: h && !disabled ? 'translateY(-1px)' : 'none',
-        boxShadow: h && !disabled && variant !== 'ghost' ? '0 4px 12px rgba(37,99,235,.22)' : 'none',
-      }}>
-      {children}
-    </button>
+      }}>{children}</button>
   );
 }
-function Spinner() {
-  return <span style={{ width: 16, height: 16, border: '2px solid #c7d2fe', borderTopColor: T.primary, borderRadius: 999, display: 'inline-block', animation: 'cspin .7s linear infinite' }} />;
+function Status({ status }) {
+  const m = { ACTIVE: ['● 진행중', T.blue, '#fff'], CLOSED: ['● 종료됨', T.ink, '#fff'], '-': ['대기', T.paper2, T.sub] }[status] || ['대기', T.paper2, T.sub];
+  return <span style={{ fontSize: 12.5, fontWeight: 900, letterSpacing: '0.02em', background: m[1], color: m[2], padding: '7px 14px', border: `1.5px solid ${m[1] === T.paper2 ? T.line : m[1]}` }}>{m[0]}</span>;
 }
-function Logo() {
+function KPI({ label, value, unit, sub, big, small }) {
   return (
-    <div style={{ width: 40, height: 40, borderRadius: 12, background: 'linear-gradient(135deg,#2563eb,#7c3aed)', display: 'flex', alignItems: 'center', justifyContent: 'center', flex: 'none' }}>
-      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2"><path d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" strokeLinecap="round" strokeLinejoin="round" /></svg>
+    <div style={{ ...box, position: 'relative', overflow: 'hidden' }}>
+      <div style={over}>{label}</div>
+      <div style={{ marginTop: 8, display: 'flex', alignItems: 'baseline', gap: 4 }}>
+        <span style={{ fontSize: big ? 46 : small ? 24 : 34, fontWeight: 900, letterSpacing: '-0.05em', color: big ? T.blue : T.ink, lineHeight: 1, fontVariantNumeric: 'tabular-nums' }}>{value}</span>
+        {unit && <span style={{ fontSize: 14, fontWeight: 900, color: T.blue }}>{unit}</span>}
+      </div>
+      {sub && <div style={{ marginTop: 6, fontSize: 12, color: T.sub, fontWeight: 700 }}>{sub}</div>}
+    </div>
+  );
+}
+function VoteTable({ votes, shuffled, status }) {
+  return (
+    <section style={{ ...box, padding: 0, overflow: 'hidden' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '16px 18px', borderBottom: `1.5px solid ${T.line}` }}>
+        <div>
+          <div style={{ fontSize: 16, fontWeight: 900, letterSpacing: '-0.03em' }}>🔒 암호화된 투표 — 공개 원장 실시간</div>
+          <div style={{ fontSize: 12, color: T.sub, fontWeight: 700, marginTop: 2 }}>서버는 암호문만 받습니다 · 누가 뭘 찍었는지 모름</div>
+        </div>
+        {shuffled
+          ? <span style={{ fontSize: 11.5, fontWeight: 900, background: T.blue, color: '#fff', padding: '6px 11px' }}>🔀 셔플됨 · 시간 상관 제거</span>
+          : <span style={{ fontSize: 11.5, fontWeight: 900, background: T.paper2, color: T.blue, padding: '6px 11px' }}>● LIVE</span>}
+      </div>
+      <div style={{ maxHeight: 460, overflowY: 'auto' }}>
+        <table style={{ width: '100%', borderCollapse: 'collapse', fontFamily: 'monospace', fontSize: 12.5 }}>
+          <thead>
+            <tr style={{ background: T.ink, color: '#fff', position: 'sticky', top: 0 }}>
+              {['#', '무효화 해시', '암호문 (c₁:c₂)', 'ZKP'].map((h, i) => (
+                <th key={h} style={{ textAlign: i === 3 ? 'center' : 'left', padding: '9px 14px', fontWeight: 800, fontSize: 11, letterSpacing: '0.04em', whiteSpace: 'nowrap' }}>{h}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {votes.length === 0 && (
+              <tr><td colSpan={4} style={{ padding: 28, textAlign: 'center', color: T.sub, fontWeight: 700 }}>
+                {status === 'ACTIVE' ? '폰으로 투표하거나 [투표 +10] 을 누르면 여기 암호문이 실시간으로 쌓입니다' : '세션을 시작하세요'}
+              </td></tr>
+            )}
+            {votes.slice().reverse().map((v, ri) => (
+              <tr key={v.nh} style={{ borderBottom: `1px solid ${T.line}`, background: ri === 0 && !shuffled ? T.paper2 : '#fff', animation: ri === 0 && !shuffled ? 'cvrow .5s ease' : 'none' }}>
+                <td style={{ padding: '9px 14px', fontWeight: 800, color: T.blue }}>{String(v.seq).padStart(2, '0')}</td>
+                <td style={{ padding: '9px 14px', color: T.ink }}>{tr(v.nh, 12)}</td>
+                <td style={{ padding: '9px 14px', color: T.sub }}>{tr(v.c1, 8)}:{(v.c2 || '').slice(0, 8)}…</td>
+                <td style={{ padding: '9px 14px', textAlign: 'center', color: T.blue, fontWeight: 900 }}>✓</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  );
+}
+function QRCard({ qr, url }) {
+  return (
+    <section style={{ ...box, textAlign: 'center' }}>
+      <div style={over}>여기 찍고 투표하세요</div>
+      <div style={{ marginTop: 14, display: 'flex', justifyContent: 'center' }}>
+        {qr ? <img src={qr} alt="QR" style={{ width: 200, height: 200, border: `1.5px solid ${T.line}` }} />
+          : <div style={{ width: 200, height: 200, background: T.paper2, display: 'flex', alignItems: 'center', justifyContent: 'center', color: T.sub, fontSize: 13, fontWeight: 700 }}>새 세션 시작 시 QR 표시</div>}
+      </div>
+      {url && <div style={{ marginTop: 10, fontSize: 10.5, color: T.sub, wordBreak: 'break-all', fontFamily: 'monospace' }}>{url}</div>}
+    </section>
+  );
+}
+function LogCard({ log }) {
+  return (
+    <section style={{ ...box }}>
+      <div style={over}>활동 로그</div>
+      <div style={{ marginTop: 10, fontFamily: 'monospace', fontSize: 11.5, color: T.sub, display: 'flex', flexDirection: 'column', gap: 4 }}>
+        {log.length === 0 ? <span>아직 활동이 없습니다.</span> : log.map((l, i) => <div key={i} style={{ opacity: i === 0 ? 1 : 0.6 }}>{l}</div>)}
+      </div>
+    </section>
+  );
+}
+function TallyView({ results, decrypted, total, max, busy, votes, shuffled }) {
+  const STEPS = [
+    ['①', '암호문 동형 합산', '∏ Eᵢ = ( ∏ g^rᵢ , g^Σmᵢ · y^Σrᵢ )', '암호문들을 곱하면 평문을 보지 않고 합계의 암호문 1개가 됩니다'],
+    ['②', '2-of-3 키 복원', 'x = Σ λⱼ · sⱼ  (라그랑주 보간)', '3개 기관 중 2개의 Shamir 조각으로 개인키 x 복원'],
+    ['③', '복호화', 'M = c₂ / c₁ˣ = g^Σmᵢ', '복원한 키로 합계의 암호문만 복호화'],
+    ['④', '이산로그 (BSGS)', 'g^Σmᵢ → Σmᵢ → 후보별 분해 (base B=10000)', 'Baby-step Giant-step으로 합계 지수 복원 후 후보별로 분리'],
+    ['⑤', 'Merkle 게시판 공개', 'root = H( … )', '모든 암호문을 봉인해 누구나 독립 검증 가능'],
+  ];
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
+      <section style={{ ...box }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+          <div style={{ fontSize: 17, fontWeight: 900, letterSpacing: '-0.03em' }}>최종 결과 <span style={{ color: T.sub, fontWeight: 800, fontSize: 13 }}>· {total}표</span></div>
+          <span style={{ fontSize: 12, fontWeight: 900, background: decrypted ? '#fff' : T.paper2, color: T.blue, border: `1.5px solid ${T.blue}`, padding: '6px 12px' }}>{busy ? busy : decrypted ? '복호화 완료 ✓' : '복호화 대기'}</span>
+        </div>
+        {results ? CANDIDATES.map((c, i) => {
+          const v = results[c] ?? 0; const lead = v === max && max > 0;
+          return (
+            <div key={c} style={{ marginBottom: 13 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 14, fontWeight: 900, marginBottom: 6 }}>
+                <span>{lead ? '🥇 ' : ''}{c}</span><span style={{ color: T.sub }}>{v}표 · {total ? Math.round(v / total * 100) : 0}%</span>
+              </div>
+              <div style={{ background: T.paper2, height: 16, overflow: 'hidden', border: `1px solid ${T.line}` }}>
+                <div style={{ width: `${(v / max) * 100}%`, height: '100%', background: lead ? `linear-gradient(90deg,${T.blueSky},${T.blue})` : T.blueSoft, transition: 'width .8s cubic-bezier(.4,0,.2,1)' }} />
+              </div>
+            </div>
+          );
+        }) : <div style={{ color: T.sub, fontWeight: 700, padding: 14 }}>{busy || '집계 진행 중…'}</div>}
+      </section>
+
+      <section style={{ ...box }}>
+        <div style={{ ...over, marginBottom: 4 }}>집계 과정 · 동형암호로 비밀키 없이 합산</div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
+          {STEPS.map(([n, t, f, d], i) => (
+            <div key={i} style={{ display: 'flex', gap: 14, padding: '14px 0', borderTop: i ? `1px solid ${T.line}` : 'none' }}>
+              <div style={{ width: 34, height: 34, flex: 'none', background: T.blue, color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 900, fontSize: 17 }}>{n}</div>
+              <div style={{ minWidth: 0 }}>
+                <div style={{ fontSize: 15, fontWeight: 900, letterSpacing: '-0.03em' }}>{t}</div>
+                <div style={{ marginTop: 5, display: 'inline-block', fontFamily: 'monospace', fontSize: 13, fontWeight: 700, background: T.ink, color: '#fff', padding: '5px 10px' }}>{f}</div>
+                <div style={{ marginTop: 6, fontSize: 12.5, color: T.sub, fontWeight: 600, lineHeight: 1.5 }}>{d}</div>
+              </div>
+            </div>
+          ))}
+        </div>
+      </section>
+      <VoteTable votes={votes} shuffled={shuffled} status="CLOSED" />
+    </div>
+  );
+}
+function VerifyView({ code, setCode, run, tamper, res, fail, busy, status }) {
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 18, maxWidth: 920 }}>
+      <section style={{ ...box }}>
+        <div style={over}>추적번호로 내 표 검증 (실제 Merkle 봉인)</div>
+        <div style={{ display: 'flex', gap: 10, marginTop: 12, flexWrap: 'wrap' }}>
+          <input value={code} onChange={(e) => setCode(e.target.value)} placeholder="예: 7F3A-90 또는 무효화 해시"
+            style={{ flex: '1 1 240px', height: 46, padding: '0 14px', fontSize: 15, fontWeight: 800, fontFamily: 'monospace', border: `1.5px solid ${T.line}`, color: T.ink, outline: 'none' }} />
+          <SBtn onClick={run} disabled={busy} solid>추적하기</SBtn>
+          <SBtn onClick={tamper} disabled={busy || !res}>번호 한 글자 바꿔보기</SBtn>
+        </div>
+        {status !== 'CLOSED' && <div style={{ marginTop: 10, fontSize: 12.5, color: T.sub, fontWeight: 700 }}>※ 게시판은 개표(종료) 후 공개됩니다. 먼저 [개표]를 진행하세요.</div>}
+        {fail && <div style={{ marginTop: 14, padding: 14, background: '#fff', border: `1.5px solid ${T.ink}`, color: T.ink, fontWeight: 800, fontSize: 13.5 }}>✗ {fail}</div>}
+      </section>
+
+      {res && (
+        <>
+          <section style={{ ...box, padding: 0, overflow: 'hidden' }}>
+            <div style={{ ...over, padding: '14px 18px', borderBottom: `1.5px solid ${T.line}` }}>공개 게시판 — 내 줄 하이라이트 ({res.idx + 1}/{res.total})</div>
+            <div style={{ maxHeight: 240, overflowY: 'auto', fontFamily: 'monospace', fontSize: 12.5 }}>
+              {res.ballots.map((b, i) => (
+                <div key={i} style={{ display: 'flex', gap: 10, padding: '8px 18px', background: i === res.idx ? T.blue : '#fff', color: i === res.idx ? '#fff' : T.sub, fontWeight: i === res.idx ? 900 : 600, borderBottom: `1px solid ${T.line}` }}>
+                  <span>{i === res.idx ? '➡' : '　'}</span><span>#{String(i + 1).padStart(2, '0')}</span><span>{(b.nullifierHash || '').slice(0, 28)}…</span>
+                </div>
+              ))}
+            </div>
+          </section>
+          <section style={{ ...box, background: res.sealMatch ? T.blue : T.ink, color: '#fff', border: 'none' }}>
+            <div style={{ fontSize: 18, fontWeight: 900, letterSpacing: '-0.03em' }}>{res.sealMatch ? '✓ 봉인 일치 — 변조 없이 집계에 포함됨' : '✗ 봉인 불일치 — 변조 감지'}</div>
+            <div style={{ marginTop: 12, display: 'grid', gridTemplateColumns: '1fr', gap: 6, fontFamily: 'monospace', fontSize: 12 }}>
+              <Kv k="내가 다시 계산한 봉인(root)" v={res.computedRoot} />
+              <Kv k="블록체인에 저장된 봉인(root)" v={res.chainRoot} />
+              <Kv k="내 표 leaf 해시" v={res.leafHash} />
+            </div>
+            <div style={{ marginTop: 12, fontSize: 13, fontWeight: 700, opacity: 0.92 }}>
+              {res.sealMatch ? '내 표를 넣어 봉인을 다시 계산해도 블록체인의 봉인과 똑같습니다 — 비밀키 없이 누구나 검증.' : '봉인이 달라 변조가 즉시 드러납니다.'}
+            </div>
+          </section>
+        </>
+      )}
+    </div>
+  );
+}
+function Kv({ k, v }) {
+  return <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}><span style={{ opacity: 0.7, minWidth: 200 }}>{k}</span><span style={{ wordBreak: 'break-all', fontWeight: 800 }}>{v}</span></div>;
+}
+function Empty() {
+  return (
+    <div style={{ ...box, padding: 48, textAlign: 'center' }}>
+      <img src="/logo/mongbas-symbol-blue.svg" alt="" style={{ width: 56, height: 56, opacity: 0.9 }} />
+      <div style={{ marginTop: 16, fontSize: 20, fontWeight: 900, letterSpacing: '-0.04em' }}>세션을 시작하세요</div>
+      <div style={{ marginTop: 6, fontSize: 13.5, color: T.sub, fontWeight: 700 }}>좌측 [＋ 새 세션 시작]을 누르면 선거가 생성되고 QR이 표시됩니다.</div>
     </div>
   );
 }
 
-// 스피너 keyframes 주입 (한 번)
-if (typeof document !== 'undefined' && !document.getElementById('cspin-kf')) {
-  const s = document.createElement('style'); s.id = 'cspin-kf';
-  s.textContent = '@keyframes cspin{to{transform:rotate(360deg)}}';
+if (typeof document !== 'undefined' && !document.getElementById('cv-kf')) {
+  const s = document.createElement('style'); s.id = 'cv-kf';
+  s.textContent = '@keyframes cvrow{from{background:#dfe5ff;transform:translateX(-6px);opacity:.4}to{transform:none;opacity:1}}';
   document.head.appendChild(s);
 }
