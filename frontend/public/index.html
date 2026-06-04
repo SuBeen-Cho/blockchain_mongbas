@@ -121,23 +121,20 @@
   .cli .fbody::before{right:114px}
   .peer .fbody::before{left:114px}
   /* 라인을 따라 흐르는 펄스 점 (감각적 흐름) */
-  /* 순차 펄스: 투표자 단말 먼저 흐르고 → 검증 피어가 이어서 흐름 (동시 X) */
-  .cli .fbody .pulse,.peer .fbody .pulse{position:absolute;width:9px;height:9px;border-radius:50%;background:var(--blue);box-shadow:0 0 14px 2px var(--blue);z-index:0;animation:flowpulse 6.6s linear infinite}
+  .cli .fbody .pulse,.peer .fbody .pulse{position:absolute;width:9px;height:9px;border-radius:50%;background:var(--blue);box-shadow:0 0 14px 2px var(--blue);z-index:0;animation:flowpulse 3.2s ease-in-out infinite}
   .cli .fbody .pulse{right:109.5px}
-  .peer .fbody .pulse{left:109.5px;animation-delay:3.3s}
-  @keyframes flowpulse{0%{top:27px;opacity:0}3%{opacity:1}42%{opacity:1}46%{top:calc(100% - 27px);opacity:0}100%{top:calc(100% - 27px);opacity:0}}
+  .peer .fbody .pulse{left:109.5px}
+  @keyframes flowpulse{0%{top:27px;opacity:0}12%{opacity:1}88%{opacity:1}100%{top:calc(100% - 27px);opacity:0}}
   .fstep{display:flex;align-items:center;gap:18px}
   .cli .fnote{order:1;flex:1;text-align:right}
   .cli .fbox{order:2}
   .peer .fnote{flex:1;text-align:left}
   .fbox{position:relative;z-index:1;width:228px;flex:none;background:#fff;border:2px solid var(--blue);padding:13px 13px;font-weight:900;font-size:22px;letter-spacing:.04em;color:var(--ink);display:flex;align-items:center;gap:9px;white-space:nowrap;box-shadow:0 8px 20px rgba(36,64,242,.08);transition:transform .2s,box-shadow .2s}
   .fstep:hover .fbox{transform:translateY(-3px);box-shadow:0 16px 34px rgba(36,64,242,.22)}
-  /* 커넥터 방향 화살촉 (흐름 방향성) */
-  .fstep:not(:last-child) .fbox::after{content:"";position:absolute;left:50%;top:calc(100% + 11px);transform:translateX(-50%);width:0;height:0;border-left:5px solid transparent;border-right:5px solid transparent;border-top:7px solid var(--blue);z-index:1}
   .fbox .fn{display:inline-flex;width:39px;height:39px;align-items:center;justify-content:center;background:var(--blue);color:#fff;font-size:19px;font-weight:900;flex:none}
   .fbox.solid{background:var(--blue);color:#fff;box-shadow:0 12px 28px rgba(36,64,242,.30)}
   .fbox.solid .fn{background:#fff;color:var(--blue)}
-  .fnote{font-size:13.5px;font-weight:600;color:var(--sub);line-height:1.5;text-wrap:balance}
+  .fnote{font-size:13.5px;font-weight:600;color:var(--sub);line-height:1.5}
   .fhandoff{align-self:center;display:flex;flex-direction:column;align-items:center;gap:9px;color:var(--blue);font-weight:900;font-size:11px;letter-spacing:.05em;text-align:center;white-space:nowrap}
   .fhandoff .arr{display:flex;align-items:center;justify-content:center;width:46px;height:46px;border-radius:50%;background:var(--blue);color:#fff;font-size:17px;box-shadow:0 10px 26px rgba(36,64,242,.34);animation:hopulse 2.4s ease-in-out infinite}
   @keyframes hopulse{0%,100%{box-shadow:0 10px 26px rgba(36,64,242,.34)}50%{box-shadow:0 10px 26px rgba(36,64,242,.34),0 0 0 8px rgba(36,64,242,.10)}}
@@ -300,11 +297,11 @@
         <div class="fhead">투표자 단말 <small>Voter Client · 폰</small></div>
         <div class="fbody">
         <div class="pulse"></div>
-        <div class="fstep"><div class="fbox solid"><span class="fn">1</span>자격증명 제시</div><div class="fnote">누가 찍는지 숨긴 채 ‘자격 있음’만 익명으로 증명</div></div>
-        <div class="fstep"><div class="fbox"><span class="fn">2</span>고유표식 생성</div><div class="fnote">1인 1표용 일회용 번호 생성 — 신원은 노출 안 됨</div></div>
-        <div class="fstep"><div class="fbox"><span class="fn">3</span>후보 암호화</div><div class="fnote">폰에서 ElGamal로 암호화, 평문은 밖으로 안 나감</div></div>
-        <div class="fstep"><div class="fbox"><span class="fn">4</span>영지식 증명</div><div class="fnote">후보값은 숨긴 채 ‘정상 범위의 한 표’를 <span style="white-space:nowrap">수학적으로 증명</span></div></div>
-        <div class="fstep"><div class="fbox"><span class="fn">5</span>비공개 전송</div><div class="fnote">암호문·증명만 전송 — 오더러·공개원장엔 기록 안 됨</div></div>
+        <div class="fstep"><div class="fbox solid"><span class="fn">0</span>자격증명 제시</div><div class="fnote">누가 찍는지 숨긴 채 ‘자격 있음’만 익명으로 증명</div></div>
+        <div class="fstep"><div class="fbox"><span class="fn">1</span>고유표식 생성</div><div class="fnote">1인 1표용 일회용 번호 생성 — 신원은 노출 안 됨</div></div>
+        <div class="fstep"><div class="fbox"><span class="fn">2</span>후보 암호화</div><div class="fnote">폰에서 ElGamal로 암호화, 평문은 밖으로 안 나감</div></div>
+        <div class="fstep"><div class="fbox"><span class="fn">3</span>영지식 증명</div><div class="fnote">후보값은 숨긴 채 ‘정상 범위의 한 표’를 <span style="white-space:nowrap">수학적으로 증명</span></div></div>
+        <div class="fstep"><div class="fbox"><span class="fn">4</span>비공개 전송</div><div class="fnote">암호문·증명만 전송 — 오더러·공개원장엔 기록 안 됨</div></div>
         </div>
       </div>
       <div class="fhandoff"><span>핸드오프</span><span class="arr">▶</span><span>암호문·증명만</span></div>
@@ -312,14 +309,14 @@
         <div class="fhead">검증 피어 <small>Endorsing Peer · 2-of-3</small></div>
         <div class="fbody">
         <div class="pulse"></div>
-        <div class="fstep"><div class="fbox"><span class="fn">6</span>형식·범위 검사</div><div class="fnote">입력이 규격에 맞는지 확인</div></div>
-        <div class="fstep"><div class="fbox"><span class="fn">7</span>선거 상태 확인</div><div class="fnote">지금 투표 가능한 선거인지</div></div>
-        <div class="fstep"><div class="fbox"><span class="fn">8</span>자격증명 검증</div><div class="fnote">제출된 자격증명이 유효한지</div></div>
-        <div class="fstep"><div class="fbox"><span class="fn">9</span>중복·재투표 처리</div><div class="fnote">같은 표식이면 마지막 표 우선 (Last-Vote-Wins)</div></div>
-        <div class="fstep"><div class="fbox"><span class="fn">10</span>증명 검증</div><div class="fnote">정상적인 한 표인지 수학적으로 확인</div></div>
-        <div class="fstep"><div class="fbox"><span class="fn">11</span>표 봉인(커밋)</div><div class="fnote">나중에 못 바꾸도록 표를 봉인</div></div>
-        <div class="fstep"><div class="fbox"><span class="fn">12</span>PDC 저장</div><div class="fnote">신원 관련 데이터는 비공개 영역(PDC)에만</div></div>
-        <div class="fstep"><div class="fbox solid"><span class="fn">13</span>공개 원장 기록</div><div class="fnote">암호문·증명만 공개 — 비밀키 없이 누구나 검증</div></div>
+        <div class="fstep"><div class="fbox"><span class="fn">1</span>형식·범위 검사</div><div class="fnote">입력이 규격에 맞는지 확인</div></div>
+        <div class="fstep"><div class="fbox"><span class="fn">2</span>선거 상태 확인</div><div class="fnote">지금 투표 가능한 선거인지</div></div>
+        <div class="fstep"><div class="fbox"><span class="fn">3</span>자격증명 검증</div><div class="fnote">제출된 자격증명이 유효한지</div></div>
+        <div class="fstep"><div class="fbox"><span class="fn">4</span>중복·재투표 처리</div><div class="fnote">같은 표식이면 마지막 표 우선 (Last-Vote-Wins)</div></div>
+        <div class="fstep"><div class="fbox"><span class="fn">5</span>증명 검증</div><div class="fnote">정상적인 한 표인지 수학적으로 확인</div></div>
+        <div class="fstep"><div class="fbox"><span class="fn">6</span>표 봉인(커밋)</div><div class="fnote">나중에 못 바꾸도록 표를 봉인</div></div>
+        <div class="fstep"><div class="fbox"><span class="fn">7</span>PDC 저장</div><div class="fnote">신원 관련 데이터는 비공개 영역(PDC)에만</div></div>
+        <div class="fstep"><div class="fbox solid"><span class="fn">8</span>공개 원장 기록</div><div class="fnote">암호문·증명만 공개 — 비밀키 없이 누구나 검증</div></div>
         </div>
       </div>
     </div>
@@ -446,7 +443,7 @@
       <div class="kick" style="color:#bcd4ff">Try it now</div>
       <h2 style="margin-top:14px">직접 투표해보세요.</h2>
       <p style="margin:20px auto 0;max-width:560px;color:rgba(255,255,255,.9);font-weight:500;font-size:clamp(16px,1.6vw,19px)">QR을 찍고 한 표를 던진 뒤, 당신의 추적번호로 내 표를 직접 검증해보세요.</p>
-      <div class="qr" id="liveqr"><span id="qrwait" style="font-size:13px;line-height:1.4">QR 대기 중<br><span style="font-weight:600;opacity:.7">새 세션을 시작하세요</span></span></div>
+      <div class="qr">옆 컴퓨터<br>체험존</div>
     </div>
   </div></section>
 
@@ -510,25 +507,6 @@ gsap.timeline({repeat:-1,defaults:{ease:'power2.inOut'}}).to({},{duration:1.8})
 const navlinks=[...document.querySelectorAll('.nav-links a')];
 ['#paradox','#props','#perf','#exp'].forEach((id,i)=>ScrollTrigger.create({trigger:id,start:'top 50%',end:'bottom 50%',
   onToggle:s=>{if(s.isActive){navlinks.forEach(a=>a.classList.remove('on'));navlinks[i]&&navlinks[i].classList.add('on')}}}));
-</script>
-<!-- 라이브 QR: Firebase 릴레이를 폴링해 현재 세션 키오스크 QR을 자동 표시 -->
-<script>
-(function(){
-  var FB='https://mongbas-blockchain-vote-default-rtdb.firebaseio.com/kioskUrl.json';
-  var box=document.getElementById('liveqr'); if(!box) return; var cur='';
-  function render(url){
-    if(!url||url===cur) return; cur=url;
-    box.innerHTML='<img alt="투표 QR" style="width:150px;height:150px;display:block" '
-      +'src="https://api.qrserver.com/v1/create-qr-code/?size=300x300&margin=0&data='+encodeURIComponent(url)+'">';
-  }
-  function poll(){
-    fetch(FB+'?t='+Date.now(),{cache:'no-store'}).then(function(r){return r.json();}).then(function(d){
-      var url=d&&(typeof d==='string'?d:d.url);
-      if(typeof url==='string'&&url.indexOf('http')===0) render(url);
-    }).catch(function(){});
-  }
-  poll(); setInterval(poll,4000);
-})();
 </script>
 </body>
 </html>

@@ -75,9 +75,15 @@ export default function KioskPage({ electionId }) {
         body.encryptedCandidateID = `${c1}:${c2}`;
         body.ballotValidityProof = JSON.stringify(generateBallotValidityProof(pub, c1, c2, _r, pick, election.candidates.length));
       } else body.candidateID = candidateID;
-      await J('/vote', { method: 'POST', headers: { 'x-idemix-credential': cred }, body: JSON.stringify(body) });
+      const resp = await J('/vote', { method: 'POST', headers: { 'x-idemix-credential': cred }, body: JSON.stringify(body) });
       const s = nh.slice(0, 6).toUpperCase();
-      setReceipt({ code: `${s.slice(0, 4)}-${s.slice(4)}`, nh });
+      // 재투표 이력(같은 폰=같은 nullifier=같은 추적번호, 마지막 표만 유효)
+      const hk = `mongbas_hist_${electionId}`;
+      const hist = JSON.parse(localStorage.getItem(hk) || '[]');
+      hist.push({ mode: mode === 'panic' ? '패닉' : '정상', cand: candidateID });
+      localStorage.setItem(hk, JSON.stringify(hist));
+      setReceipt({ code: `${s.slice(0, 4)}-${s.slice(4)}`, nh, isRevote: !!resp.isRevote, hist });
+      setSent(false);
       setPhase('done');
     } catch (e) { setErr(e.message); setPhase('error'); }
   }
@@ -109,12 +115,28 @@ export default function KioskPage({ electionId }) {
     <Shell>
       <div style={{ textAlign: 'center', marginTop: 16 }}>
         <div style={{ width: 78, height: 78, background: C.blue, display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto', color: '#fff', fontSize: 40, fontWeight: 900 }}>✓</div>
-        <h2 style={{ margin: '18px 0 4px', fontSize: 26, fontWeight: 900, letterSpacing: '-0.04em' }}>투표 완료</h2>
-        <p style={{ color: C.sub, fontSize: 13.5, margin: 0, fontWeight: 700 }}>내 추적번호 — 검증할 때 사용하세요</p>
+        <h2 style={{ margin: '18px 0 4px', fontSize: 26, fontWeight: 900, letterSpacing: '-0.04em' }}>{receipt.isRevote ? '재투표 완료' : '투표 완료'}</h2>
+        <p style={{ color: C.sub, fontSize: 13.5, margin: 0, fontWeight: 700 }}>{receipt.isRevote ? '이전 표가 대체됐습니다 — 마지막 표만 유효' : '내 추적번호 — 검증할 때 사용하세요'}</p>
         <div style={{ width: '100%', background: C.blue, color: '#fff', padding: '26px 0', margin: '18px 0', fontSize: 46, fontWeight: 900, letterSpacing: 6, boxSizing: 'border-box', fontFamily: 'monospace' }}>
           {receipt.code}
         </div>
+        {receipt.hist && receipt.hist.length > 1 && (
+          <div style={{ marginBottom: 14, padding: '10px 12px', border: `1.5px solid ${C.line}`, background: '#fff', textAlign: 'left' }}>
+            <div style={{ fontSize: 11, fontWeight: 900, letterSpacing: '.1em', color: C.sub, marginBottom: 4 }}>투표 이력 (마지막만 유효)</div>
+            <div style={{ fontSize: 13.5, fontWeight: 800, color: C.ink }}>
+              {receipt.hist.map((h, i) => (
+                <span key={i} style={{ color: i === receipt.hist.length - 1 ? C.blue : '#aab1cf' }}>
+                  {i > 0 ? ' → ' : ''}{h.mode}·{h.cand}{i === receipt.hist.length - 1 ? ' (현재)' : ''}
+                </span>
+              ))}
+            </div>
+          </div>
+        )}
         <p style={{ color: C.sub, fontSize: 13, lineHeight: 1.6, fontWeight: 600 }}>이 번호로 <b style={{ color: C.ink }}>내 표가 변조 없이 집계에 들어갔는지</b> 확인할 수 있습니다. 누구에게 투표했는지는 드러나지 않습니다.</p>
+        <button onClick={() => { setPick(null); setMode(null); setSent(false); setPhase('choose'); }}
+          style={{ width: '100%', marginTop: 4, marginBottom: 8, padding: 15, border: `2px solid ${C.line}`, background: '#fff', color: C.ink, fontSize: 15, fontWeight: 900, fontFamily: 'inherit', cursor: 'pointer', boxSizing: 'border-box' }}>
+          ↺ 다시 투표하기 <span style={{ fontWeight: 700, color: C.sub, fontSize: 12 }}>(마지막 표만 유효)</span>
+        </button>
         {sent ? (
           <div style={{ marginTop: 14, padding: 16, border: `1.5px solid ${C.blue}`, background: C.soft, color: C.blueD, fontWeight: 800, fontSize: 14 }}>
             ✓ 관제판 화면에서 <b>내 표 검증</b>이 진행됩니다.<br />큰 화면을 확인하세요.

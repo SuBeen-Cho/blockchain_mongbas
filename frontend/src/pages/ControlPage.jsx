@@ -31,6 +31,30 @@ async function J(path, opts = {}) {
   return j;
 }
 
+// 개표 집계 과정 실제값 계산 (공개 데이터: 게시판 암호문 + pubkey + 결과)
+function computeTallyMath(pubKey, ballots, results, candidates) {
+  try {
+    const p = BigInt('0x' + pubKey.p), g = BigInt('0x' + pubKey.g);
+    const mod = (a, b) => ((a % b) + b) % b;
+    const modPow = (b, e, m) => { b = mod(b, m); let r = 1n; while (e > 0n) { if (e & 1n) r = mod(r * b, m); e >>= 1n; b = mod(b * b, m); } return r; };
+    let c1 = 1n, c2 = 1n, n = 0;
+    for (const b of ballots) {
+      const [c1h, c2h] = String(b.encryptedCandidateID || '').split(':');
+      if (!c1h || !c2h) continue;
+      c1 = mod(c1 * BigInt('0x' + c1h), p); c2 = mod(c2 * BigInt('0x' + c2h), p); n++;
+    }
+    const B = 10000n; let sum = 0n;
+    candidates.forEach((cn, i) => { sum += BigInt(results[cn] || 0) * (B ** BigInt(i)); });
+    const M = modPow(g, sum, p);
+    return {
+      ballotCount: n,
+      c1: c1.toString(16), c2: c2.toString(16),
+      shares: [1, 2], sum: sum.toString(), M: M.toString(16),
+      perCand: candidates.map((cn, i) => ({ cn, v: results[cn] || 0, w: (B ** BigInt(i)).toString() })),
+    };
+  } catch { return null; }
+}
+
 export default function ControlPage() {
   const [eid, setEid] = useState(null);
   const [status, setStatus] = useState('-');
@@ -48,6 +72,7 @@ export default function ControlPage() {
   const [vcode, setVcode] = useState('');
   const [inj, setInj] = useState([1, 1, 1]);        // 후보별 커스텀 주입 개수
   const [rootHash, setRootHash] = useState('');     // 공개된 Merkle root (검증 탭 상단 표시)
+  const [tallyMath, setTallyMath] = useState(null); // 개표 집계 과정 실제 계산값
   const [narrow, setNarrow] = useState(typeof window !== 'undefined' && window.innerWidth < 860);
   const pollRef = useRef(null); const evRef = useRef(0);
   const kioskUrl = eid ? `${window.location.origin}/?app=kiosk&e=${encodeURIComponent(eid)}` : '';
@@ -93,7 +118,7 @@ export default function ControlPage() {
       await J('/elections', { method: 'POST', body: JSON.stringify({ electionID: id, title: '2026 모의 선거', candidates: CANDIDATES, encryptionMode: 'elgamal', endTime: now + 24 * 3600 }) });
       await J(`/elections/${id}/activate`, { method: 'POST' });
       setEid(id); setStatus('ACTIVE'); setLive(0); setVotes([]); setShuffled(false);
-      setResults(null); setDecrypted(false); setView('session'); setVres(null); setVfail(''); setRootHash(''); evRef.current = 0;
+      setResults(null); setDecrypted(false); setView('session'); setVres(null); setVfail(''); setRootHash(''); setTallyMath(null); evRef.current = 0;
       // [부스 시연] 이 세션의 키오스크 URL을 Firebase 릴레이에 기록 → 쇼케이스 QR 자동 동기화
       const ku = `${window.location.origin}/?app=kiosk&e=${encodeURIComponent(id)}`;
       try { fetch(FB_KIOSK, { method: 'PUT', body: JSON.stringify({ url: ku, electionID: id, ts: Date.now() }) }).catch(() => {}); } catch { /* noop */ }
@@ -147,6 +172,12 @@ export default function ControlPage() {
         await J(`/elections/${encodeURIComponent(eid)}/merkle`, { method: 'POST' });
         await J(`/elections/${encodeURIComponent(eid)}/publish-audit`, { method: 'POST' });
         try { const mk = await J(`/elections/${encodeURIComponent(eid)}/merkle`); setRootHash(mk.rootHash || ''); } catch { /* noop */ }
+        // 집계 과정 실제 계산값 (공개 데이터로 클라이언트 계산)
+        try {
+          const bb = await J(`/elections/${encodeURIComponent(eid)}/bulletin-board`);
+          const pk = await J(`/elections/${encodeURIComponent(eid)}/elgamal-pubkey`);
+          setTallyMath(computeTallyMath(pk.pubKey, bb.encryptedBallots || [], t.results, CANDIDATES));
+        } catch { /* noop */ }
         addLog('Merkle 트리 + 게시판 공개 (셔플 적용 · 검증 준비됨)');
       } catch (e) { addLog('게시판 경고: ' + e.message); }
     } catch (e) { addLog('오류: ' + e.message); }
@@ -224,7 +255,7 @@ export default function ControlPage() {
         <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', gap: 16, marginBottom: 22, flexWrap: 'wrap' }}>
           <div>
             <h1 style={{ margin: 0, fontSize: 'clamp(26px,3vw,36px)', fontWeight: 900, letterSpacing: '-0.04em' }}>
-              {view === 'tally' ? '개표 결과' : view === 'verify' ? '내 표 검증' : '발표자 관제판'}
+              {view === 'tally' ? '개표 결과' : view === 'verify' ? '내 표 검증' : '투표현황 대시보드'}
             </h1>
             <p style={{ margin: '4px 0 0', fontSize: 13, color: T.sub, fontWeight: 600, fontFamily: 'monospace' }}>{eid || 'Mongbas 부스 시연 · 익명 전자투표'}</p>
           </div>
@@ -251,7 +282,7 @@ export default function ControlPage() {
           </>
         )}
 
-        {eid && view === 'tally' && <TallyView results={results} decrypted={decrypted} total={totalRes} max={maxRes} busy={busy} votes={votes} shuffled={shuffled} live={live} />}
+        {eid && view === 'tally' && <TallyView results={results} decrypted={decrypted} total={totalRes} max={maxRes} busy={busy} votes={votes} shuffled={shuffled} live={live} math={tallyMath} rootHash={rootHash} />}
 
         {eid && view === 'verify' && (
           <VerifyView code={vcode} setCode={setVcode} run={() => runVerify(vcode)} tamper={tamper} res={vres} fail={vfail} busy={busy} status={status} rootHash={rootHash} />
@@ -371,14 +402,21 @@ function LogCard({ log }) {
     </section>
   );
 }
-function TallyView({ results, decrypted, total, max, busy, votes, shuffled, live }) {
+function TallyView({ results, decrypted, total, max, busy, votes, shuffled, live, math, rootHash }) {
   const panic = Math.max(0, (live || 0) - (total || 0));
+  const m = math || {};
+  const tc = (h) => (h ? `${h.slice(0, 16)}…${h.slice(-6)}` : '—');
   const STEPS = [
-    ['①', '암호문 동형 합산', '∏ Eᵢ = ( ∏ g^rᵢ , g^Σmᵢ · y^Σrᵢ )', '암호문들을 곱하면 평문을 보지 않고 합계의 암호문 1개가 됩니다'],
-    ['②', '2-of-3 키 복원', 'x = Σ λⱼ · sⱼ  (라그랑주 보간)', '3개 기관 중 2개의 Shamir 조각으로 개인키 x 복원'],
-    ['③', '복호화', 'M = c₂ / c₁ˣ = g^Σmᵢ', '복원한 키로 합계의 암호문만 복호화'],
-    ['④', '이산로그 (BSGS)', 'g^Σmᵢ → Σmᵢ → 후보별 분해 (base B=10000)', 'Baby-step Giant-step으로 합계 지수 복원 후 후보별로 분리'],
-    ['⑤', 'Merkle 게시판 공개', 'root = H( … )', '모든 암호문을 봉인해 누구나 독립 검증 가능'],
+    { n: '①', t: '암호문 동형 합산', f: '∏ Eᵢ = ( ∏ g^rᵢ , g^Σmᵢ · y^Σrᵢ )', d: '암호문들을 곱하면 평문을 보지 않고 합계의 암호문 1개가 됩니다',
+      val: m.c1 ? [`c₁ = ${tc(m.c1)}`, `c₂ = ${tc(m.c2)}`] : null, vd: `게시판 암호문 ${m.ballotCount || 0}개를 모두 곱한 실제 합계 암호문입니다` },
+    { n: '②', t: '2-of-3 키 복원', f: 'x = Σ λⱼ · sⱼ  (라그랑주 보간)', d: '3개 기관 중 2개의 Shamir 조각으로 개인키 x 복원',
+      val: ['사용한 조각 = [1, 2]', 'x = ●●●●●● (비공개)'], vd: '개인키 x는 복원되지만 화면엔 안 띄웁니다 — 공개하면 보안 위반이라서요' },
+    { n: '③', t: '복호화', f: 'M = c₂ / c₁ˣ = g^Σmᵢ', d: '복원한 키로 합계의 암호문만 복호화',
+      val: m.M ? [`g^Σmᵢ = ${tc(m.M)}`] : null, vd: '합계 암호문을 복호화한 실제 값입니다 (= g의 Σmᵢ 제곱)' },
+    { n: '④', t: '이산로그 (BSGS)', f: 'g^Σmᵢ → Σmᵢ → 후보별 분해 (base B=10000)', d: 'Baby-step Giant-step으로 합계 지수 복원 후 후보별로 분리',
+      val: m.sum ? [`Σmᵢ = ${m.sum}`, (m.perCand || []).map((c) => `${c.cn} ${c.v}`).join(' · ')] : null, vd: '지수 합 Σmᵢ를 10000진법으로 풀면 후보별 실제 득표가 됩니다' },
+    { n: '⑤', t: 'Merkle 게시판 공개', f: 'root = H( … )', d: '모든 암호문을 봉인해 누구나 독립 검증 가능',
+      val: rootHash ? [tc(rootHash)] : null, vd: '게시판 전체 암호문을 봉인한 실제 루트 해시입니다' },
   ];
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
@@ -415,15 +453,26 @@ function TallyView({ results, decrypted, total, max, busy, votes, shuffled, live
       </section>
 
       <section style={{ ...box }}>
-        <div style={{ ...over, marginBottom: 4 }}>집계 과정 · 동형암호로 비밀키 없이 합산</div>
+        <div style={{ ...over, marginBottom: 4 }}>집계 과정 · 동형암호로 비밀키 없이 합산 <span style={{ color: T.blue }}>— 오른쪽은 실제 계산값</span></div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
-          {STEPS.map(([n, t, f, d], i) => (
-            <div key={i} style={{ display: 'flex', gap: 14, padding: '14px 0', borderTop: i ? `1px solid ${T.line}` : 'none' }}>
-              <div style={{ width: 34, height: 34, flex: 'none', background: T.blue, color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 900, fontSize: 17 }}>{n}</div>
-              <div style={{ minWidth: 0 }}>
-                <div style={{ fontSize: 15, fontWeight: 900, letterSpacing: '-0.03em' }}>{t}</div>
-                <div style={{ marginTop: 5, display: 'inline-block', fontFamily: 'monospace', fontSize: 13, fontWeight: 700, background: T.ink, color: '#fff', padding: '5px 10px' }}>{f}</div>
-                <div style={{ marginTop: 6, fontSize: 12.5, color: T.sub, fontWeight: 600, lineHeight: 1.5 }}>{d}</div>
+          {STEPS.map((s, i) => (
+            <div key={i} style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 280px), 1fr))', gap: 16, padding: '16px 0', borderTop: i ? `1px solid ${T.line}` : 'none' }}>
+              {/* 왼쪽: 수식/설명 */}
+              <div style={{ display: 'flex', gap: 12, minWidth: 0 }}>
+                <div style={{ width: 34, height: 34, flex: 'none', background: T.blue, color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 900, fontSize: 17 }}>{s.n}</div>
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ fontSize: 15, fontWeight: 900, letterSpacing: '-0.03em' }}>{s.t}</div>
+                  <div style={{ marginTop: 5, display: 'inline-block', fontFamily: 'monospace', fontSize: 12.5, fontWeight: 700, background: T.ink, color: '#fff', padding: '5px 10px', maxWidth: '100%', wordBreak: 'break-all' }}>{s.f}</div>
+                  <div style={{ marginTop: 6, fontSize: 12, color: T.sub, fontWeight: 600, lineHeight: 1.5 }}>{s.d}</div>
+                </div>
+              </div>
+              {/* 오른쪽: 실제 값 + 간단 설명 */}
+              <div style={{ borderLeft: `2px solid ${T.blue}`, paddingLeft: 14, minWidth: 0 }}>
+                <div style={{ fontSize: 10.5, fontWeight: 900, letterSpacing: '.12em', color: T.blue }}>실제 값</div>
+                {s.val ? s.val.map((v, j) => (
+                  <div key={j} style={{ marginTop: 4, fontFamily: 'monospace', fontSize: 12.5, fontWeight: 800, color: T.ink, wordBreak: 'break-all', lineHeight: 1.4 }}>{v}</div>
+                )) : <div style={{ marginTop: 4, fontSize: 12, color: T.sub, fontWeight: 600 }}>{busy ? '계산 중…' : '—'}</div>}
+                <div style={{ marginTop: 7, fontSize: 11.5, color: T.sub, fontWeight: 600, lineHeight: 1.55 }}>{s.vd}</div>
               </div>
             </div>
           ))}
