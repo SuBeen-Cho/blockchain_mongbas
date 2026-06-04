@@ -43,6 +43,7 @@ export default function KioskPage({ electionId }) {
   const [err, setErr] = useState('');
   const [receipt, setReceipt] = useState(null);  // { code, nh }
   const [sent, setSent] = useState(false);
+  const [mode, setMode] = useState(null);        // 'real' | 'panic' (강압 저항 데모 트리거)
 
   useEffect(() => {
     (async () => {
@@ -55,7 +56,7 @@ export default function KioskPage({ electionId }) {
         setBf((await J(`/elections/${encodeURIComponent(electionId)}/blinding-factor`)).blindingFactor);
         const voter = getDemoVoter();
         setCred((await J('/credential/idemix', { method: 'POST', body: JSON.stringify({ enrollmentID: voter, enrollmentSecret: `${voter}pw`, electionID: electionId }) })).credential);
-        setPhase('ready');
+        setPhase('choose');
       } catch (e) { setErr(e.message); setPhase('error'); }
     })();
   }, [electionId]);
@@ -68,7 +69,7 @@ export default function KioskPage({ electionId }) {
       if (!vs) { vs = generateVoterSecret(); localStorage.setItem(`mongbas_vs_${electionId}`, vs); }
       const nh = await computeNullifier(vs, electionId, bf);
       const candidateID = election.candidates[pick];
-      const body = { electionID: electionId, nullifierHash: nh };
+      const body = { electionID: electionId, nullifierHash: nh, credentialType: mode === 'panic' ? 'panic' : 'real' };
       if (election.encryptionMode === 'elgamal') {
         const { c1, c2, _r } = elgamalEncrypt(pub, candidateID, pick);
         body.encryptedCandidateID = `${c1}:${c2}`;
@@ -126,6 +127,25 @@ export default function KioskPage({ electionId }) {
         )}
         <p style={{ color: C.sub, fontSize: 11.5, marginTop: 10, fontWeight: 600 }}>※ 게시판은 개표(종료) 후 공개됩니다.</p>
       </div>
+    </Shell>
+  );
+
+  // 강압 저항 데모 트리거 — 고른 뒤 화면·영수증·검증은 두 모드가 100% 동일
+  if (phase === 'choose') return (
+    <Shell>
+      <h1 style={{ fontSize: 24, fontWeight: 900, margin: '4px 0 6px', letterSpacing: '-0.04em' }}>{election.title}</h1>
+      <p style={{ color: C.sub, fontSize: 13.5, fontWeight: 700, margin: '0 0 18px' }}>어떻게 투표할까요?</p>
+      <button onClick={() => { setMode('real'); setPhase('ready'); }}
+        style={{ width: '100%', textAlign: 'left', padding: '20px 18px', marginBottom: 12, border: `2px solid ${C.blue}`, background: C.blue, color: '#fff', fontFamily: 'inherit', cursor: 'pointer', boxSizing: 'border-box' }}>
+        <div style={{ fontSize: 20, fontWeight: 900, letterSpacing: '-0.03em' }}>정상 투표</div>
+        <div style={{ fontSize: 13, fontWeight: 600, opacity: 0.9, marginTop: 4 }}>내 의사대로 한 표 — 집계에 반영됩니다</div>
+      </button>
+      <button onClick={() => { setMode('panic'); setPhase('ready'); }}
+        style={{ width: '100%', textAlign: 'left', padding: '20px 18px', border: `2px solid ${C.blue}`, background: '#fff', color: C.ink, fontFamily: 'inherit', cursor: 'pointer', boxSizing: 'border-box' }}>
+        <div style={{ fontSize: 20, fontWeight: 900, letterSpacing: '-0.03em', color: C.blue }}>패닉(강압) 투표</div>
+        <div style={{ fontSize: 13, fontWeight: 600, color: C.sub, marginTop: 4 }}>강압 상황 가정 — 화면·영수증·검증은 똑같지만 집계에서 제외됩니다</div>
+      </button>
+      <p style={{ textAlign: 'center', color: C.sub, fontSize: 11.5, marginTop: 16, fontWeight: 600, lineHeight: 1.5 }}>강압자는 둘을 구별할 수 없습니다.<br />이게 강압 저항(coercion resistance)입니다.</p>
     </Shell>
   );
 

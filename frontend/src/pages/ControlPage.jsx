@@ -46,8 +46,12 @@ export default function ControlPage() {
   const [vres, setVres] = useState(null);          // 검증 결과
   const [vfail, setVfail] = useState('');
   const [vcode, setVcode] = useState('');
+  const [inj, setInj] = useState([1, 1, 1]);        // 후보별 커스텀 주입 개수
+  const [rootHash, setRootHash] = useState('');     // 공개된 Merkle root (검증 탭 상단 표시)
+  const [narrow, setNarrow] = useState(typeof window !== 'undefined' && window.innerWidth < 860);
   const pollRef = useRef(null); const evRef = useRef(0);
   const kioskUrl = eid ? `${window.location.origin}/?app=kiosk&e=${encodeURIComponent(eid)}` : '';
+  useEffect(() => { const f = () => setNarrow(window.innerWidth < 860); window.addEventListener('resize', f); return () => window.removeEventListener('resize', f); }, []);
   const addLog = useCallback((m) => setLog((l) => [`${new Date().toLocaleTimeString()} ${m}`, ...l].slice(0, 10)), []);
 
   useEffect(() => {
@@ -89,7 +93,7 @@ export default function ControlPage() {
       await J('/elections', { method: 'POST', body: JSON.stringify({ electionID: id, title: '2026 모의 선거', candidates: CANDIDATES, encryptionMode: 'elgamal', endTime: now + 24 * 3600 }) });
       await J(`/elections/${id}/activate`, { method: 'POST' });
       setEid(id); setStatus('ACTIVE'); setLive(0); setVotes([]); setShuffled(false);
-      setResults(null); setDecrypted(false); setView('session'); setVres(null); setVfail(''); evRef.current = 0;
+      setResults(null); setDecrypted(false); setView('session'); setVres(null); setVfail(''); setRootHash(''); evRef.current = 0;
       // [부스 시연] 이 세션의 키오스크 URL을 Firebase 릴레이에 기록 → 쇼케이스 QR 자동 동기화
       const ku = `${window.location.origin}/?app=kiosk&e=${encodeURIComponent(id)}`;
       try { fetch(FB_KIOSK, { method: 'PUT', body: JSON.stringify({ url: ku, electionID: id, ts: Date.now() }) }).catch(() => {}); } catch { /* noop */ }
@@ -98,12 +102,15 @@ export default function ControlPage() {
     setBusy('');
   }
 
-  async function seed(n) {
+  async function seed(n, candIdx) {
     if (!eid || status !== 'ACTIVE') return;
-    setBusy(`투표 ${n}건 자동 주입 중…`);
+    const label = candIdx != null ? CANDIDATES[candIdx] : '랜덤';
+    setBusy(`${label} ${n}표 주입 중…`);
     try {
-      const r = await J(`/elections/${encodeURIComponent(eid)}/seed-votes`, { method: 'POST', body: JSON.stringify({ count: n }) });
-      addLog(`자동 주입: ${r.injected}표`);
+      const body = { count: n };
+      if (candIdx != null) body.dist = Array(n).fill(candIdx);  // 그 후보로만 n표
+      const r = await J(`/elections/${encodeURIComponent(eid)}/seed-votes`, { method: 'POST', body: JSON.stringify(body) });
+      addLog(`주입: ${label} ${r.injected}표`);
     } catch (e) { addLog('오류: ' + e.message); }
     setBusy('');
   }
@@ -114,7 +121,15 @@ export default function ControlPage() {
     if (status === 'CLOSED') { setView('tally'); return; }
     setView('tally'); setBusy('선거 종료 중…');
     try {
-      await J(`/elections/${encodeURIComponent(eid)}/close`, { method: 'POST' });
+      // 직전 투표 커밋과의 MVCC 충돌 대비 — 충돌 시 잠깐 대기 후 재시도
+      let closed = false;
+      for (let a = 0; a < 3 && !closed; a++) {
+        try { await J(`/elections/${encodeURIComponent(eid)}/close`, { method: 'POST' }); closed = true; }
+        catch (e) {
+          if (a < 2 && /conflict|mvcc|commit/i.test(e.message)) { addLog('종료 충돌 감지 — 재시도'); await new Promise((r) => setTimeout(r, 2500)); }
+          else throw e;
+        }
+      }
       setStatus('CLOSED'); addLog('선거 종료 — 2개 기관 조각 복원 시작');
       setBusy('2-of-3 키 조각 복원 중…');
       for (const idx of ['1', '2']) {
@@ -131,6 +146,7 @@ export default function ControlPage() {
       try {
         await J(`/elections/${encodeURIComponent(eid)}/merkle`, { method: 'POST' });
         await J(`/elections/${encodeURIComponent(eid)}/publish-audit`, { method: 'POST' });
+        try { const mk = await J(`/elections/${encodeURIComponent(eid)}/merkle`); setRootHash(mk.rootHash || ''); } catch { /* noop */ }
         addLog('Merkle 트리 + 게시판 공개 (셔플 적용 · 검증 준비됨)');
       } catch (e) { addLog('게시판 경고: ' + e.message); }
     } catch (e) { addLog('오류: ' + e.message); }
@@ -170,9 +186,9 @@ export default function ControlPage() {
   const dis = !!busy;
 
   return (
-    <div style={{ display: 'flex', minHeight: '100vh', background: T.paper, color: T.ink, fontFamily: T.font, letterSpacing: '-0.02em', wordBreak: 'keep-all' }}>
-      {/* ── 사이드바 ── */}
-      <aside style={{ width: 244, flex: 'none', background: T.panel, borderRight: `1px solid ${T.line}`, padding: '22px 18px', display: 'flex', flexDirection: 'column', gap: 8, position: 'sticky', top: 0, height: '100vh', boxSizing: 'border-box' }}>
+    <div style={{ display: 'flex', flexDirection: narrow ? 'column' : 'row', minHeight: '100vh', background: T.paper, color: T.ink, fontFamily: T.font, letterSpacing: '-0.02em', wordBreak: 'keep-all' }}>
+      {/* ── 사이드바 (모바일=상단 스택) ── */}
+      <aside style={{ width: narrow ? '100%' : 244, flex: 'none', background: T.panel, borderRight: narrow ? 'none' : `1px solid ${T.line}`, borderBottom: narrow ? `1px solid ${T.line}` : 'none', padding: narrow ? '16px' : '22px 18px', display: 'flex', flexDirection: 'column', gap: 8, position: narrow ? 'static' : 'sticky', top: 0, height: narrow ? 'auto' : '100vh', boxSizing: 'border-box' }}>
         <button onClick={() => { setView('session'); window.scrollTo({ top: 0, behavior: 'smooth' }); }} style={{ display: 'flex', alignItems: 'center', gap: 10, background: 'none', border: 'none', cursor: 'pointer', padding: 0, marginBottom: 18 }}>
           <img src="/logo/mongbas-symbol-blue.svg" alt="" style={{ width: 30, height: 30 }} />
           <span style={{ fontSize: 19, fontWeight: 900, letterSpacing: '-0.05em', color: T.ink }}>MONGBAS</span>
@@ -183,8 +199,21 @@ export default function ControlPage() {
         <div style={{ height: 1, background: T.line, margin: '14px 0' }} />
         <div style={{ fontSize: 11, fontWeight: 900, letterSpacing: '0.14em', color: T.sub, marginBottom: 6 }}>세션 제어</div>
         <SBtn onClick={newSession} disabled={dis} solid>＋ 새 세션 시작</SBtn>
-        <SBtn onClick={() => seed(5)} disabled={dis || status !== 'ACTIVE'}>투표 +5</SBtn>
-        <SBtn onClick={() => seed(10)} disabled={dis || status !== 'ACTIVE'}>투표 +10</SBtn>
+        <div style={{ fontSize: 11, fontWeight: 800, color: T.sub, margin: '10px 0 2px' }}>커스텀 투표 주입 (후보별)</div>
+        {CANDIDATES.map((c, i) => {
+          const off = dis || status !== 'ACTIVE';
+          return (
+            <div key={c} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <span style={{ flex: 1, fontSize: 13.5, fontWeight: 900, letterSpacing: '-0.02em', color: off ? '#9aa2c0' : T.ink }}>{c}</span>
+              <select value={inj[i]} onChange={(e) => { const v = [...inj]; v[i] = +e.target.value; setInj(v); }} disabled={off}
+                style={{ height: 34, width: 54, padding: '0 6px', fontSize: 14, fontWeight: 900, fontFamily: 'inherit', color: T.ink, background: '#fff', border: `1.5px solid ${off ? '#dfe3f3' : T.blue}`, cursor: off ? 'not-allowed' : 'pointer' }}>
+                {[1, 2, 3, 4, 5, 6, 7, 8, 9].map((n) => <option key={n} value={n}>{n}</option>)}
+              </select>
+              <button onClick={() => seed(inj[i], i)} disabled={off} title={`${c} ${inj[i]}표 주입`}
+                style={{ height: 34, width: 34, flex: 'none', fontSize: 18, fontWeight: 900, lineHeight: 1, fontFamily: 'inherit', color: '#fff', background: off ? '#c2c9e6' : T.blue, border: 'none', cursor: off ? 'not-allowed' : 'pointer' }}>＋</button>
+            </div>
+          );
+        })}
         <div style={{ marginTop: 'auto', fontSize: 11, color: T.sub, fontWeight: 700 }}>
           {busy ? <span style={{ color: T.blue }}>⏳ {busy}</span> : <span>ElGamal · 2-of-3 임계</span>}
         </div>
@@ -212,7 +241,7 @@ export default function ControlPage() {
               <KPI label="암호화" value="ElGamal" unit="+ZKP" sub="동형암호" small />
               <KPI label="검증 합의" value="2-of-3" unit="" sub="3개 기관" small />
             </div>
-            <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1.6fr) minmax(0,1fr)', gap: 18, alignItems: 'start' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: narrow ? '1fr' : 'minmax(0,1.6fr) minmax(0,1fr)', gap: 18, alignItems: 'start' }}>
               <VoteTable votes={votes} shuffled={shuffled} status={status} />
               <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
                 <QRCard qr={qr} url={kioskUrl} />
@@ -222,10 +251,10 @@ export default function ControlPage() {
           </>
         )}
 
-        {eid && view === 'tally' && <TallyView results={results} decrypted={decrypted} total={totalRes} max={maxRes} busy={busy} votes={votes} shuffled={shuffled} />}
+        {eid && view === 'tally' && <TallyView results={results} decrypted={decrypted} total={totalRes} max={maxRes} busy={busy} votes={votes} shuffled={shuffled} live={live} />}
 
         {eid && view === 'verify' && (
-          <VerifyView code={vcode} setCode={setVcode} run={() => runVerify(vcode)} tamper={tamper} res={vres} fail={vfail} busy={busy} status={status} />
+          <VerifyView code={vcode} setCode={setVcode} run={() => runVerify(vcode)} tamper={tamper} res={vres} fail={vfail} busy={busy} status={status} rootHash={rootHash} />
         )}
       </main>
     </div>
@@ -342,7 +371,8 @@ function LogCard({ log }) {
     </section>
   );
 }
-function TallyView({ results, decrypted, total, max, busy, votes, shuffled }) {
+function TallyView({ results, decrypted, total, max, busy, votes, shuffled, live }) {
+  const panic = Math.max(0, (live || 0) - (total || 0));
   const STEPS = [
     ['①', '암호문 동형 합산', '∏ Eᵢ = ( ∏ g^rᵢ , g^Σmᵢ · y^Σrᵢ )', '암호문들을 곱하면 평문을 보지 않고 합계의 암호문 1개가 됩니다'],
     ['②', '2-of-3 키 복원', 'x = Σ λⱼ · sⱼ  (라그랑주 보간)', '3개 기관 중 2개의 Shamir 조각으로 개인키 x 복원'],
@@ -357,6 +387,18 @@ function TallyView({ results, decrypted, total, max, busy, votes, shuffled }) {
           <div style={{ fontSize: 17, fontWeight: 900, letterSpacing: '-0.03em' }}>최종 결과 <span style={{ color: T.sub, fontWeight: 800, fontSize: 13 }}>· {total}표</span></div>
           <span style={{ fontSize: 12, fontWeight: 900, background: decrypted ? '#fff' : T.paper2, color: T.blue, border: `1.5px solid ${T.blue}`, padding: '6px 12px' }}>{busy ? busy : decrypted ? '복호화 완료 ✓' : '복호화 대기'}</span>
         </div>
+        {decrypted && (
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 16 }}>
+            <span style={{ fontSize: 12.5, fontWeight: 900, padding: '6px 11px', background: T.paper2, color: T.blue }}>전체 {Math.max(live || 0, total)}표</span>
+            <span style={{ fontSize: 12.5, fontWeight: 900, padding: '6px 11px', background: T.blue, color: '#fff' }}>정상 {total}표 집계</span>
+            {panic > 0 && <span style={{ fontSize: 12.5, fontWeight: 900, padding: '6px 11px', background: T.ink, color: '#fff' }}>🟦 패닉 {panic}표 집계 제외 (강압 저항)</span>}
+          </div>
+        )}
+        {panic > 0 && decrypted && (
+          <div style={{ fontSize: 12.5, fontWeight: 700, color: T.sub, marginBottom: 14, lineHeight: 1.5 }}>
+            패닉 표는 투표·영수증·검증까지 정상 표와 100% 동일하지만(강압자 구별 불가), 결과 집계에서만 제외됩니다.
+          </div>
+        )}
         {results ? CANDIDATES.map((c, i) => {
           const v = results[c] ?? 0; const lead = v === max && max > 0;
           return (
@@ -391,9 +433,16 @@ function TallyView({ results, decrypted, total, max, busy, votes, shuffled }) {
     </div>
   );
 }
-function VerifyView({ code, setCode, run, tamper, res, fail, busy, status }) {
+function VerifyView({ code, setCode, run, tamper, res, fail, busy, status, rootHash }) {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 18, maxWidth: 920 }}>
+      {rootHash && (
+        <section style={{ background: T.blue, color: '#fff', padding: '18px 20px' }}>
+          <div style={{ fontSize: 11, fontWeight: 900, letterSpacing: '.14em', opacity: 0.85 }}>공개된 봉인 해시 · MERKLE ROOT</div>
+          <div style={{ marginTop: 7, fontFamily: 'monospace', fontSize: 'clamp(13px,1.4vw,15px)', fontWeight: 800, wordBreak: 'break-all', lineHeight: 1.4 }}>{rootHash}</div>
+          <div style={{ marginTop: 8, fontSize: 12.5, fontWeight: 700, opacity: 0.92 }}>추적하면 “내가 다시 계산한 봉인 = 이 공개 봉인” 이 일치합니다 — 비밀키 없이 누구나 검증.</div>
+        </section>
+      )}
       <section style={{ ...box }}>
         <div style={over}>추적번호로 내 표 검증 (실제 Merkle 봉인)</div>
         <div style={{ display: 'flex', gap: 10, marginTop: 12, flexWrap: 'wrap' }}>
