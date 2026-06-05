@@ -1,0 +1,5 @@
+# Netlify ↔ GitHub 연동 시 자동 배포 설정
+# 쇼케이스(frontend/public/showcase3.html)를 홈(/)에 정적 배포. (React 앱 빌드 불필요)
+[build]
+  command = "bash scripts/build-showcase.sh"
+  publish = "showcase-dist"
