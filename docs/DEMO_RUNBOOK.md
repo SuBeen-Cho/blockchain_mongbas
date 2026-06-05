@@ -24,11 +24,11 @@ cd mongbas
 - **내 표 추적(노트북)**: `http://localhost:3000/?app=track`
 - **폰 키오스크**: 관제판이 띄우는 QR (터널 URL `/?app=kiosk&e=<선거ID>`)
 
-**전시용 쇼케이스(서브 컴퓨터)**: `http://localhost:3000/showcase.html`
-(서브 컴퓨터에서는 터널 URL `https://<tunnel>/showcase.html` 로 접속)
-- 일반인/부스 참여자용 화려한 전시 페이지. 인터넷 연결 필요(폰트·애니메이션 CDN).
-- **유튜브 영상 연결**: `frontend/public/showcase.html` 상단의 `const YT_ID = ""` 에
-  영상 ID를 넣고 `cd frontend && npm run build` → 히어로 아래 영상 섹션에 자동 임베드.
+**전시용 쇼케이스(서브 컴퓨터)**: `https://mongbas-blockchain.netlify.app/` (Netlify 배포)
+- 또는 로컬/터널에서 `http://localhost:3000/showcase3.html` (`https://<tunnel>/showcase3.html`).
+- 소스: `frontend/public/showcase3.html` (구 showcase.html/showcase2.html 시안은 제거됨).
+- 일반인/부스 참여자용 전시 페이지. 인터넷 연결 필요(폰트·애니메이션 CDN, QR·Firebase 동기화).
+- **QR 자동 동기화**: 대시보드 [새 세션] 시 키오스크 URL이 Firebase에 기록되어, 쇼케이스 하단 QR이 자동 갱신됨(서브 컴퓨터가 어디든 동작).
 
 ---
 
