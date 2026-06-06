@@ -69,3 +69,6 @@ showcase-dist/
 # 평가 원자료(로컬 유지, GitHub 미포함)
 docs/performance/
 docs/security-eval/
+
+# 벤치 평가 원자료(로컬 유지, GitHub 미포함)
+application/benchmark-reports/
