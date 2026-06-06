@@ -74,7 +74,7 @@ cd mongbas/network
 - 배포 주소: `https://mongbas-blockchain.netlify.app/`
 - 소스: `frontend/public/showcase3.html`
 - 하단 QR은 **Firebase 릴레이**를 폴링해 현재 세션 키오스크 URL로 자동 갱신 → 서브 컴퓨터(다른 PC)에 띄워도 동작.
-- 화면 갱신 시: 빌드 후 `dist/showcase3.html`(+ logo/icons/shapes/shots)을 Netlify에 재배포.
+- 화면 갱신 시: 빌드 후 `dist/showcase3.html`(+ logo/icons/shots)을 Netlify에 재배포.
 
 ---
 

@@ -7,5 +7,5 @@ cd "$(dirname "$0")/.."
 OUT="showcase-dist"
 rm -rf "$OUT"; mkdir -p "$OUT"
 cp frontend/public/showcase3.html "$OUT/index.html"
-cp -R frontend/public/logo frontend/public/icons frontend/public/shapes frontend/public/shots "$OUT/" 2>/dev/null || true
+cp -R frontend/public/logo frontend/public/icons frontend/public/shots "$OUT/" 2>/dev/null || true
 echo "✓ $OUT 생성 (Netlify publish 폴더 / 또는 이 폴더를 드래그)"
