@@ -2,16 +2,41 @@
 
 하이퍼레저 패브릭 기반 익명 전자투표 — 데모/개발 실행 방법 정리.
 
-## 0. 사전 준비 (최초 1회)
-- **Docker Desktop** 실행 중일 것 (블록체인 네트워크가 Docker로 동작).
-- Node.js 18+ / npm.
-- `cloudflared` (공개 터널용): `brew install cloudflared`.
-- 의존성 설치:
-  ```bash
-  cd mongbas/application && npm install
-  cd ../frontend && npm install
-  ```
-- 백엔드 환경변수: `application/.env` (없으면 `.env.example` 복사 후 값 설정).
+## 0. 최초 1회 설치 (Docker + Fabric 부트스트랩)
+
+### 0-1. 필수 도구
+| 도구 | 용도 | 확인 |
+|---|---|---|
+| **Docker Desktop** | 블록체인(피어·오더러·CouchDB)이 Docker로 동작 — **반드시 실행 중** | `docker ps` |
+| **Node.js 18+** / npm | 백엔드·프론트엔드 | `node --version` |
+| **Go 1.21+** | 체인코드(스마트컨트랙트) 빌드 | `go version` |
+| **cloudflared** | 공개 터널 (`brew install cloudflared`) | `cloudflared --version` |
+
+### 0-2. 클론
+```bash
+git clone https://github.com/SuBeen-Cho/blockchain_mongbas.git
+cd blockchain_mongbas/mongbas
+```
+
+### 0-3. Fabric 바이너리 + fabric-samples 설치 (~280MB)
+> `fabric-samples/`는 용량 때문에 gitignore 됨 → **저장소에 없으니 별도 설치 필요.**
+```bash
+# mongbas/ 폴더에서 실행
+curl -sSL https://raw.githubusercontent.com/hyperledger/fabric/main/scripts/install-fabric.sh \
+  | bash -s -- --fabric-version 2.5.9 binary
+ls fabric-samples/bin/cryptogen      # 설치 확인 (cryptogen·configtxgen·peer·orderer)
+```
+> `peer lifecycle` 명령이 실패하면 `fabric-samples/bin`이 `$PATH`에 포함됐는지 확인.
+
+### 0-4. 의존성 설치 + 환경변수
+```bash
+cd application && cp .env.example .env && npm install   # .env 값(SESSION_SECRET 등) 설정
+cd ../frontend && npm install
+cd ..
+```
+
+> ⏱️ **첫 네트워크 기동 시 Docker 이미지 다운로드로 5~10분** 걸릴 수 있습니다(이후엔 빠름).
+> 이후 `demo-up.sh`가 네트워크가 안 떠 있으면 자동으로 `up + deploy`까지 수행합니다.
 
 ---
 

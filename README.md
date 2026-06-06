@@ -151,6 +151,9 @@
 
 ## 실행 방법
 
+> 📖 **상세 실행 가이드(도커 설치 → Fabric 부트스트랩 → 데모 원클릭 → 개발모드 → 쇼케이스 → 트러블슈팅)**: [docs/RUN_GUIDE.md](./docs/RUN_GUIDE.md)
+> 부스 데모는 `./scripts/demo-up.sh` 한 번이면 됩니다(네트워크·빌드·백엔드·공개터널 자동).
+
 ### 사전 요구사항
 
 - Docker + docker compose v2
