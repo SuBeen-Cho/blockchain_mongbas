@@ -19,6 +19,7 @@ import {
   elgamalEncrypt,
   generateBallotValidityProof,
   generateVectorBallotV3,
+  verifyVectorAuditWitnessV3,
 } from '../utils/crypto.js';
 import Stepper from '../components/Stepper.jsx';
 import HashDisplay from '../components/HashDisplay.jsx';
@@ -55,6 +56,7 @@ export default function VoterPage() {
   const [benalohStep, setBenalohStep] = useState('idle');
   const [benalohBallot, setBenalohBallot] = useState(null);
   const [benalohAuditResult, setBenalohAudit] = useState(null);
+  const [vectorAuditContext, setVectorAuditContext] = useState(null);
 
   // ── Panic Credential ──────────────────────────────
   const [panicCredential, setPanicCredential] = useState(false);
@@ -127,6 +129,7 @@ export default function VoterPage() {
       if (!res.ok) throw new Error((await res.json()).error);
       const data = await res.json();
       setElection(data);
+      if (data.encryptionMode === 'elgamal-vector-v3') setBlindMode(true);
     } catch (e) { setError(e.message); }
   }
 
@@ -226,6 +229,29 @@ export default function VoterPage() {
     try {
       const hdrs = { 'Content-Type': 'application/json' };
       if (idemixCredential) hdrs['x-idemix-credential'] = idemixCredential;
+      if (isVectorV3) {
+        if (!elgamalPubKey || !nullifierMaterial) throw new Error('vector-v3 공개키 또는 credential이 없습니다.');
+        const bfRes = await fetch(`${API}/elections/${electionID}/blinding-factor`);
+        if (!bfRes.ok) throw new Error('블라인딩 팩터 조회 실패');
+        const { blindingFactor } = await bfRes.json();
+        const nullifierHash = await computeNullifier(nullifierMaterial, electionID, blindingFactor);
+        const selectedIndex = election.candidates.indexOf(candidateID);
+        const ballot = generateVectorBallotV3(elgamalPubKey, selectedIndex, election.candidates.length);
+        const nonceBytes = new Uint8Array(32);
+        crypto.getRandomValues(nonceBytes);
+        const clientNonce = Array.from(nonceBytes, b => b.toString(16).padStart(2, '0')).join('');
+        const res = await fetch(`${API}/vote/prepare-vector`, { method: 'POST', headers: hdrs, body: JSON.stringify({
+          electionID, nullifierHash, clientNonceHash: await sha256(clientNonce),
+          encryptedCandidateVector: ballot.encryptedCandidateVector,
+          vectorBallotValidityProof: ballot.vectorBallotValidityProof,
+        }) });
+        const data = await res.json();
+        if (!res.ok || !data.ballotID) throw new Error(data.error || 'vector-v3 준비 실패');
+        setVectorAuditContext({ ballot, clientNonce, nullifierHash, selectedIndex });
+        setBenalohBallot(data);
+        setBenalohStep('prepared');
+        return;
+      }
       const res = await fetch(`${API}/vote/prepare`, {
         method: 'POST', headers: hdrs,
         body: JSON.stringify({ electionID, candidateID }),
@@ -244,6 +270,21 @@ export default function VoterPage() {
     try {
       const hdrs2 = { 'Content-Type': 'application/json' };
       if (idemixCredential) hdrs2['x-idemix-credential'] = idemixCredential;
+      if (isVectorV3) {
+        if (!vectorAuditContext) throw new Error('vector-v3 audit witness가 메모리에 없습니다. 새로 준비하세요.');
+        const { ballot, clientNonce, nullifierHash, selectedIndex } = vectorAuditContext;
+        const res = await fetch(`${API}/vote/audit-vector`, { method: 'POST', headers: hdrs2, body: JSON.stringify({
+          electionID, ballotID: benalohBallot.ballotID, nullifierHash, selectedIndex, clientNonce,
+          randomness: ballot._auditWitness.randomness,
+        }) });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error);
+        const verified = data.artifactHash === benalohBallot.artifactHash && data.selectedIndex === selectedIndex &&
+          verifyVectorAuditWitnessV3(elgamalPubKey, data.encryptedCandidateVector, data.selectedIndex, data.randomness);
+        setBenalohAudit({ ...data, candidateID: election.candidates[selectedIndex], clientVerified: verified });
+        setBenalohStep('audited');
+        return;
+      }
       const res = await fetch(`${API}/vote/audit`, {
         method: 'POST', headers: hdrs2,
         body: JSON.stringify({ electionID, ballotID: benalohBallot.ballotID }),
@@ -258,7 +299,7 @@ export default function VoterPage() {
   }
 
   function benalohReset() {
-    setBenalohStep('idle'); setBenalohBallot(null); setBenalohAudit(null);
+    setBenalohStep('idle'); setBenalohBallot(null); setBenalohAudit(null); setVectorAuditContext(null);
   }
 
   // ── Navigation ────────────────────────────────────
@@ -446,7 +487,7 @@ export default function VoterPage() {
 
           {/* Blind Mode */}
           <label className={`rounded-xl border p-4 transition-colors duration-200 flex items-center gap-3 cursor-pointer ${blindMode ? 'border-blue-300 bg-blue-50/50' : 'border-slate-200 bg-slate-50'}`}>
-            <input type="checkbox" className="sr-only" checked={blindMode} onChange={e => setBlindMode(e.target.checked)} />
+            <input type="checkbox" className="sr-only" checked={blindMode} disabled={isVectorV3} onChange={e => setBlindMode(e.target.checked)} />
             <div className={`w-10 h-6 rounded-full transition-colors duration-200 flex items-center shrink-0 ${blindMode ? 'bg-blue-600 justify-end' : 'bg-slate-300 justify-start'}`}>
               <div className="w-5 h-5 bg-white rounded-full shadow-sm mx-0.5" />
             </div>
@@ -457,7 +498,7 @@ export default function VoterPage() {
                   ? encryptionKey
                     ? isElGamal ? 'ElGamal 공개키 암호화 활성 — ZKP 검증 가능' : 'AES-256-GCM 암호화 활성 — 서버가 평문을 볼 수 없음'
                     : error ? '암호화 키 로딩 실패 — 네트워크 확인 후 재시도' : '암호화 키 로딩 중...'
-                  : '서버에 평문 후보 전달 (기본 모드)'}
+                  : isVectorV3 ? 'vector-v3는 Blind Mode가 필수입니다.' : '서버에 평문 후보 전달 (기본 모드)'}
               </span>
             </div>
             {isElGamal && blindMode && (
@@ -656,15 +697,14 @@ export default function VoterPage() {
             <div className="rounded-xl border-2 border-purple-200 bg-purple-50/30 overflow-hidden">
               <div className="px-4 py-3 flex items-center gap-2">
                 <span className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-purple-100 text-purple-600 text-xs font-bold">B</span>
-                <span className="text-sm font-semibold text-purple-800">Benaloh Challenge — 의도대로 암호화됐는지 검증</span>
+                <span className="text-sm font-semibold text-purple-800">{isVectorV3 ? 'Vector audit-or-cast — 의도대로 암호화됐는지 검증' : 'Benaloh Challenge — 의도대로 암호화됐는지 검증'}</span>
                 <span className="ml-auto text-[10px] text-purple-500 bg-purple-100 px-2 py-0.5 rounded-full font-medium">Cast-as-Intended</span>
               </div>
               <div className="px-4 pb-4 space-y-3 border-t border-purple-100 pt-3">
                 <p className="text-xs text-slate-600">
-                  투표 제출 전에 암호화가 내 의도대로 수행되었는지 독립 검증합니다.
-                  Audit를 요청하면 서버가 암호화 키를 공개하여 복호화 결과를 확인할 수 있고,
-                  키가 공개된 투표는 비밀이 깨지므로 <span className="font-semibold text-purple-700">자동으로 무효 처리</span>됩니다.
-                  따라서 실제 투표는 Audit 후 새로 제출해야 합니다.
+                  {isVectorV3
+                    ? <>브라우저가 생성한 실제 vector-v3 암호문과 ZKP를 먼저 원장에 커밋합니다. Audit을 선택하면 선택 인덱스와 난수로 모든 암호문을 다시 계산하고 이 표를 <span className="font-semibold text-purple-700">영구 폐기</span>합니다. 실제 투표는 새 암호문을 만들어 제출해야 합니다.</>
+                    : <>투표 제출 전에 암호화가 내 의도대로 수행되었는지 독립 검증합니다. Audit를 요청하면 서버가 암호화 키를 공개하여 복호화 결과를 확인할 수 있고, 키가 공개된 투표는 비밀이 깨지므로 <span className="font-semibold text-purple-700">자동으로 무효 처리</span>됩니다. 따라서 실제 투표는 Audit 후 새로 제출해야 합니다.</>}
                 </p>
 
                 {benalohStep === 'idle' && (
@@ -672,7 +712,7 @@ export default function VoterPage() {
                     className="h-10 px-4 rounded-lg border border-purple-300 text-purple-600 text-sm font-medium
                       hover:bg-purple-50 transition-all duration-200"
                     onClick={benalohPrepare} disabled={loading || benalohStep !== 'idle'}
-                  >1. Prepare (암호화 사전 검증)</button>
+                  >1. Prepare ({isVectorV3 ? 'vector 암호문 커밋' : '암호화 사전 검증'})</button>
                 )}
 
                 {benalohStep === 'prepared' && benalohBallot && (
@@ -701,7 +741,7 @@ export default function VoterPage() {
                            title={benalohAuditResult.clientVerified ? '브라우저 독립 검증 성공' : '검증 실패'}>
                       <p className="text-xs">복호화 결과: <span className="font-semibold">{benalohAuditResult.candidateID}</span> — 내 선택과 일치합니다.</p>
                       {benalohAuditResult.clientVerified && (
-                        <p className="text-xs text-slate-500 mt-1">검증을 위해 암호화 키가 공개되었으므로 이 투표는 무효 처리됩니다. 아래에서 실제 투표를 새로 제출하세요.</p>
+                        <p className="text-xs text-slate-500 mt-1">{isVectorV3 ? '공개된 난수로 암호문 전체를 재계산했고 이 준비 표는 audited 상태로 폐기되었습니다. 아래에서 새 암호문으로 실제 투표를 제출하세요.' : '검증을 위해 암호화 키가 공개되었으므로 이 투표는 무효 처리됩니다. 아래에서 실제 투표를 새로 제출하세요.'}</p>
                       )}
                     </Alert>
                     <button

@@ -464,6 +464,26 @@ export function generateVectorBallotV3(pubKey, selectedIndex, candidateCount) {
   return ballot;
 }
 
+/** Recompute a spoiled vector-v3 ballot from its selected index/randomness. */
+export function verifyVectorAuditWitnessV3(pubKey, encryptedCandidateVector, selectedIndex, randomness) {
+  if (!Array.isArray(encryptedCandidateVector) || encryptedCandidateVector.length < 2 ||
+      !Array.isArray(randomness) || randomness.length !== encryptedCandidateVector.length ||
+      !Number.isInteger(selectedIndex) || selectedIndex < 0 || selectedIndex >= encryptedCandidateVector.length) return false;
+  try {
+    const p = BigInt('0x' + pubKey.p), g = BigInt('0x' + pubKey.g), y = BigInt('0x' + pubKey.y), q = (p - 1n) / 2n;
+    return encryptedCandidateVector.every((ciphertext, index) => {
+      const encoded = randomness[index];
+      if (typeof encoded !== 'string' || !/^[0-9a-f]+$/.test(encoded) || (encoded.length > 1 && encoded.startsWith('0'))) return false;
+      const r = BigInt('0x' + encoded);
+      if (r <= 0n || r >= q) return false;
+      return ciphertext.c1 === modPow(g, r, p).toString(16) &&
+        ciphertext.c2 === ((modPow(y, r, p) * (index === selectedIndex ? g : 1n)) % p).toString(16);
+    });
+  } catch {
+    return false;
+  }
+}
+
 /**
  * [PAPER-11] Chaum-Pedersen ZKP 검증 (브라우저 독립 검증)
  *

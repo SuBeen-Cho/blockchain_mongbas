@@ -116,8 +116,20 @@ const server = http.createServer(async (req, res) => {
   if (url === '/api/vote/prepare-vector' && method === 'POST') {
     const body = await parseBody(req);
     const ballotID = `mock-vector-${Date.now()}-${++voteCounter}`;
-    preparedVectors[ballotID] = { ...body, status: 'prepared' };
-    return json(res, { schema: 'mock-vector-receipt/v1', ballotID, electionID: body.electionID, status: 'prepared' });
+    const artifactHash = 'ab'.repeat(32);
+    preparedVectors[ballotID] = { ...body, artifactHash, status: 'prepared' };
+    return json(res, { schema: 'mock-vector-receipt/v1', ballotID, electionID: body.electionID, artifactHash, status: 'prepared' });
+  }
+
+  if (url === '/api/vote/audit-vector' && method === 'POST') {
+    const body = await parseBody(req);
+    const prepared = preparedVectors[body.ballotID];
+    if (!prepared || prepared.status !== 'prepared') return json(res, { error: 'prepared vector ballot not found' }, 409);
+    prepared.status = 'audited';
+    return json(res, { schema: 'mock-vector-audit/v1', ballotID: body.ballotID, electionID: body.electionID,
+      artifactHash: prepared.artifactHash, selectedIndex: body.selectedIndex, clientNonce: body.clientNonce,
+      randomness: body.randomness, encryptedCandidateVector: prepared.encryptedCandidateVector,
+      vectorBallotValidityProof: prepared.vectorBallotValidityProof, status: 'audited' });
   }
 
   if (url === '/api/vote/cast-vector' && method === 'POST') {
