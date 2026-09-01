@@ -1,6 +1,7 @@
 'use strict';
 
 const crypto = require('crypto');
+const { logAdminAuthorization } = require('../lib/audit-log');
 
 const ADMIN_API_TOKEN = process.env.ADMIN_API_TOKEN || '';
 const ALLOW_INSECURE_ADMIN_API = process.env.ALLOW_INSECURE_ADMIN_API === 'true';
@@ -21,11 +22,14 @@ function bearerToken(req) {
 function requireAdmin(req, res, next) {
   if (!ADMIN_API_TOKEN) {
     if (!IS_PRODUCTION && ALLOW_INSECURE_ADMIN_API) return next();
+    logAdminAuthorization({ success: false, method: req.method, route: req.path, reason: 'admin-not-configured', sourceAddress: req.ip });
     return res.status(503).json({ error: '관리자 API가 안전하게 설정되지 않았습니다.' });
   }
   if (!constantTimeTokenEqual(bearerToken(req), ADMIN_API_TOKEN)) {
+    logAdminAuthorization({ success: false, method: req.method, route: req.path, reason: 'invalid-bearer', sourceAddress: req.ip });
     return res.status(401).json({ error: '관리자 인증이 필요합니다.' });
   }
+  logAdminAuthorization({ success: true, method: req.method, route: req.path, reason: 'authorized', sourceAddress: req.ip });
   next();
 }
 

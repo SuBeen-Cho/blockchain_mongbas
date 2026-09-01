@@ -13,9 +13,37 @@ let _stream = null;
 function getStream() {
   if (_stream) return _stream;
   const dir = path.dirname(AUDIT_PATH);
-  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-  _stream = fs.createWriteStream(AUDIT_PATH, { flags: 'a' });
+  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+  fs.chmodSync(dir, 0o700);
+  _stream = fs.createWriteStream(AUDIT_PATH, { flags: 'a', mode: 0o600 });
+  _stream.on('error', error => console.error('[audit] write failure:', error.message));
   return _stream;
+}
+
+function sourcePseudonym(sourceAddress) {
+  if (!sourceAddress) return null;
+  const key = process.env.AUDIT_HMAC_KEY || process.env.CREDENTIAL_SECRET || '';
+  if (Buffer.byteLength(key) < 32) return null;
+  return crypto.createHmac('sha256', key).update(`source:${sourceAddress}`).digest('hex');
+}
+
+function writeEntry(entry) {
+  if (!AUDIT_ENABLED) return;
+  const safe = {
+    schema: 'mongbas-security-audit/v1',
+    eventType: entry.eventType,
+    occurredAt: new Date().toISOString(),
+    outcome: entry.outcome,
+    reason: entry.reason || null,
+    method: entry.method || null,
+    route: entry.route || null,
+    electionID: entry.electionID || null,
+    credentialHash: entry.credentialHash || null,
+    credentialType: entry.credentialType || null,
+    expiresAt: entry.expiresAt || null,
+    sourcePseudonym: sourcePseudonym(entry.sourceAddress),
+  };
+  getStream().write(`${JSON.stringify(safe)}\n`);
 }
 
 /**
@@ -29,16 +57,11 @@ function logCredentialIssuance({ credentialHash: precomputedHash, electionID, cr
 
   const credentialHash = precomputedHash || 'unknown';
 
-  const entry = {
-    credentialHash,
-    electionID,
-    credType,
-    issuedAt: new Date().toISOString(),
+  writeEntry({
+    eventType: 'credential-issuance', outcome: success ? 'success' : 'failure',
+    credentialHash, electionID, credentialType: credType,
     expiresAt: expiresAt ? new Date(expiresAt).toISOString() : null,
-    success: !!success,
-  };
-
-  getStream().write(JSON.stringify(entry) + '\n');
+  });
 }
 
 /**
@@ -47,17 +70,14 @@ function logCredentialIssuance({ credentialHash: precomputedHash, electionID, cr
 function logCredentialFailure({ electionID, reason }) {
   if (!AUDIT_ENABLED) return;
 
-  const entry = {
-    credentialHash: null,
-    electionID: electionID || null,
-    credType: null,
-    issuedAt: new Date().toISOString(),
-    expiresAt: null,
-    success: false,
-    reason,
-  };
-
-  getStream().write(JSON.stringify(entry) + '\n');
+  writeEntry({ eventType: 'credential-issuance', outcome: 'failure', electionID, reason });
 }
 
-module.exports = { logCredentialIssuance, logCredentialFailure, AUDIT_ENABLED };
+function logAdminAuthorization({ success, method, route, reason, sourceAddress }) {
+  writeEntry({
+    eventType: 'admin-authorization', outcome: success ? 'success' : 'failure',
+    method, route, reason, sourceAddress,
+  });
+}
+
+module.exports = { logCredentialIssuance, logCredentialFailure, logAdminAuthorization, sourcePseudonym, AUDIT_ENABLED };
