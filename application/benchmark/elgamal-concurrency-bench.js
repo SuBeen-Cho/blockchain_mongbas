@@ -19,6 +19,8 @@ const fs = require('fs');
 const http = require('http');
 const { execSync } = require('child_process');
 const path = require('path');
+require('dotenv').config({ path: path.join(__dirname, '../.env') });
+const { generateVectorBallot } = require('../src/lib/vectorElgamal');
 
 const args = {};
 process.argv.slice(2).forEach((a, i, arr) => {
@@ -31,6 +33,7 @@ const STOP_FAIL_RATE = Number(args.stopFailRate || 30);
 const CANDIDATES = ['CANDIDATE_A', 'CANDIDATE_B', 'CANDIDATE_C'];
 const TIMESTAMP = new Date().toISOString().replace(/[:.]/g, '').slice(0, 15);
 const OUT = args.out || path.join(__dirname, `../benchmark-reports/elgamal-conc-${TIMESTAMP}.json`);
+const ADMIN_API_TOKEN = process.env.ADMIN_API_TOKEN || '';
 
 // ── HTTP 헬퍼 ───────────────────────────────────────────────────
 function rawRequest(method, urlPath, body = null, headers = {}, timeoutMs = 90000) {
@@ -45,6 +48,7 @@ function rawRequest(method, urlPath, body = null, headers = {}, timeoutMs = 9000
       method,
       headers: {
         ...(payload ? { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload) } : {}),
+        ...(ADMIN_API_TOKEN ? { Authorization: `Bearer ${ADMIN_API_TOKEN}` } : {}),
         ...headers,
       },
     }, res => {
@@ -195,7 +199,7 @@ async function createElection(label) {
     candidates: CANDIDATES,
     startTime: now,
     endTime: now + 7200,
-    encryptionMode: 'elgamal',
+    encryptionMode: 'elgamal-vector-v3',
   }, {}, 60000);
   if (create.status >= 400) throw new Error(`create failed: ${create.status} ${JSON.stringify(create.body)}`);
 
@@ -206,40 +210,42 @@ async function createElection(label) {
   if (pubKeyRes.status >= 400) throw new Error(`pubkey failed: ${pubKeyRes.status}`);
   const pubKey = pubKeyRes.body.pubKey || pubKeyRes.body;
 
-  return { electionID, pubKey };
+  const bfRes = await get(`/api/elections/${electionID}/blinding-factor`);
+  if (bfRes.status >= 400 || !bfRes.body?.blindingFactor) throw new Error(`blinding factor failed: ${bfRes.status}`);
+  return { electionID, pubKey, blindingFactor: bfRes.body.blindingFactor };
 }
 
-async function issueCredential(electionID) {
+async function issueCredential(electionID, voterNumber) {
+  const enrollmentID = `demo${String(voterNumber).padStart(3, '0')}`;
   const res = await post('/api/credential/idemix', {
-    enrollmentID: 'voter1',
-    enrollmentSecret: 'voter1pw',
+    enrollmentID,
+    enrollmentSecret: `${enrollmentID}pw`,
     electionID,
   }, {}, 30000);
-  if (res.status !== 200 || !res.body?.credential) {
+  if (res.status !== 200 || !res.body?.credential || !res.body?.nullifierMaterial) {
     throw new Error(`credential failed: ${res.status}`);
   }
-  return { 'x-idemix-credential': res.body.credential };
+  return { credential: res.body.credential, nullifierMaterial: res.body.nullifierMaterial };
 }
 
 // ── 단일 투표 (ElGamal + ZKP) ───────────────────────────────────
-function castVoteElGamal(electionID, pubKey, i, headers) {
+function prepareVote(electionID, pubKey, blindingFactor, i, credential) {
   const candidateIdx = i % CANDIDATES.length;
-  const nullifierHash = sha256Hex(`conc-${electionID}-${i}-${Date.now()}-${Math.random()}`);
+  const nullifierHash = sha256Hex(credential.nullifierMaterial + electionID + blindingFactor);
+  const ballot = generateVectorBallot(pubKey, candidateIdx, CANDIDATES.length);
+  return {
+    headers: credential.credential ? { 'x-idemix-credential': credential.credential } : {},
+    body: {
+      electionID,
+      nullifierHash,
+      encryptedCandidateVector: ballot.encryptedCandidateVector,
+      vectorBallotValidityProof: ballot.vectorBallotValidityProof,
+    },
+  };
+}
 
-  // 클라이언트 암호화 + ZKP (동기, CPU-bound)
-  const encrypted = elgamalEncrypt(pubKey, candidateIdx);
-  const proof = generateBallotValidityProof(
-    pubKey, encrypted.c1, encrypted.c2, encrypted._r,
-    candidateIdx, CANDIDATES.length
-  );
-
-  return post('/api/vote', {
-    electionID,
-    nullifierHash,
-    encryptedCandidateID: encrypted.c1 + ':' + encrypted.c2,
-    voterID: `conc-voter-${i}`,
-    ballotValidityProof: JSON.stringify(proof),
-  }, headers, 90000).then(res => {
+function castPreparedVote(prepared) {
+  return post('/api/vote', prepared.body, prepared.headers, 180000).then(res => {
     const ok = res.status >= 200 && res.status < 300;
     return { ok, status: res.status, ms: res.ms, error: ok ? null : (res.body?.error || 'error') };
   });
@@ -254,12 +260,17 @@ function systemSnapshot() {
 // ── 동시성 라운드 ───────────────────────────────────────────────
 async function runConcurrency(label, concurrency, idemixEnabled) {
   console.log(`\n  [${label}] C=${concurrency} — 선거 생성...`);
-  const { electionID, pubKey } = await createElection(`${label}-c${concurrency}`);
+  const { electionID, pubKey, blindingFactor } = await createElection(`${label}-c${concurrency}`);
 
-  let headers = {};
+  const credentials = [];
   if (idemixEnabled) {
-    headers = await issueCredential(electionID);
+    for (let i = 0; i < concurrency; i++) credentials.push(await issueCredential(electionID, i + 1));
+  } else {
+    for (let i = 0; i < concurrency; i++) credentials.push({ credential: '', nullifierMaterial: `bypass-${i}` });
   }
+
+  console.log(`  vector-v3 ballot ${concurrency}건 사전 생성...`);
+  const prepared = credentials.map((credential, i) => prepareVote(electionID, pubKey, blindingFactor, i, credential));
 
   console.log(`  투표 ${concurrency}건 동시 제출 (ElGamal + ZKP)...`);
   const before = systemSnapshot();
@@ -267,7 +278,7 @@ async function runConcurrency(label, concurrency, idemixEnabled) {
 
   // 동시 투표 실행
   const results = await Promise.all(
-    Array.from({ length: concurrency }, (_, i) => castVoteElGamal(electionID, pubKey, i, headers))
+    prepared.map(castPreparedVote)
   );
 
   const elapsedSec = (Date.now() - started) / 1000;
@@ -298,8 +309,13 @@ async function runConcurrency(label, concurrency, idemixEnabled) {
 
 // ── 메인 ────────────────────────────────────────────────────────
 async function main() {
+  if (!ADMIN_API_TOKEN) throw new Error('ADMIN_API_TOKEN is required');
+  if (CONCURRENCIES.some(c => !Number.isInteger(c) || c < 1 || c > 1000)) throw new Error('concurrency must be an integer from 1 to 1000');
   const health = await get('/health');
   if (health.status !== 200) throw new Error('API server not ready');
+  if (health.body?.benchmark?.rateLimitsDisabled !== true) {
+    throw new Error('concurrency benchmark requires an isolated backend with DISABLE_RATE_LIMITS=true');
+  }
   const idemix = health.body.idemix || {};
 
   const label = !idemix.enabled
@@ -327,7 +343,7 @@ async function main() {
   const result = {
     scenario: `elgamal-concurrency-${label}`,
     timestamp: new Date().toISOString(),
-    config: { encryptionMode: 'elgamal', candidates: CANDIDATES.length, idemix, stopFailRate: STOP_FAIL_RATE },
+    config: { encryptionMode: 'elgamal-vector-v3', candidates: CANDIDATES.length, idemix, stopFailRate: STOP_FAIL_RATE, rateLimitsDisabled: true },
     rounds,
   };
 

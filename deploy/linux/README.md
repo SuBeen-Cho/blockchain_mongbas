@@ -46,6 +46,7 @@ BBS+ 실험 모드는 `@mattrglobal/bbs-signatures` 2.0.0의 WASM 경로만 사�
 ./deploy/linux/status.sh
 ./deploy/linux/collect-environment.sh
 MONGBAS_PROFILE=benchmark ./deploy/linux/benchmark.sh
+MONGBAS_PROFILE=benchmark MONGBAS_CONCURRENCY_LEVELS=1,5,10,25,50 ./deploy/linux/concurrency-benchmark.sh
 ```
 
 N=100 측정은 독립된 loopback 벤치마크 백엔드를 `DISABLE_RATE_LIMITS=true`로 기동한 후에만 실행한다. 벤치마크 프로그램은 `/health`에서 이 상태를 확인하고, 일반 rate limit이 켜진 백엔드에서는 부분 측정을 시작하지 않는다. 측정 후에는 즉시 일반 백엔드로 재기동해야 한다.
