@@ -63,11 +63,12 @@ function generateVectorBallot(pubKey, selectedIndex, candidateCount) {
     throw new Error('invalid vector-v3 selection');
   }
   const p = BigInt(`0x${pubKey.p}`), g = BigInt(`0x${pubKey.g}`), y = BigInt(`0x${pubKey.y}`), q = (p - 1n) / 2n;
-  const encryptedCandidateVector = [], bitProofs = [];
+  const encryptedCandidateVector = [], bitProofs = [], auditRandomness = [];
 	let encryptionNs = 0n, proofNs = 0n;
   let randomnessSum = 0n, productC1 = 1n, productC2 = 1n;
   for (let index = 0; index < candidateCount; index++) {
     const bit = index === selectedIndex ? 1 : 0, r = randomScalar(q);
+	auditRandomness.push(r.toString(16));
 	const encryptionStart = process.hrtime.bigint();
     const c1 = modPow(g, r, p), c2 = (modPow(y, r, p) * (bit ? g : 1n)) % p;
 	encryptionNs += process.hrtime.bigint() - encryptionStart;
@@ -84,8 +85,48 @@ function generateVectorBallot(pubKey, selectedIndex, candidateCount) {
   const transcript = `${domain}|${g.toString(16)}|${y.toString(16)}|${productC1.toString(16)}|${result2.toString(16)}|${a1.toString(16)}|${a2.toString(16)}`;
   const e = challenge(transcript, q), z = (nonce + e * randomnessSum) % q;
 	proofNs += process.hrtime.bigint() - sumProofStart;
-  return { encryptedCandidateVector, vectorBallotValidityProof: { bitProofs, sumProof: { a1: a1.toString(16), a2: a2.toString(16), e: e.toString(16), z: z.toString(16) } },
+  const ballot = { encryptedCandidateVector, vectorBallotValidityProof: { bitProofs, sumProof: { a1: a1.toString(16), a2: a2.toString(16), e: e.toString(16), z: z.toString(16) } },
 	  _timings: { encryptionMs: Number(encryptionNs) / 1e6, proofMs: Number(proofNs) / 1e6 } };
+  // The audit witness is deliberately non-enumerable so JSON.stringify(ballot)
+  // cannot accidentally transmit or log the selected candidate and randomness.
+  Object.defineProperty(ballot, '_auditWitness', {
+    value: Object.freeze({ selectedIndex, randomness: Object.freeze(auditRandomness) }),
+    enumerable: false,
+    writable: false,
+  });
+  return ballot;
 }
 
-module.exports = { generateVectorBallot };
+function parseCanonicalScalar(value, q) {
+  if (typeof value !== 'string' || !/^[0-9a-f]+$/.test(value) || (value.length > 1 && value.startsWith('0'))) {
+    throw new Error('audit randomness must be canonical lowercase hex');
+  }
+  const scalar = BigInt(`0x${value}`);
+  if (scalar <= 0n || scalar >= q) throw new Error('audit randomness is outside the scalar field');
+  return scalar;
+}
+
+function verifyVectorAuditWitness(pubKey, encryptedCandidateVector, witness) {
+  if (!witness || !Number.isInteger(witness.selectedIndex) || !Array.isArray(witness.randomness) ||
+      !Array.isArray(encryptedCandidateVector) || encryptedCandidateVector.length < 2 ||
+      witness.randomness.length !== encryptedCandidateVector.length ||
+      witness.selectedIndex < 0 || witness.selectedIndex >= encryptedCandidateVector.length) {
+    return false;
+  }
+  try {
+    const p = BigInt(`0x${pubKey.p}`), g = BigInt(`0x${pubKey.g}`), y = BigInt(`0x${pubKey.y}`), q = (p - 1n) / 2n;
+    return encryptedCandidateVector.every((ciphertext, index) => {
+      if (!ciphertext || typeof ciphertext.c1 !== 'string' || typeof ciphertext.c2 !== 'string' ||
+          !/^[0-9a-f]+$/.test(ciphertext.c1) || !/^[0-9a-f]+$/.test(ciphertext.c2)) return false;
+      const randomness = parseCanonicalScalar(witness.randomness[index], q);
+      const expectedC1 = modPow(g, randomness, p).toString(16);
+      const message = index === witness.selectedIndex ? g : 1n;
+      const expectedC2 = (modPow(y, randomness, p) * message % p).toString(16);
+      return ciphertext.c1 === expectedC1 && ciphertext.c2 === expectedC2;
+    });
+  } catch {
+    return false;
+  }
+}
+
+module.exports = { generateVectorBallot, verifyVectorAuditWitness };
