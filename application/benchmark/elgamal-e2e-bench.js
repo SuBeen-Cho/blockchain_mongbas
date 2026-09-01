@@ -309,19 +309,35 @@ async function measureSingleVote(electionID, pubKey, candidateIdx, authHeaders, 
 }
 
 // ── 집계(Tally) 측정 ────────────────────────────────────────────
-async function measureTally(electionID, authHeaders) {
+async function measureTally(electionID, expectedResults) {
   // 선거 종료
-  const closeRes = await post(`/api/elections/${electionID}/close`, {}, authHeaders, 120000);
+  const closeRes = await post(`/api/elections/${electionID}/close`, {}, {}, 120000);
   if (closeRes.status >= 400) {
     return { success: false, error: `close failed: ${closeRes.status}`, tallyMs: 0 };
   }
 
+  const partials = [];
+  for (const shareIndex of ['1', '2']) {
+    const partial = await post(`/api/elections/${electionID}/partial-decryptions`, { shareIndex }, {}, 120000);
+    partials.push(partial);
+    if (partial.status >= 400) {
+      return { success: false, error: `partial ${shareIndex} failed: ${partial.status}`, closeMs: closeRes.ms, partialMs: partials.reduce((sum, item) => sum + item.ms, 0) };
+    }
+  }
+
   // 집계 결과 조회
   const tallyRes = await get(`/api/elections/${electionID}/tally`);
+  const results = tallyRes.body?.results || {};
+  const exact = tallyRes.status < 400 && tallyRes.body?.decrypted === true &&
+    tallyRes.body?.partialDecryptions?.length === 2 &&
+    CANDIDATES.every((candidate) => results[candidate] === expectedResults[candidate]);
 
   return {
-    success: tallyRes.status < 400,
-    tallyMs: +closeRes.ms.toFixed(2),
+    success: exact,
+    error: exact ? null : `exact threshold tally mismatch: ${JSON.stringify(tallyRes.body)}`,
+    closeMs: +closeRes.ms.toFixed(2),
+    partialMs: +partials.reduce((sum, item) => sum + item.ms, 0).toFixed(2),
+    tallyMs: +(closeRes.ms + partials.reduce((sum, item) => sum + item.ms, 0) + tallyRes.ms).toFixed(2),
     results: tallyRes.body,
   };
 }
@@ -418,8 +434,12 @@ async function main() {
 
   // 5. 집계 측정
   console.log('\n[5/5] 집계(TallyVotes) 측정...');
-  const tally = await measureTally(electionID, authHeaders);
+  const expectedResults = Object.fromEntries(CANDIDATES.map((candidate) => [candidate, 0]));
+  for (let i = 0; i < WARMUP; i++) expectedResults[CANDIDATES[i % CANDIDATES.length]]++;
+  for (let i = 0; i < N; i++) expectedResults[CANDIDATES[i % CANDIDATES.length]]++;
+  const tally = await measureTally(electionID, expectedResults);
   console.log(`  tally: ${tally.success ? 'OK' : 'FAIL'} latency=${tally.tallyMs}ms`);
+  if (!tally.success) throw new Error(tally.error || 'threshold tally failed');
 
   // ── 결과 집계 ─────────────────────────────────────────────────
   const successful = results.filter(r => r.success);
@@ -455,7 +475,10 @@ async function main() {
     },
     tally: {
       success: tally.success,
+      closeMs: tally.closeMs,
+      partialDecryptionMs: tally.partialMs,
       latencyMs: tally.tallyMs,
+      expectedResults,
       results: tally.results,
     },
     errors,
