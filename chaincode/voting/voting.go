@@ -145,6 +145,9 @@ type Election struct {
 	EncryptionMode string `json:"encryptionMode,omitempty" metadata:",optional"` // "aes" | "elgamal"
 	// [PAPER-11] ElGamal 공개키 (elgamal 모드일 때만 사용)
 	ElGamalPubKey *ElGamalPublicKey `json:"elgamalPubKey,omitempty" metadata:",optional"`
+	// ThresholdPublicShares are trustee verification keys y_i=g^x_i. They are
+	// sufficient to verify partial decryptions but reveal no trustee secret.
+	ThresholdPublicShares []ThresholdPublicShare `json:"thresholdPublicShares,omitempty" metadata:",optional"`
 }
 
 // Nullifier 익명 투표 증명 (공개 원장)
@@ -249,9 +252,28 @@ type VoteTally struct {
 	DecryptionProofs []DecryptionProof `json:"decryptionProofs,omitempty" metadata:",optional"` // 개별 투표 복호화 증명
 	// [P2] ElGamal threshold: 키 분산 후에는 종료 시 복호화하지 않고 암호문 집계만 저장.
 	//   2-of-3 조각 복원 후에 복호화되어 Results가 채워지고 Decrypted=true가 된다.
-	Decrypted bool   `json:"decrypted" metadata:",optional"`          // 결과 복호화 완료 여부
-	EncAggC1  string `json:"encAggC1,omitempty" metadata:",optional"` // 동형 집계 암호문 c1 (복호화 대기 시)
-	EncAggC2  string `json:"encAggC2,omitempty" metadata:",optional"` // 동형 집계 암호문 c2 (복호화 대기 시)
+	Decrypted          bool                `json:"decrypted" metadata:",optional"`          // 결과 복호화 완료 여부
+	EncAggC1           string              `json:"encAggC1,omitempty" metadata:",optional"` // 동형 집계 암호문 c1 (복호화 대기 시)
+	EncAggC2           string              `json:"encAggC2,omitempty" metadata:",optional"` // 동형 집계 암호문 c2 (복호화 대기 시)
+	PartialDecryptions []PartialDecryption `json:"partialDecryptions,omitempty" metadata:",optional"`
+}
+
+// ThresholdPublicShare binds a Shamir evaluation index to its public
+// verification key. MSP binding prevents a valid share from being relabelled.
+type ThresholdPublicShare struct {
+	Index      int    `json:"index"`
+	MSPID      string `json:"mspID"`
+	PublicKeyY string `json:"publicKeyY"`
+}
+
+// PartialDecryption is the only trustee artifact published for ElGamal-v2.
+// Value=c1^x_i and Proof demonstrates log_g(y_i)=log_c1(Value).
+type PartialDecryption struct {
+	Index      int                 `json:"index"`
+	MSPID      string              `json:"mspID"`
+	PublicKeyY string              `json:"publicKeyY"`
+	Value      string              `json:"value"`
+	Proof      *ChaumPedersenProof `json:"proof"`
 }
 
 // DecryptionProof [PAPER-2] 개별 투표의 복호화 정확성 증명
@@ -834,6 +856,7 @@ type KeySharingStatus struct {
 	// SHA256(share_i) — share 제출 시 위조 여부를 체인코드가 독립 검증
 	// 인덱스 0 = share1, 1 = share2, 2 = share3
 	ShareCommitments []string `json:"shareCommitments"`
+	Mode             string   `json:"mode,omitempty" metadata:",optional"` // "legacy-reconstruction" | "partial-decryption-v2"
 }
 
 // ============================================================
@@ -3915,6 +3938,86 @@ func parseScalar(encoded string) (*big.Int, bool) {
 		return nil, false
 	}
 	return v, true
+}
+
+func deriveThresholdShares(secret, coefficient *big.Int, total int) ([]*big.Int, error) {
+	if secret == nil || coefficient == nil || secret.Sign() <= 0 || secret.Cmp(elgamalQ) >= 0 ||
+		coefficient.Sign() <= 0 || coefficient.Cmp(elgamalQ) >= 0 || total < 2 {
+		return nil, fmt.Errorf("threshold share parameters invalid")
+	}
+	shares := make([]*big.Int, total)
+	for i := 1; i <= total; i++ {
+		s := new(big.Int).Mul(coefficient, big.NewInt(int64(i)))
+		s.Add(s, secret)
+		s.Mod(s, elgamalQ)
+		if s.Sign() == 0 {
+			return nil, fmt.Errorf("threshold share %d is zero", i)
+		}
+		shares[i-1] = s
+	}
+	return shares, nil
+}
+
+// lagrangeCoefficientAtZero returns Π_{j!=i} j/(j-i) mod q.
+func lagrangeCoefficientAtZero(index int, indexes []int) (*big.Int, error) {
+	if index < 1 || len(indexes) < 2 {
+		return nil, fmt.Errorf("invalid Lagrange index set")
+	}
+	numerator := big.NewInt(1)
+	denominator := big.NewInt(1)
+	seen := make(map[int]bool, len(indexes))
+	found := false
+	for _, j := range indexes {
+		if j < 1 || seen[j] {
+			return nil, fmt.Errorf("invalid or duplicate trustee index: %d", j)
+		}
+		seen[j] = true
+		if j == index {
+			found = true
+			continue
+		}
+		numerator.Mul(numerator, big.NewInt(int64(j)))
+		numerator.Mod(numerator, elgamalQ)
+		difference := big.NewInt(int64(j - index))
+		difference.Mod(difference, elgamalQ)
+		denominator.Mul(denominator, difference)
+		denominator.Mod(denominator, elgamalQ)
+	}
+	if !found {
+		return nil, fmt.Errorf("trustee index %d not in subset", index)
+	}
+	inv := new(big.Int).ModInverse(denominator, elgamalQ)
+	if inv == nil {
+		return nil, fmt.Errorf("Lagrange denominator is not invertible")
+	}
+	return new(big.Int).Mod(new(big.Int).Mul(numerator, inv), elgamalQ), nil
+}
+
+func combinePartialDecryptionValues(values map[int]*big.Int) (*big.Int, error) {
+	if len(values) < ShamirThreshold {
+		return nil, fmt.Errorf("threshold 미달: %d/%d", len(values), ShamirThreshold)
+	}
+	indexes := make([]int, 0, len(values))
+	for index, value := range values {
+		if index < 1 || index > ShamirTotalShares || value == nil ||
+			value.Sign() <= 0 || value.Cmp(elgamalP) >= 0 ||
+			new(big.Int).Exp(value, elgamalQ, elgamalP).Cmp(big.NewInt(1)) != 0 {
+			return nil, fmt.Errorf("partial decryption %d invalid", index)
+		}
+		indexes = append(indexes, index)
+	}
+	sort.Ints(indexes)
+	combined := big.NewInt(1)
+	for _, index := range indexes {
+		lambda, err := lagrangeCoefficientAtZero(index, indexes)
+		if err != nil {
+			return nil, err
+		}
+		term := new(big.Int).Exp(values[index], lambda, elgamalP)
+		combined.Mul(combined, term)
+		combined.Mod(combined, elgamalP)
+	}
+	return combined, nil
 }
 
 // chaumPedersenVerify Chaum-Pedersen ZKP 검증 (누구나 공개키로 검증 가능)

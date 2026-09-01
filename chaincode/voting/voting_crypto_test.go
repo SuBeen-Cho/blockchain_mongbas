@@ -98,6 +98,54 @@ func TestHMACCredentialFailsClosedWithoutStrongSecret(t *testing.T) {
 	}
 }
 
+func TestThresholdPartialDecryptionsReconstructWithoutSecret(t *testing.T) {
+	secret, pub := elgamalGenerateKeyPair([]byte("threshold-partial-known-answer"))
+	coefficient := new(big.Int).SetBytes([]byte("independent-coefficient"))
+	coefficient.Mod(coefficient, elgamalQ)
+	shares, err := deriveThresholdShares(secret, coefficient, 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c1Hex, c2Hex := encryptExponentialForTest(secret, 1, 37)
+	c1, _ := new(big.Int).SetString(c1Hex, 16)
+	c2, _ := new(big.Int).SetString(c2Hex, 16)
+
+	for _, indexes := range [][]int{{1, 2}, {1, 3}, {2, 3}} {
+		partials := make(map[int]*big.Int)
+		for _, index := range indexes {
+			partials[index] = new(big.Int).Exp(c1, shares[index-1], elgamalP)
+		}
+		combined, err := combinePartialDecryptionValues(partials)
+		if err != nil {
+			t.Fatalf("subset %v failed: %v", indexes, err)
+		}
+		inv := new(big.Int).ModInverse(combined, elgamalP)
+		gm := new(big.Int).Mod(new(big.Int).Mul(c2, inv), elgamalP)
+		want := expElGamalEncodeCandidate(1)
+		if gm.Cmp(want) != 0 {
+			t.Fatalf("subset %v recovered wrong plaintext", indexes)
+		}
+
+		// Each partial share is independently verifiable without the secret.
+		for _, index := range indexes {
+			publicShare := &ElGamalPublicKey{P: pub.P, G: pub.G, Y: new(big.Int).Exp(elgamalG, shares[index-1], elgamalP).Text(16)}
+			proof, err := chaumPedersenProveRaw(shares[index-1], c1Hex, partials[index].Text(16), "1", "PARTIAL", "election", "")
+			if err != nil || !chaumPedersenVerifyRaw(publicShare, proof, big.NewInt(1)) {
+				t.Fatalf("valid partial proof %d rejected: %v", index, err)
+			}
+			tampered := *proof
+			tampered.Z = "0"
+			if chaumPedersenVerifyRaw(publicShare, &tampered, big.NewInt(1)) {
+				t.Fatalf("tampered partial proof %d accepted", index)
+			}
+		}
+	}
+
+	if _, err := combinePartialDecryptionValues(map[int]*big.Int{1: new(big.Int).Exp(c1, shares[0], elgamalP)}); err == nil {
+		t.Fatal("threshold-minus-one partial set was accepted")
+	}
+}
+
 func TestHomomorphicDecryptionProofRejectsTampering(t *testing.T) {
 	x, pub := elgamalGenerateKeyPair([]byte("proof-known-answer"))
 	c1, c2 := encryptExponentialForTest(x, 1, 31)
