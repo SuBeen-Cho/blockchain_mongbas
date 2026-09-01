@@ -3,8 +3,10 @@
 'use strict';
 
 const crypto = require('crypto');
+const { computeCredentialBoundNullifier } = require('../src/lib/credentialBinding');
 
 const BASE_URL = (process.env.E2E_BASE_URL || process.env.BASE_URL || 'http://localhost:3000').replace(/\/$/, '');
+const ADMIN_API_TOKEN = process.env.ADMIN_API_TOKEN || '';
 const ELECTION_ID = process.env.E2E_ELECTION_ID || `merkle-e2e-${Date.now()}`;
 const CANDIDATES = ['CANDIDATE_A', 'CANDIDATE_B'];
 
@@ -15,7 +17,11 @@ function sha256Hex(input) {
 async function requestJson(path, options = {}) {
   const res = await fetch(`${BASE_URL}${path}`, {
     ...options,
-    headers: { 'content-type': 'application/json', ...(options.headers || {}) },
+    headers: {
+      'content-type': 'application/json',
+      ...(ADMIN_API_TOKEN ? { authorization: `Bearer ${ADMIN_API_TOKEN}` } : {}),
+      ...(options.headers || {}),
+    },
   });
   const text = await res.text();
   let body = null;
@@ -83,11 +89,15 @@ async function main() {
   for (const v of voters) {
     const cred = await assertOk(`issue credential (${v.id})`, requestJson('/api/credential/idemix', {
       method: 'POST',
-      body: JSON.stringify({ enrollmentID: 'voter1', enrollmentSecret: 'voter1pw', electionID: ELECTION_ID }),
+      body: JSON.stringify({ enrollmentID: v.id, enrollmentSecret: `${v.id}pw`, electionID: ELECTION_ID }),
     }));
 
-    const voterSecret = sha256Hex(`${ELECTION_ID}:${v.id}:${crypto.randomBytes(16).toString('hex')}`);
-    const nullifierHash = sha256Hex(voterSecret + ELECTION_ID + bf.blindingFactor);
+    if (typeof cred.nullifierMaterial !== 'string' || cred.nullifierMaterial.length === 0) {
+      throw new Error(`credential (${v.id}) has no signed nullifier material`);
+    }
+    const nullifierHash = computeCredentialBoundNullifier(
+      cred.nullifierMaterial, ELECTION_ID, bf.blindingFactor,
+    );
 
     await assertOk(`vote (${v.id} -> ${v.candidate})`, requestJson('/api/vote', {
       method: 'POST',

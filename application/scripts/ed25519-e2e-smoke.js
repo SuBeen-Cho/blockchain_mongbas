@@ -3,8 +3,10 @@
 'use strict';
 
 const crypto = require('crypto');
+const { computeCredentialBoundNullifier } = require('../src/lib/credentialBinding');
 
 const DEFAULT_BASE_URL = process.env.E2E_BASE_URL || process.env.BASE_URL || 'http://localhost:3000';
+const ADMIN_API_TOKEN = process.env.ADMIN_API_TOKEN || '';
 const DEFAULT_ELECTION_ID = process.env.E2E_ELECTION_ID || `ed25519-e2e-${Date.now()}`;
 const DEFAULT_CANDIDATES = (process.env.E2E_CANDIDATES || 'CANDIDATE_A,CANDIDATE_B')
   .split(',')
@@ -113,6 +115,7 @@ async function requestJson(baseUrl, path, options = {}) {
     ...options,
     headers: {
       'content-type': 'application/json',
+      ...(ADMIN_API_TOKEN ? { authorization: `Bearer ${ADMIN_API_TOKEN}` } : {}),
       ...(options.headers || {}),
     },
   });
@@ -229,13 +232,24 @@ async function verifyCredentialLocally(opts, token, expectedElectionID) {
   console.log('[OK] local Ed25519 signature verification');
 }
 
-async function getNullifier(opts, suffix = '') {
+function credentialNullifierMaterial(credential) {
+  const parts = credential.split('.');
+  if (parts.length !== 3) throw new Error('Expected Ed25519 header.payload.signature credential');
+  const payload = decodeJsonB64Url(parts[1]);
+  if (typeof payload.nonce !== 'string' || payload.nonce.length === 0) {
+    throw new Error('Signed credential has no nullifier material');
+  }
+  return payload.nonce;
+}
+
+async function getNullifier(opts, credential) {
   const blinding = await assertOk('fetch blinding factor', requestJson(
     opts.baseUrl,
     `/api/elections/${encodeURIComponent(opts.electionID)}/blinding-factor`,
   ));
-  const voterSecret = sha256Hex(`${opts.electionID}:${Date.now()}:${crypto.randomBytes(16).toString('hex')}:${suffix}`);
-  return sha256Hex(voterSecret + opts.electionID + blinding.blindingFactor);
+  return computeCredentialBoundNullifier(
+    credentialNullifierMaterial(credential), opts.electionID, blinding.blindingFactor,
+  );
 }
 
 async function submitVote(opts, credential, nullifierHash) {
@@ -266,13 +280,13 @@ async function main() {
 
   await assertRejected(
     'tampered credential vote',
-    submitVote(opts, mutateTokenSignature(credential), await getNullifier(opts, 'tampered')),
+    submitVote(opts, mutateTokenSignature(credential), await getNullifier(opts, credential)),
   );
 
   const wrongElectionCredential = await issueCredential(opts, `${opts.electionID}-wrong`);
   await assertRejected(
     'wrong-election credential vote',
-    submitVote(opts, wrongElectionCredential, await getNullifier(opts, 'wrong-election')),
+    submitVote(opts, wrongElectionCredential, await getNullifier(opts, credential)),
   );
 
   // ── 추가 실패 조건 테스트 (8차) ────────────────────────────
@@ -280,13 +294,13 @@ async function main() {
   // 3. credential hash 불일치 (payload 변조 → 서명 무효화)
   await assertRejected(
     'payload-mutated credential (voterEligible=0)',
-    submitVote(opts, mutateTokenPayload(credential, { voterEligible: '0' }), await getNullifier(opts, 'elig-mutated')),
+    submitVote(opts, mutateTokenPayload(credential, { voterEligible: '0' }), await getNullifier(opts, credential)),
   );
 
   // 4. header alg 변조 거부
   await assertRejected(
     'header alg-mutated credential (alg=RS256)',
-    submitVote(opts, mutateTokenHeader(credential, { alg: 'RS256' }), await getNullifier(opts, 'alg-mutated')),
+    submitVote(opts, mutateTokenHeader(credential, { alg: 'RS256' }), await getNullifier(opts, credential)),
   );
 
   // 5. credentialToken 누락 거부 (헤더 없이 투표)
@@ -297,7 +311,7 @@ async function main() {
       body: JSON.stringify({
         electionID: opts.electionID,
         candidateID: opts.candidateID,
-        nullifierHash: await getNullifier(opts, 'no-cred'),
+        nullifierHash: await getNullifier(opts, credential),
       }),
     }),
   );
@@ -311,7 +325,7 @@ async function main() {
       body: JSON.stringify({
         electionID: `${opts.electionID}-nonexistent`,
         candidateID: opts.candidateID,
-        nullifierHash: await getNullifier(opts, 'eid-mismatch'),
+        nullifierHash: await getNullifier(opts, credential),
       }),
     }),
   );
@@ -320,7 +334,7 @@ async function main() {
 
   const voteBody = await assertOk(
     'valid Ed25519 credential vote',
-    submitVote(opts, credential, await getNullifier(opts, 'valid')),
+    submitVote(opts, credential, await getNullifier(opts, credential)),
   );
 
   if (!voteBody.nullifierHash) throw new Error('Vote response has no nullifierHash');
@@ -328,7 +342,11 @@ async function main() {
   console.log('[DONE] Ed25519 E2E smoke test completed (with extended failure conditions)');
 }
 
-main().catch((err) => {
-  console.error(`[FAIL] ${err.message}`);
-  process.exit(1);
-});
+if (require.main === module) {
+  main().catch((err) => {
+    console.error(`[FAIL] ${err.message}`);
+    process.exit(1);
+  });
+}
+
+module.exports = { credentialNullifierMaterial, sha256Hex };

@@ -33,14 +33,14 @@ function requireAdmin(req, res, next) {
   next();
 }
 
-// Paths are relative to /api/elections. Public verification and voter proof
-// endpoints remain public; state-changing election administration and secret
-// share retrieval require a bearer token.
-const ADMIN_POST_PATH = /^\/$|^\/[^/]+\/(?:activate|close|merkle|keysharing|shares|partial-decryptions|publish-audit|seed-votes|verify-tally)$/;
+// Paths are relative to /api/elections. POST is fail-closed: only the exact
+// offline/public verification and voter-proof endpoints are unauthenticated.
+// Any new POST route is therefore protected until explicitly reviewed.
+const PUBLIC_POST_PATH = /^\/[^/]+\/(?:verify-elgamal|proof|verify-public)$/;
 const ADMIN_GET_PATH = /^\/[^/]+\/shares\/[^/]+$/;
 
 function guardElectionAdminRoutes(req, res, next) {
-  if ((req.method === 'POST' && ADMIN_POST_PATH.test(req.path)) ||
+  if ((req.method === 'POST' && !PUBLIC_POST_PATH.test(req.path)) ||
       (req.method === 'GET' && ADMIN_GET_PATH.test(req.path))) {
     return requireAdmin(req, res, next);
   }
@@ -58,6 +58,6 @@ module.exports = {
   guardElectionAdminRoutes,
   validateAdminConfiguration,
   constantTimeTokenEqual,
-  ADMIN_POST_PATH,
+  PUBLIC_POST_PATH,
   ADMIN_GET_PATH,
 };

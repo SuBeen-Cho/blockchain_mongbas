@@ -126,7 +126,7 @@ stop_benchmark_backend
 curl --silent --show-error --fail 'http://127.0.0.1:3000/health' >"${out}/normal-backend-final-health.json"
 final_container_count="$(docker ps -q | wc -l)"
 printf 'baseline=%s\nfinal=%s\n' "${baseline_container_count}" "${final_container_count}" >"${out}/container-counts.txt"
-find "${out}" -type f ! -name sha256-inventory.txt -print0 | sort -z | xargs -0 sha256sum >"${out}/sha256-inventory.txt"
+(cd "${out}" && find . -type f ! -name sha256-inventory.txt -print0 | sort -z | xargs -0 sha256sum) >"${out}/sha256-inventory.txt"
 log "${kind} evidence saved to ${out}"
 
 [ "${run_failed}" -eq 0 ] || die "${kind} round failed; evidence retained"

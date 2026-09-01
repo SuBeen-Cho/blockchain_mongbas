@@ -44,6 +44,6 @@ node "${MONGBAS_REPO_DIR}/application/benchmark/validate-supply-chain.js" \
 validation_status=$?
 set -e
 printf '%s\n' "${validation_status}" >"${out}/validation.exit-status.txt"
-find "${out}" -type f ! -name sha256-inventory.txt -print0 | sort -z | xargs -0 sha256sum >"${out}/sha256-inventory.txt"
+(cd "${out}" && find . -type f ! -name sha256-inventory.txt -print0 | sort -z | xargs -0 sha256sum) >"${out}/sha256-inventory.txt"
 log "supply-chain evidence saved to ${out}"
 [ "${validation_status}" -eq 0 ] || die "supply-chain evidence validation failed; evidence retained"

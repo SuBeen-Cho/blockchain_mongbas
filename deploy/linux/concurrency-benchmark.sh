@@ -23,6 +23,6 @@ node "${MONGBAS_REPO_DIR}/application/benchmark/elgamal-concurrency-bench.js" \
   2>&1 | tee "${out}/concurrency-benchmark.log"
 benchmark_status="${PIPESTATUS[0]}"
 set -e
-find "${out}" -type f ! -name sha256-inventory.txt -print0 | sort -z | xargs -0 sha256sum > "${out}/sha256-inventory.txt"
+(cd "${out}" && find . -type f ! -name sha256-inventory.txt -print0 | sort -z | xargs -0 sha256sum) > "${out}/sha256-inventory.txt"
 log "concurrency evidence saved to ${out}"
 [ "${benchmark_status}" -eq 0 ] || die "concurrency benchmark failed (exit ${benchmark_status}); evidence retained in ${out}"

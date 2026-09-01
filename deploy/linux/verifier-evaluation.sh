@@ -119,6 +119,6 @@ while IFS= read -r tampered; do
 done < <(find "${out}/tamper-corpus" -maxdepth 1 -type f -name '*.json' ! -name manifest.json | sort)
 
 curl --silent --show-error --fail 'http://127.0.0.1:3000/health' >"${out}/normal-backend-final-health.json"
-find "${out}" -type f ! -name sha256-inventory.txt -print0 | sort -z | xargs -0 sha256sum >"${out}/sha256-inventory.txt"
+(cd "${out}" && find . -type f ! -name sha256-inventory.txt -print0 | sort -z | xargs -0 sha256sum) >"${out}/sha256-inventory.txt"
 log "verifier evidence saved to ${out}"
 [ "${tamper_failure}" -eq 0 ] || die "one or more tampered bundles did not exit exactly 1"

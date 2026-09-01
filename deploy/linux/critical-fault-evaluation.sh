@@ -136,5 +136,5 @@ scenario primary-couchdb-stop couchdb-ec0 "${probe_election_id}" couchdb peer0.e
 scenario chaincode-service-stop voting-chaincode "${probe_election_id}" unavailable
 exact_probe final || die "final exact probe failed"
 
-find "${out}" -type f ! -name sha256-inventory.txt -print0 | sort -z | xargs -0 sha256sum >"${out}/sha256-inventory.txt"
+(cd "${out}" && find . -type f ! -name sha256-inventory.txt -print0 | sort -z | xargs -0 sha256sum) >"${out}/sha256-inventory.txt"
 log "critical fault evidence saved to ${out}"

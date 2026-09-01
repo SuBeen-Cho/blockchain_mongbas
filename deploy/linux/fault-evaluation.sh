@@ -81,5 +81,5 @@ scenario peer1-couchdb-stop couchdb-ec1
 scenario orderer4-stop orderer4.orderer.voting.example.com
 probe final || die "final exact probe failed"
 
-find "${out}" -type f ! -name sha256-inventory.txt -print0 | sort -z | xargs -0 sha256sum >"${out}/sha256-inventory.txt"
+(cd "${out}" && find . -type f ! -name sha256-inventory.txt -print0 | sort -z | xargs -0 sha256sum) >"${out}/sha256-inventory.txt"
 log "fault evidence saved to ${out}"

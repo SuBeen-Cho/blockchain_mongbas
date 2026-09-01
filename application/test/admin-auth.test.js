@@ -63,13 +63,14 @@ test('production refuses a short or missing admin token', () => {
 });
 
 test('route classifier protects state changes and share retrieval only', () => {
-  const { ADMIN_POST_PATH, ADMIN_GET_PATH } = loadAdmin({ ADMIN_API_TOKEN: 'c'.repeat(48) });
+  const { PUBLIC_POST_PATH, ADMIN_GET_PATH } = loadAdmin({ ADMIN_API_TOKEN: 'c'.repeat(48) });
   for (const path of ['/', '/e/activate', '/e/close', '/e/merkle', '/e/keysharing', '/e/shares',
-    '/e/partial-decryptions', '/e/publish-audit', '/e/seed-votes', '/e/verify-tally']) {
-    assert.equal(ADMIN_POST_PATH.test(path), true, path);
+    '/e/partial-decryptions', '/e/publish-audit', '/e/seed-votes', '/e/verify-tally',
+    '/e/revoke-credential', '/e/demo-event', '/e/future-state-change']) {
+    assert.equal(PUBLIC_POST_PATH.test(path), false, path);
   }
-  for (const path of ['/e/proof', '/e/verify-public', '/e/demo-event']) {
-    assert.equal(ADMIN_POST_PATH.test(path), false, path);
+  for (const path of ['/e/proof', '/e/verify-public', '/e/verify-elgamal']) {
+    assert.equal(PUBLIC_POST_PATH.test(path), true, path);
   }
   assert.equal(ADMIN_GET_PATH.test('/e/shares/1'), true);
   assert.equal(ADMIN_GET_PATH.test('/e/tally'), false);

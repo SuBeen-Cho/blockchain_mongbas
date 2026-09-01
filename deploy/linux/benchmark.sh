@@ -21,6 +21,6 @@ node "${MONGBAS_REPO_DIR}/application/benchmark/elgamal-e2e-bench.js" \
   2>&1 | tee "${out}/elgamal-benchmark.log"
 benchmark_status="${PIPESTATUS[0]}"
 set -e
-find "${out}" -type f ! -name sha256-inventory.txt -print0 | sort -z | xargs -0 sha256sum > "${out}/sha256-inventory.txt"
+(cd "${out}" && find . -type f ! -name sha256-inventory.txt -print0 | sort -z | xargs -0 sha256sum) > "${out}/sha256-inventory.txt"
 log "benchmark evidence saved to ${out}"
 [ "${benchmark_status}" -eq 0 ] || die "benchmark failed (exit ${benchmark_status}); diagnostic evidence retained in ${out}"
