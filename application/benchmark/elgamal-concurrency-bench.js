@@ -265,7 +265,19 @@ async function measureExactTally(electionID, expectedResults) {
   if (close.status >= 400) return { success: false, error: `close failed: ${close.status}`, closeMs: +close.ms.toFixed(1) };
   const partials = [];
   for (const shareIndex of ['1', '2']) {
-    const partial = await post(`/api/elections/${electionID}/partial-decryptions`, { shareIndex }, {}, 180000);
+    let partial;
+    let attempts = 0;
+    const partialStarted = Date.now();
+    const propagationDeadline = Date.now() + 90_000;
+    do {
+      attempts += 1;
+      partial = await post(`/api/elections/${electionID}/partial-decryptions`, { shareIndex }, {}, 180000);
+      if (partial.status < 400 || Date.now() >= propagationDeadline) break;
+      // 집계 커밋 직후 다른 조직 peer의 state DB 반영을 기다린다.
+      await new Promise(resolve => setTimeout(resolve, 2000));
+    } while (true);
+    partial.attempts = attempts;
+    partial.elapsedWithPropagationMs = Date.now() - partialStarted;
     partials.push(partial);
     if (partial.status >= 400) return { success: false, error: `partial ${shareIndex} failed: ${partial.status}` };
   }
@@ -283,7 +295,8 @@ async function measureExactTally(electionID, expectedResults) {
     totalVotes: body.totalVotes,
     vectorPartialDecryptionProofs: proofCount,
     closeMs: +close.ms.toFixed(1),
-    partialMs: +partials.reduce((sum, item) => sum + item.ms, 0).toFixed(1),
+    partialMs: +partials.reduce((sum, item) => sum + item.elapsedWithPropagationMs, 0).toFixed(1),
+    partialAttempts: partials.map(item => item.attempts),
     readMs: +tally.ms.toFixed(1),
   };
 }
