@@ -10,7 +10,9 @@
  * 실행: node scripts/p2-threshold-test.js   (백엔드 :3000 + 네트워크 기동 상태)
  */
 const crypto = require('crypto');
-const BASE = process.env.BASE || 'http://localhost:3000';
+const { computeCredentialBoundNullifier } = require('../src/lib/credentialBinding');
+const BASE = (process.env.E2E_BASE_URL || process.env.BASE_URL || process.env.BASE || 'http://localhost:3000').replace(/\/$/, '');
+const ADMIN_API_TOKEN = process.env.ADMIN_API_TOKEN || '';
 
 function sha256Hex(s) { return crypto.createHash('sha256').update(s).digest('hex'); }
 function bufToBigInt(buf) { return BigInt('0x' + Buffer.from(buf).toString('hex')); }
@@ -23,7 +25,7 @@ function modInverse(a, m) {
 }
 async function req(path, opts = {}) {
   const { headers, ...rest } = opts;
-  const res = await fetch(BASE + path, { headers: { 'Content-Type': 'application/json', ...(headers || {}) }, ...rest });
+  const res = await fetch(BASE + path, { headers: { 'Content-Type': 'application/json', ...(ADMIN_API_TOKEN ? { authorization: `Bearer ${ADMIN_API_TOKEN}` } : {}), ...(headers || {}) }, ...rest });
   const text = await res.text();
   let json; try { json = JSON.parse(text); } catch { json = { raw: text }; }
   if (!res.ok) throw new Error(`${path} → ${res.status}: ${text.slice(0, 200)}`);
@@ -71,11 +73,10 @@ function makeEG(pub) {
   // 3표: Alice, Alice, Bob → Alice=2, Bob=1
   const plan = [['voter1', 'voter1pw', 0], ['voter2', 'voter2pw', 0], ['voter3', 'voter3pw', 1]];
   for (const [id, sec, idx] of plan) {
-    const cred = (await req('/api/credential/idemix', { method: 'POST', body: JSON.stringify({ enrollmentID: id, enrollmentSecret: sec, electionID: EID }) })).credential;
-    const vs = crypto.randomBytes(32).toString('hex');
-    const nh = sha256Hex(vs + EID + bf);
+    const issued = await req('/api/credential/idemix', { method: 'POST', body: JSON.stringify({ enrollmentID: id, enrollmentSecret: sec, electionID: EID }) });
+    const nh = computeCredentialBoundNullifier(issued.nullifierMaterial, EID, bf);
     const v = enc(idx, CANDS.length);
-    await req('/api/vote', { method: 'POST', headers: { 'x-idemix-credential': cred }, body: JSON.stringify({ electionID: EID, encryptedCandidateID: v.encrypted, nullifierHash: nh, ballotValidityProof: JSON.stringify(v.proof) }) });
+    await req('/api/vote', { method: 'POST', headers: { 'x-idemix-credential': issued.credential }, body: JSON.stringify({ electionID: EID, encryptedCandidateID: v.encrypted, nullifierHash: nh, ballotValidityProof: JSON.stringify(v.proof) }) });
     console.log(`  vote cast: ${id} → ${CANDS[idx]}`);
   }
 

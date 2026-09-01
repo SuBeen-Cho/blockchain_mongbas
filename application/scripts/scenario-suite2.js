@@ -5,12 +5,14 @@
  */
 const crypto = require('crypto');
 const { elgamalEncryptWithZKP } = require('../src/lib/elgamalVote');
-const B = 'http://localhost:3000';
+const { computeCredentialBoundNullifier } = require('../src/lib/credentialBinding');
+const B = (process.env.E2E_BASE_URL || process.env.BASE_URL || 'http://localhost:3000').replace(/\/$/, '');
+const ADMIN_API_TOKEN = process.env.ADMIN_API_TOKEN || '';
 const sha = (s) => crypto.createHash('sha256').update(s).digest('hex');
 
 async function J(p, o = {}) {
   const { headers, ...r } = o;
-  const x = await fetch(B + p, { headers: { 'Content-Type': 'application/json', ...(headers || {}) }, ...r });
+  const x = await fetch(B + p, { headers: { 'Content-Type': 'application/json', ...(ADMIN_API_TOKEN ? { authorization: `Bearer ${ADMIN_API_TOKEN}` } : {}), ...(headers || {}) }, ...r });
   const t = await x.text(); let j; try { j = JSON.parse(t); } catch { j = {}; }
   return { ok: x.ok, status: x.status, j, t };
 }
@@ -26,10 +28,11 @@ async function mkElection(cands) {
   const bf = (await ok(`/api/elections/${EID}/blinding-factor`)).blindingFactor;
   return { EID, pub, bf, cands };
 }
-async function cred(v, EID) { return (await ok('/api/credential/idemix', { method: 'POST', body: JSON.stringify({ enrollmentID: v, enrollmentSecret: `${v}pw`, electionID: EID }) })).credential; }
+async function cred(v, EID) { return ok('/api/credential/idemix', { method: 'POST', body: JSON.stringify({ enrollmentID: v, enrollmentSecret: `${v}pw`, electionID: EID }) }); }
 async function castVote(E, voter, vs, idx) {
-  const c = await cred(voter, E.EID); const nh = sha(vs + E.EID + E.bf); const v = elgamalEncryptWithZKP(E.pub, idx, E.cands.length);
-  return J('/api/vote', { method: 'POST', headers: { 'x-idemix-credential': c }, body: JSON.stringify({ electionID: E.EID, encryptedCandidateID: v.encrypted, nullifierHash: nh, ballotValidityProof: JSON.stringify(v.proof) }) });
+  const issued = await cred(voter, E.EID); const nh = computeCredentialBoundNullifier(issued.nullifierMaterial, E.EID, E.bf); const v = elgamalEncryptWithZKP(E.pub, idx, E.cands.length);
+  const response = await J('/api/vote', { method: 'POST', headers: { 'x-idemix-credential': issued.credential }, body: JSON.stringify({ electionID: E.EID, encryptedCandidateID: v.encrypted, nullifierHash: nh, ballotValidityProof: JSON.stringify(v.proof) }) });
+  return { ...response, nullifierHash: nh };
 }
 async function closeDecrypt(EID) {
   await ok(`/api/elections/${EID}/close`, { method: 'POST' });
@@ -102,8 +105,7 @@ async function closeDecrypt(EID) {
   console.log('[S12] receipt-free 확인');
   {
     const E = await mkElection(['A', 'B']);
-    const vs = crypto.randomBytes(32).toString('hex'); const nh = sha(vs + E.EID + E.bf);
-    await castVote(E, 'voter1', vs, 0);
+    const vote = await castVote(E, 'voter1', '', 0); const nh = vote.nullifierHash;
     await closeDecrypt(E.EID);
     const r = await ok(`/api/elections/${E.EID}/vote-counted/${nh}`);
     const keys = Object.keys(r);

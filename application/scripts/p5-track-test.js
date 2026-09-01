@@ -2,12 +2,14 @@
 // p5-track-test.js — 내 표 추적 데이터 흐름 검증 (게시판 매칭 + Merkle 봉인 일치)
 const crypto = require('crypto');
 const { elgamalEncryptWithZKP } = require('../src/lib/elgamalVote');
-const BASE = 'http://localhost:3000';
+const { computeCredentialBoundNullifier } = require('../src/lib/credentialBinding');
+const BASE = (process.env.E2E_BASE_URL || process.env.BASE_URL || 'http://localhost:3000').replace(/\/$/, '');
+const ADMIN_API_TOKEN = process.env.ADMIN_API_TOKEN || '';
 const sha256 = (s) => crypto.createHash('sha256').update(s).digest('hex');
 
 async function J(path, opts = {}) {
   const { headers, ...rest } = opts;
-  const r = await fetch(BASE + path, { headers: { 'Content-Type': 'application/json', ...(headers || {}) }, ...rest });
+  const r = await fetch(BASE + path, { headers: { 'Content-Type': 'application/json', ...(ADMIN_API_TOKEN ? { authorization: `Bearer ${ADMIN_API_TOKEN}` } : {}), ...(headers || {}) }, ...rest });
   const t = await r.text(); let j; try { j = JSON.parse(t); } catch { j = {}; }
   if (!r.ok) throw new Error(`${path} ${r.status} ${t.slice(0, 120)}`);
   return j;
@@ -30,11 +32,10 @@ function rootFromProof(leaf, proof) {
   const bf = (await J(`/api/elections/${EID}/blinding-factor`)).blindingFactor;
 
   // 내 표 (known voterSecret → known nullifier)
-  const vs = crypto.randomBytes(32).toString('hex');
-  const myNull = sha256(vs + EID + bf);
-  const cred = (await J('/api/credential/idemix', { method: 'POST', body: JSON.stringify({ enrollmentID: 'voter1', enrollmentSecret: 'voter1pw', electionID: EID }) })).credential;
+  const issued = await J('/api/credential/idemix', { method: 'POST', body: JSON.stringify({ enrollmentID: 'voter1', enrollmentSecret: 'voter1pw', electionID: EID }) });
+  const myNull = computeCredentialBoundNullifier(issued.nullifierMaterial, EID, bf);
   const v = elgamalEncryptWithZKP(pub, 0, 3);
-  await J('/api/vote', { method: 'POST', headers: { 'x-idemix-credential': cred }, body: JSON.stringify({ electionID: EID, encryptedCandidateID: v.encrypted, nullifierHash: myNull, ballotValidityProof: JSON.stringify(v.proof) }) });
+  await J('/api/vote', { method: 'POST', headers: { 'x-idemix-credential': issued.credential }, body: JSON.stringify({ electionID: EID, encryptedCandidateID: v.encrypted, nullifierHash: myNull, ballotValidityProof: JSON.stringify(v.proof) }) });
   console.log('  내 표 제출, nullifier 앞6:', myNull.slice(0, 6).toUpperCase());
 
   // 다른 표 4개
