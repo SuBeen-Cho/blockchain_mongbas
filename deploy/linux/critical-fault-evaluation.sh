@@ -37,12 +37,20 @@ exact_probe() {
   return "${status}"
 }
 
+require_available() {
+  local label="$1" election_id="$2" http_status
+  http_status="$(curl --silent --show-error --max-time 40 --output "${out}/${label}-body.txt" --write-out '%{http_code}' \
+    "http://127.0.0.1:3000/api/elections/${election_id}" 2>"${out}/${label}-curl.stderr.log")"
+  printf 'httpStatus=%s\n' "${http_status}" >"${out}/${label}-availability-result.txt"
+  [[ "${http_status}" =~ ^2 ]] || die "${label}: healthy critical path did not return 2xx (HTTP ${http_status})"
+}
+
 expect_unavailable() {
-  local label="$1" started_at http_status curl_status
+  local label="$1" election_id="$2" started_at http_status curl_status
   started_at="$(date +%s)"
   set +e
   http_status="$(curl --silent --show-error --max-time 40 --output "${out}/${label}-body.txt" --write-out '%{http_code}' \
-    'http://127.0.0.1:3000/api/elections/ELECTION_2026_PRESIDENT' 2>"${out}/${label}-curl.stderr.log")"
+    "http://127.0.0.1:3000/api/elections/${election_id}" 2>"${out}/${label}-curl.stderr.log")"
   curl_status=$?
   set -e
   printf 'curlStatus=%s\nhttpStatus=%s\nelapsedSeconds=%s\n' "${curl_status}" "${http_status}" "$(( $(date +%s) - started_at ))" >"${out}/${label}-outage-result.txt"
@@ -52,16 +60,17 @@ expect_unavailable() {
 }
 
 scenario() {
-  local label="$1" target="$2" dependent="${3:-}"
+  local label="$1" target="$2" election_id="$3" dependent="${4:-}"
   case "${target}" in
     peer0.ec.voting.example.com|couchdb-ec0|voting-chaincode) ;;
     *) die "target is not in critical fault allowlist: ${target}" ;;
   esac
+  require_available "${label}-before" "${election_id}"
   log "critical scenario ${label}: stopping ${target}"
   docker inspect "${target}" >"${out}/${label}-before-inspect.json"
   docker stop -t 20 "${target}" >"${out}/${label}-stop.txt"
   docker ps -a --format '{{.Names}} {{.Status}}' >"${out}/${label}-during-docker-ps.txt"
-  expect_unavailable "${label}-during"
+  expect_unavailable "${label}-during" "${election_id}"
   docker start "${target}" >"${out}/${label}-start.txt"
   wait_running "${target}" || die "${label}: ${target} did not return to running"
   if [ -n "${dependent}" ]; then
@@ -79,9 +88,11 @@ git -C "${MONGBAS_REPO_DIR}" rev-parse HEAD >"${out}/git-commit.txt"
 [ ! -s "${out}/git-status.txt" ] || die "critical fault evaluation requires a clean worktree"
 
 exact_probe baseline || die "baseline exact probe failed"
-scenario gateway-peer-stop peer0.ec.voting.example.com
-scenario primary-couchdb-stop couchdb-ec0 peer0.ec.voting.example.com
-scenario chaincode-service-stop voting-chaincode
+probe_election_id="$(node -e "const fs=require('fs'); const value=JSON.parse(fs.readFileSync(process.argv[1], 'utf8')).electionID; if (!/^[A-Za-z0-9._-]+$/.test(value)) process.exit(1); process.stdout.write(value)" "${out}/baseline.json")"
+[ -n "${probe_election_id}" ] || die "baseline did not produce an availability election ID"
+scenario gateway-peer-stop peer0.ec.voting.example.com "${probe_election_id}"
+scenario primary-couchdb-stop couchdb-ec0 "${probe_election_id}" peer0.ec.voting.example.com
+scenario chaincode-service-stop voting-chaincode "${probe_election_id}"
 exact_probe final || die "final exact probe failed"
 
 find "${out}" -type f ! -name sha256-inventory.txt -print0 | sort -z | xargs -0 sha256sum >"${out}/sha256-inventory.txt"
