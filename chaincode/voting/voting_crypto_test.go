@@ -78,6 +78,30 @@ func TestVectorAuditWitnessReconstructionAndTamperRejection(t *testing.T) {
 	}
 }
 
+func TestVectorBallotIdentifierDomainBinding(t *testing.T) {
+	validHash := strings.Repeat("a", 64)
+	if !isCanonicalSHA256Hex(validHash) {
+		t.Fatal("canonical SHA-256 hex rejected")
+	}
+	for _, invalid := range []string{"", strings.Repeat("A", 64), strings.Repeat("a", 63), strings.Repeat("g", 64)} {
+		if isCanonicalSHA256Hex(invalid) {
+			t.Fatalf("invalid SHA-256 encoding accepted: %q", invalid)
+		}
+	}
+	base := vectorBallotID("election-a", strings.Repeat("1", 64), strings.Repeat("2", 64), strings.Repeat("3", 64))
+	variants := []string{
+		vectorBallotID("election-b", strings.Repeat("1", 64), strings.Repeat("2", 64), strings.Repeat("3", 64)),
+		vectorBallotID("election-a", strings.Repeat("4", 64), strings.Repeat("2", 64), strings.Repeat("3", 64)),
+		vectorBallotID("election-a", strings.Repeat("1", 64), strings.Repeat("5", 64), strings.Repeat("3", 64)),
+		vectorBallotID("election-a", strings.Repeat("1", 64), strings.Repeat("2", 64), strings.Repeat("6", 64)),
+	}
+	for _, variant := range variants {
+		if variant == base {
+			t.Fatal("vector ballot identifier failed domain binding")
+		}
+	}
+}
+
 func proveDisjunctionForTest(pub *ElGamalPublicKey, ciphertext ElGamalCiphertext,
 	messages []*big.Int, actual int, nonce, witness *big.Int, domain string) *BallotValidityProof {
 	y, _ := new(big.Int).SetString(pub.Y, 16)

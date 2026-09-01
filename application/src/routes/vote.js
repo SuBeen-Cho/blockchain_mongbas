@@ -36,6 +36,31 @@ const demoLive  = require('../lib/demoLive');   // [부스 시연] 라이브 암
 
 const router = express.Router();
 
+function buildCredentialTransient(req, electionID) {
+  const credentialVerification = {
+    credType: req.voter?.credType,
+    electionID: req.voter?.electionID || electionID,
+    expUnix: req.voter?.expUnix,
+    credHash: req.voter?.credHash,
+  };
+  if (!credentialVerification.credType || !credentialVerification.expUnix || !credentialVerification.credHash) {
+    return { error: '유효한 자격증명 메타데이터가 없습니다.' };
+  }
+  const transientData = {
+    credentialVerification: Buffer.from(JSON.stringify(credentialVerification)),
+  };
+  if (['ed25519', 'hmac', 'ps'].includes(credentialVerification.credType)) {
+    const credentialToken = req.headers['x-idemix-credential'] || '';
+    if (!credentialToken) return { error: 'credential 원문이 필요합니다.' };
+    transientData.credentialToken = Buffer.from(credentialToken);
+  }
+  if (credentialVerification.credType === 'bbs') {
+    if (!req.voter.bbsProof) return { error: 'BBS+ proof presentation이 필요합니다.' };
+    transientData.bbsProof = Buffer.from(JSON.stringify(req.voter.bbsProof));
+  }
+  return { transientData, credentialVerification };
+}
+
 // ── POST /api/vote ─────────────────────────────────────────────
 // 투표 제출
 //
@@ -116,26 +141,10 @@ router.post('/', async (req, res) => {
     // [CRIT-01/02 FIX] 자격증명 메타데이터를 체인코드로 전달 — 체인코드 독립 검증용
     // req.voter는 requireVoterAuth 미들웨어(auth.js)가 설정. credType/expUnix/credHash 포함.
     // 체인코드(verifyCredentialTransient)가 만료·선거ID 바인딩·유형을 독립 검증.
-    const credVerification = {
-      credType:   req.voter.credType,
-      electionID: req.voter.electionID || electionID,
-      expUnix:    req.voter.expUnix,
-      credHash:   req.voter.credHash,
-    };
-    if (!credVerification.credType || !credVerification.expUnix || !credVerification.credHash) {
-      return res.status(403).json({ error: '유효한 자격증명 메타데이터가 없습니다.' });
-    }
-    transientData.credentialVerification = Buffer.from(JSON.stringify(credVerification));
-    // [PAPER-4] 체인코드 직접 검증을 위해 credential 원문 전달
-    if (['ed25519', 'hmac', 'ps'].includes(credVerification.credType)) {
-      const credHeader = req.headers['x-idemix-credential'] || '';
-      if (!credHeader) return res.status(403).json({ error: 'credential 원문이 필요합니다.' });
-      transientData.credentialToken = Buffer.from(credHeader);
-    }
-    if (credVerification.credType === 'bbs') {
-      if (!req.voter.bbsProof) return res.status(403).json({ error: 'BBS+ proof presentation이 필요합니다.' });
-      transientData.bbsProof = Buffer.from(JSON.stringify(req.voter.bbsProof));
-    }
+    const credential = buildCredentialTransient(req, electionID);
+    if (credential.error) return res.status(403).json({ error: credential.error });
+    const credVerification = credential.credentialVerification;
+    Object.assign(transientData, credential.transientData);
 
     // [PAPER-12] Deniable Credential Duality — credentialType을 transient로 전달
     // "panic" 이면 체인코드가 PDC에 credentialType="panic" 저장 → 집계 시 필터링
@@ -213,6 +222,40 @@ router.post('/', async (req, res) => {
     }
     console.error('[vote] CastVote error:', err.message);
     res.status(500).json({ error: '투표 처리 중 오류가 발생했습니다.' });
+  } finally {
+    gateway?.close();
+    releaseFabricSlot?.();
+  }
+});
+
+// ── POST /api/vote/prepare-vector ─────────────────────────────
+// Commits the exact vector-v3 ciphertext/proof before audit-or-cast choice.
+router.post('/prepare-vector', async (req, res) => {
+  const { electionID, nullifierHash, clientNonceHash, encryptedCandidateVector, vectorBallotValidityProof } = req.body;
+  if (!electionID || !nullifierHash || !clientNonceHash || !Array.isArray(encryptedCandidateVector) || !vectorBallotValidityProof) {
+    return res.status(400).json({ error: 'vector-v3 준비 필드가 누락되었습니다.' });
+  }
+  const credential = buildCredentialTransient(req, electionID);
+  if (credential.error) return res.status(403).json({ error: credential.error });
+  const transientData = {
+    ...credential.transientData,
+    vectorAuditArtifact: Buffer.from(JSON.stringify({ encryptedCandidateVector, vectorBallotValidityProof })),
+  };
+  let releaseFabricSlot;
+  let gateway;
+  try {
+    releaseFabricSlot = await fabricConcurrencyGate.acquire();
+    const connection = await connectGateway();
+    gateway = connection.gateway;
+    const result = await submitTransactionAndWait(connection.contract, 'PrepareVectorBallot',
+      [electionID, nullifierHash, clientNonceHash], { transientData });
+    res.json(JSON.parse(Buffer.from(result).toString('utf8')));
+  } catch (err) {
+    if (err.code === 'FABRIC_QUEUE_FULL' || err.code === 'FABRIC_QUEUE_TIMEOUT') {
+      return res.status(503).json({ error: '투표 요청이 많습니다. 잠시 후 다시 시도해 주세요.' });
+    }
+    console.error('[vote] PrepareVectorBallot error:', err.message);
+    res.status(500).json({ error: 'vector-v3 투표 준비 중 오류가 발생했습니다.' });
   } finally {
     gateway?.close();
     releaseFabricSlot?.();

@@ -47,3 +47,12 @@ test('failed Fabric commit is never returned as a successful ballot audit', asyn
     error => error.code === 'FABRIC_COMMIT_FAILED' && error.commitStatus === 11,
   );
 });
+
+test('state-changing helper binds transient data into the endorsed proposal', async () => {
+  const fake = fakeContract({ successful: true, code: 0 });
+  const transientData = { vectorAuditArtifact: Buffer.from('{"example":true}') };
+  await submitTransactionAndWait(fake.contract, 'PrepareVectorBallot', ['election-a', 'nullifier-a', 'nonce-a'], { transientData });
+  assert.deepEqual(fake.calls[0], ['proposal', 'PrepareVectorBallot', {
+    arguments: ['election-a', 'nullifier-a', 'nonce-a'], transientData,
+  }]);
+});
