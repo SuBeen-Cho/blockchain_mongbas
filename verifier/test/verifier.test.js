@@ -307,7 +307,7 @@ test('builds and verifies a 2-of-3 threshold bundle without a private-key recons
   assert.equal(verifyBundle(bundle).valid, false, 'tampered threshold proof must fail');
 });
 
-test('builds and verifies vector-v3 one-hot ballots and per-candidate threshold decryptions', () => {
+function buildVectorBundle() {
   const legacy = buildBundle(), electionID = 'vector-v3-test', candidates = ['A', 'B', 'C'];
   const secret = scalar('vector-secret'), coefficient = scalar('vector-coefficient');
   const shares = [1, 2, 3].map((index) => (secret + coefficient * BigInt(index)) % Q);
@@ -337,8 +337,40 @@ test('builds and verifies vector-v3 one-hot ballots and per-candidate threshold 
   bundle.configuration.organizations = keys.map((key, index) => ({ id: index ? 'civil' : 'ec', ed25519PublicKeyDer: key.publicKey.export({ format: 'der', type: 'spki' }).toString('base64') }));
   bundle = signBundle(bundle, 'ec', keys[0].privateKey.export({ format: 'pem', type: 'pkcs8' }));
   bundle = signBundle(bundle, 'civil', keys[1].privateKey.export({ format: 'pem', type: 'pkcs8' }));
+  return bundle;
+}
+
+test('builds and verifies vector-v3 one-hot ballots and per-candidate threshold decryptions', () => {
+  const bundle = buildVectorBundle();
   const result = verifyBundle(bundle);
   assert.equal(result.valid, true, result.errors.join('\n'));
   bundle.ballots[0].validityProof.sumProof.z = '0';
   assert.equal(verifyBundle(bundle).valid, false, 'tampered vector sum proof must fail');
 });
+
+const vectorMutations = {
+  'deleted ballot': (bundle) => { bundle.ballots.pop(); },
+  'replaced ballot': (bundle) => { bundle.ballots[0] = structuredClone(bundle.ballots[1]); },
+  'reordered ballots': (bundle) => { bundle.ballots.reverse(); },
+  'changed ciphertext': (bundle) => { bundle.ballots[0].ciphertextVector[0].c2 = bundle.ballots[1].ciphertextVector[0].c2; },
+  'deleted validity proof': (bundle) => { delete bundle.ballots[0].validityProof; },
+  'changed bulletin root': (bundle) => { bundle.bulletinBoard.root = '00'.repeat(32); },
+  'changed aggregate vector': (bundle) => { bundle.aggregateCiphertextVector[0].c1 = '2'; },
+  'changed partial value': (bundle) => { bundle.vectorPartialDecryptions[0].values[0] = '2'; },
+  'changed partial proof': (bundle) => { bundle.vectorPartialDecryptions[0].proofs[0].z = '0'; },
+  'changed tally': (bundle) => { bundle.tally.results.A += 1; },
+  'deleted signature': (bundle) => { bundle.signatures.pop(); },
+  'changed signature': (bundle) => { bundle.signatures[0].signature = Buffer.alloc(64).toString('base64'); },
+  'algorithm downgrade': (bundle) => { bundle.algorithms.signature = 'none'; },
+  'duplicate ballot': (bundle) => { bundle.ballots.push(structuredClone(bundle.ballots[0])); },
+};
+
+for (const [name, mutate] of Object.entries(vectorMutations)) {
+  test(`rejects vector-v3 tamper corpus: ${name}`, () => {
+    const bundle = buildVectorBundle();
+    mutate(bundle);
+    const result = verifyBundle(bundle);
+    assert.equal(result.valid, false, `${name} unexpectedly verified`);
+    assert.ok(result.errors.length > 0);
+  });
+}
