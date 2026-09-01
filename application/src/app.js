@@ -29,7 +29,7 @@ const { router: credentialRouter } = require('./routes/credential');
 const { requireVoterAuth, measureAuthLatency, idemixStatus } = require('./middleware/auth');
 const { guardElectionAdminRoutes, validateAdminConfiguration } = require('./middleware/admin');
 const { fabricConcurrencyGate } = require('./lib/fabricConcurrencyGate');
-const { validateRuntimeSecurity } = require('./lib/runtimeSecurity');
+const { validateRuntimeSecurity, apiRequestShapeGuard } = require('./lib/runtimeSecurity');
 
 const app  = express();
 const PORT = process.env.PORT || 3000;
@@ -57,13 +57,13 @@ if (process.env.NODE_ENV === 'production') {
 
 // ── 미들웨어 ────────────────────────────────────────────────────
 app.use(express.json({ limit: '1mb' }));
-app.use(express.urlencoded({ extended: true, limit: '1mb' }));
 
 // CORS — 허용 origin 제한 (CORS_ORIGIN 환경변수 또는 개발용 localhost)
 app.use(cors({
   origin: runtimeSecurity.allowedOrigins,
   credentials: false,
 }));
+app.use('/api', apiRequestShapeGuard(runtimeSecurity.allowedOrigins));
 
 // ── 정적 프론트엔드 서빙 (부스 시연: 단일 오리진 + cloudflared 터널) ──
 // 빌드된 SPA(frontend/dist)를 백엔드가 직접 서빙 → 폰/API 동일 출처라 CORS 무관, 터널 1개로 충분.

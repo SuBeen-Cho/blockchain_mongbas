@@ -45,4 +45,20 @@ function validateRuntimeSecurity(env = process.env) {
   };
 }
 
-module.exports = { parseTrustProxyHops, validateRuntimeSecurity };
+function apiRequestShapeGuard(allowedOrigins) {
+  const allowed = new Set(allowedOrigins);
+  return function enforceApiRequestShape(req, res, next) {
+    const origin = req.get('origin');
+    if (origin && !allowed.has(origin)) return res.status(403).json({ error: '허용되지 않은 요청 출처입니다.' });
+    const fetchSite = req.get('sec-fetch-site');
+    if (fetchSite === 'cross-site' && !['GET', 'HEAD', 'OPTIONS'].includes(req.method)) {
+      return res.status(403).json({ error: '교차 사이트 상태 변경 요청은 허용되지 않습니다.' });
+    }
+    if (!['GET', 'HEAD', 'OPTIONS'].includes(req.method) && !req.is('application/json')) {
+      return res.status(415).json({ error: '상태 변경 API는 application/json 형식만 허용합니다.' });
+    }
+    next();
+  };
+}
+
+module.exports = { parseTrustProxyHops, validateRuntimeSecurity, apiRequestShapeGuard };
