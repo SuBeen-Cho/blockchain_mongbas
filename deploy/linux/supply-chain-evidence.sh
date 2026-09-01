@@ -30,7 +30,11 @@ generate_sbom application "${MONGBAS_REPO_DIR}/application"
 generate_sbom frontend "${MONGBAS_REPO_DIR}/frontend"
 generate_sbom verifier "${MONGBAS_REPO_DIR}/verifier"
 
-(cd "${MONGBAS_REPO_DIR}/chaincode/voting" && go list -m all) >"${out}/go-modules.tsv"
+vendor_modules="${MONGBAS_REPO_DIR}/chaincode/voting/vendor/modules.txt"
+[ -f "${vendor_modules}" ] || die "vendored Go module inventory is missing: ${vendor_modules}"
+awk 'BEGIN { print "module\tversion" } /^# / && NF >= 3 && $2 != "=>" { print $2 "\t" $3 }' \
+  "${vendor_modules}" >"${out}/go-modules.tsv"
+sha256sum "${vendor_modules}" >"${out}/go-vendor-modules.sha256"
 (cd "${MONGBAS_REPO_DIR}/chaincode/voting" && go env -json GOARCH GOOS GOVERSION GOMOD GOSUMDB GOPROXY) >"${out}/go-environment.json"
 docker image ls --digests --no-trunc --format '{{json .}}' >"${out}/docker-images.jsonl"
 
