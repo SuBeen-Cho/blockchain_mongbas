@@ -20,6 +20,21 @@ function scalar(label) {
   return value === 0n ? 1n : value;
 }
 
+function vectorArtifactHash(electionID, candidates, vector, proof) {
+  return sha256Hex(canonicalize({ schema: 'mongbas-vector-audit-artifact/v1', electionID, candidates,
+    encryptedCandidateVector: vector, vectorBallotValidityProof: proof }));
+}
+
+function lengthPrefixedHash(fields) {
+  const hash = crypto.createHash('sha256');
+  for (const field of fields) {
+    const bytes = Buffer.from(field);
+    hash.update(bytes.length.toString(16).padStart(8, '0'));
+    hash.update(bytes);
+  }
+  return hash.digest('hex');
+}
+
 function encryptAndProve(publicKeyY, candidateIndex, candidateCount, label) {
   const randomness = scalar(`${label}:r`);
   const message = modPow(G, HOMOMORPHIC_BASE ** BigInt(candidateIndex), P);
@@ -222,7 +237,7 @@ for (const [name, mutate] of Object.entries(envelopeMutations)) {
 }
 
 test('malformed bundle objects return an invalid result instead of throwing', () => {
-  for (const value of [null, {}, { schema: 'mongbas-election-bundle/v3' }, { schema: 'unknown', configuration: null }]) {
+  for (const value of [null, {}, { schema: 'mongbas-election-bundle/v4' }, { schema: 'unknown', configuration: null }]) {
     assert.doesNotThrow(() => verifyBundle(value));
     assert.equal(verifyBundle(value).valid, false);
   }
@@ -320,9 +335,23 @@ function buildVectorBundle() {
   const ballots = [0, 1, 2, 0].map((selection, index) => {
     const generated = generateVectorBallot(publicKey, selection, candidates.length);
     const nullifierHash = sha256Hex(`vector-nullifier:${index}`);
-    return { nullifierHash, candidateCommitment: sha256Hex(`${electionID}|${nullifierHash}|${JSON.stringify(generated.encryptedCandidateVector)}`),
+    return { nullifierHash, preparedBallotID: sha256Hex(`prepared:${index}`), candidateCommitment: sha256Hex(`${electionID}|${nullifierHash}|${JSON.stringify(generated.encryptedCandidateVector)}`),
       encryptedCandidateVector: generated.encryptedCandidateVector, vectorBallotValidityProof: generated.vectorBallotValidityProof };
   });
+	const vectorBallotReceipts = ballots.map((ballot, index) => ({ schema: 'mongbas-vector-ballot-receipt/v1',
+	  ballotID: ballot.preparedBallotID, electionID,
+	  artifactHash: vectorArtifactHash(electionID, candidates, ballot.encryptedCandidateVector, ballot.vectorBallotValidityProof),
+	  status: 'cast', createdAt: 1, createdTxID: `prepare-tx-${index}`, terminalAt: 2, terminalTxID: `cast-tx-${index}` }));
+	const audited = generateVectorBallot(publicKey, 2, candidates.length);
+	const auditedArtifactHash = vectorArtifactHash(electionID, candidates, audited.encryptedCandidateVector, audited.vectorBallotValidityProof);
+	const clientNonce = 'ab'.repeat(32);
+	const auditedBallotID = lengthPrefixedHash(['mongbas/vector-aoc/v1', electionID, sha256Hex(clientNonce), auditedArtifactHash]);
+	vectorBallotReceipts.push({ schema: 'mongbas-vector-ballot-receipt/v1', ballotID: auditedBallotID, electionID,
+	  artifactHash: auditedArtifactHash, status: 'audited', createdAt: 1, createdTxID: 'prepare-audit-tx', terminalAt: 2, terminalTxID: 'audit-tx' });
+	const vectorAuditDisclosures = [{ schema: 'mongbas-vector-audit-disclosure/v1', ballotID: auditedBallotID, electionID,
+	  artifactHash: auditedArtifactHash, selectedIndex: 2, clientNonce, randomness: [...audited._auditWitness.randomness],
+	  encryptedCandidateVector: audited.encryptedCandidateVector, vectorBallotValidityProof: audited.vectorBallotValidityProof,
+	  status: 'audited', auditedAt: 2, auditedTxID: 'audit-tx' }];
   const aggregates = candidates.map((_, candidateIndex) => ballots.reduce((aggregate, ballot) => ({
     c1: ((BigInt(`0x${aggregate.c1}`) * BigInt(`0x${ballot.encryptedCandidateVector[candidateIndex].c1}`)) % P).toString(16),
     c2: ((BigInt(`0x${aggregate.c2}`) * BigInt(`0x${ballot.encryptedCandidateVector[candidateIndex].c2}`)) % P).toString(16),
@@ -335,9 +364,9 @@ function buildVectorBundle() {
     configuration: { ...legacy.configuration, electionID, candidates }, provenance: legacy.provenance, publicKey, ballots,
     tallyResults: { A: 2, B: 1, C: 1 }, totalVotes: 4, aggregateCiphertextVector: aggregates,
     thresholdPublicShares: shares.map((share, offset) => ({ index: offset + 1, mspID: mspIDs[offset], publicKeyY: modPow(G, share, P).toString(16) })),
-    vectorPartialDecryptions: vectorPartials, publishedAt: 1 };
+    vectorPartialDecryptions: vectorPartials, vectorBallotReceipts, vectorAuditDisclosures, publishedAt: 1 };
   let bundle = buildUnsignedBundle(source);
-  assert.equal(bundle.schema, 'mongbas-election-bundle/v3');
+  assert.equal(bundle.schema, 'mongbas-election-bundle/v4');
   const keys = [crypto.generateKeyPairSync('ed25519'), crypto.generateKeyPairSync('ed25519')];
   bundle.configuration.organizations = keys.map((key, index) => ({ id: index ? 'civil' : 'ec', ed25519PublicKeyDer: key.publicKey.export({ format: 'der', type: 'spki' }).toString('base64') }));
   bundle = signBundle(bundle, 'ec', keys[0].privateKey.export({ format: 'pem', type: 'pkcs8' }));
@@ -367,7 +396,15 @@ const vectorMutations = {
   'deleted signature': (bundle) => { bundle.signatures.pop(); },
   'changed signature': (bundle) => { bundle.signatures[0].signature = Buffer.alloc(64).toString('base64'); },
   'algorithm downgrade': (bundle) => { bundle.algorithms.signature = 'none'; },
+  'schema downgrade to v3': (bundle) => { bundle.schema = 'mongbas-election-bundle/v3'; },
   'duplicate ballot': (bundle) => { bundle.ballots.push(structuredClone(bundle.ballots[0])); },
+  'deleted cast receipt': (bundle) => { bundle.vectorBallotReceipts = bundle.vectorBallotReceipts.filter(receipt => receipt.ballotID !== bundle.ballots[0].preparedBallotID); },
+  'changed cast artifact hash': (bundle) => { bundle.vectorBallotReceipts.find(receipt => receipt.status === 'cast').artifactHash = '00'.repeat(32); },
+  'duplicate vector receipt': (bundle) => { bundle.vectorBallotReceipts.push(structuredClone(bundle.vectorBallotReceipts[0])); },
+  'deleted audit disclosure': (bundle) => { bundle.vectorAuditDisclosures = []; },
+  'changed audit nonce': (bundle) => { bundle.vectorAuditDisclosures[0].clientNonce = 'cd'.repeat(32); },
+  'changed audit randomness': (bundle) => { bundle.vectorAuditDisclosures[0].randomness[0] = '1'; },
+  'changed audited ciphertext': (bundle) => { bundle.vectorAuditDisclosures[0].encryptedCandidateVector[0].c2 = '2'; },
 };
 
 for (const [name, mutate] of Object.entries(vectorMutations)) {
@@ -380,7 +417,7 @@ for (const [name, mutate] of Object.entries(vectorMutations)) {
   });
 }
 
-test('tamper-corpus CLI emits 15 independently rejected canonical bundles', () => {
+test('tamper-corpus CLI emits 22 independently rejected canonical bundles', () => {
   const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'mongbas-tamper-'));
   try {
     const input = path.join(temporary, 'valid.json');
@@ -389,7 +426,7 @@ test('tamper-corpus CLI emits 15 independently rejected canonical bundles', () =
     const generated = spawnSync(process.execPath, [path.join(__dirname, '../bin/mongbas-tamper-corpus.js'), input, output], { encoding: 'utf8' });
     assert.equal(generated.status, 0, generated.stderr);
     const manifest = JSON.parse(fs.readFileSync(path.join(output, 'manifest.json'), 'utf8'));
-    assert.equal(manifest.length, 15);
+    assert.equal(manifest.length, 22);
     for (const entry of manifest) {
       const result = verifyBundleBytes(fs.readFileSync(path.join(output, entry.filename)));
       assert.equal(result.valid, false, `${entry.name} unexpectedly verified`);

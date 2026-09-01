@@ -106,6 +106,7 @@ function buildUnsignedVectorBundle(source) {
     }
     return {
       nullifierHash: requireString(ballot.nullifierHash, `ballot ${index} nullifierHash`),
+      preparedBallotID: requireString(ballot.preparedBallotID, `ballot ${index} preparedBallotID`),
       candidateCommitment: requireString(ballot.candidateCommitment, `ballot ${index} candidateCommitment`),
       ciphertextVector: ballot.encryptedCandidateVector,
       validityProof: ballot.vectorBallotValidityProof,
@@ -126,8 +127,11 @@ function buildUnsignedVectorBundle(source) {
   if (!Array.isArray(source.vectorPartialDecryptions) || source.vectorPartialDecryptions.length < 2) {
     throw new Error('at least two vector partial decryptions are required');
   }
+  if (!Array.isArray(source.vectorBallotReceipts) || !Array.isArray(source.vectorAuditDisclosures)) {
+    throw new Error('vector audit-or-cast receipts/disclosures are required');
+  }
   return {
-    schema: 'mongbas-election-bundle/v3',
+    schema: 'mongbas-election-bundle/v4',
     algorithms: { canonicalization: 'mongbas-canonical-json-v1', hash: 'sha-256', signature: 'ed25519', tally: 'mongbas-exp-elgamal-vector-threshold-v3' },
     configuration: source.configuration,
     provenance: source.provenance,
@@ -138,6 +142,8 @@ function buildUnsignedVectorBundle(source) {
     aggregateCiphertextVector,
     tally: { results: source.tallyResults, totalVotes: source.totalVotes },
     vectorPartialDecryptions: source.vectorPartialDecryptions,
+    vectorBallotReceipts: source.vectorBallotReceipts,
+    vectorAuditDisclosures: source.vectorAuditDisclosures,
     signatures: [],
   };
 }

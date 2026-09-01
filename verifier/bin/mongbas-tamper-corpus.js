@@ -7,13 +7,13 @@ const { canonicalize } = require('../src/verify');
 
 const [input, outputDirectory] = process.argv.slice(2);
 if (!input || !outputDirectory) {
-  process.stderr.write('Usage: mongbas-tamper-corpus <valid-vector-v3-bundle.json> <output-directory>\n');
+  process.stderr.write('Usage: mongbas-tamper-corpus <valid-vector-v4-bundle.json> <output-directory>\n');
   process.exit(2);
 }
 
 try {
   const bundle = JSON.parse(fs.readFileSync(path.resolve(input), 'utf8'));
-  if (bundle.schema !== 'mongbas-election-bundle/v3' || bundle.ballots?.length < 2) {
+  if (bundle.schema !== 'mongbas-election-bundle/v4' || bundle.ballots?.length < 2) {
     throw new Error('a vector-v3 bundle with at least two ballots is required');
   }
   const mutations = {
@@ -32,6 +32,13 @@ try {
     'signature-changed': value => { value.signatures[0].signature = Buffer.alloc(64).toString('base64'); },
     'algorithm-downgraded': value => { value.algorithms.tally = 'none'; },
     'ballot-duplicated': value => { value.ballots.push(structuredClone(value.ballots[0])); },
+    'cast-receipt-deleted': value => { value.vectorBallotReceipts = value.vectorBallotReceipts.filter(receipt => receipt.ballotID !== value.ballots[0].preparedBallotID); },
+    'cast-artifact-changed': value => { value.vectorBallotReceipts.find(receipt => receipt.status === 'cast').artifactHash = '00'.repeat(32); },
+    'receipt-duplicated': value => { value.vectorBallotReceipts.push(structuredClone(value.vectorBallotReceipts[0])); },
+    'audit-disclosure-deleted': value => { value.vectorAuditDisclosures = []; },
+    'audit-nonce-changed': value => { value.vectorAuditDisclosures[0].clientNonce = 'cd'.repeat(32); },
+    'audit-randomness-changed': value => { value.vectorAuditDisclosures[0].randomness[0] = '1'; },
+    'audited-ciphertext-changed': value => { value.vectorAuditDisclosures[0].encryptedCandidateVector[0].c2 = '2'; },
   };
   fs.mkdirSync(path.resolve(outputDirectory), { recursive: true, mode: 0o700 });
   const manifest = [];

@@ -163,6 +163,7 @@ type Nullifier struct {
 	BallotValidityProof       *BallotValidityProof       `json:"ballotValidityProof,omitempty" metadata:",optional"` // ElGamal 투표 유효성 공개 증거
 	EncryptedCandidateVector  []ElGamalCiphertext        `json:"encryptedCandidateVector,omitempty" metadata:",optional"`
 	VectorBallotValidityProof *VectorBallotValidityProof `json:"vectorBallotValidityProof,omitempty" metadata:",optional"`
+	PreparedBallotID          string                     `json:"preparedBallotID,omitempty" metadata:",optional"`
 	Timestamp                 int64                      `json:"timestamp"`
 	EvictCount                int                        `json:"evictCount"`    // 재투표 횟수 (0 = 최초 투표)
 	LastEvictedAt             int64                      `json:"lastEvictedAt"` // 마지막 재투표 시각
@@ -552,16 +553,18 @@ type VectorAuditWitness struct {
 // enough material for an offline verifier to recompute every ciphertext but no
 // credential/nullifier linkage.
 type VectorAuditDisclosure struct {
-	Schema        string   `json:"schema"`
-	BallotID      string   `json:"ballotID"`
-	ElectionID    string   `json:"electionID"`
-	ArtifactHash  string   `json:"artifactHash"`
-	SelectedIndex int      `json:"selectedIndex"`
-	ClientNonce   string   `json:"clientNonce"`
-	Randomness    []string `json:"randomness"`
-	Status        string   `json:"status"`
-	AuditedAt     int64    `json:"auditedAt"`
-	AuditedTxID   string   `json:"auditedTxID"`
+	Schema                    string                     `json:"schema"`
+	BallotID                  string                     `json:"ballotID"`
+	ElectionID                string                     `json:"electionID"`
+	ArtifactHash              string                     `json:"artifactHash"`
+	SelectedIndex             int                        `json:"selectedIndex"`
+	ClientNonce               string                     `json:"clientNonce"`
+	Randomness                []string                   `json:"randomness"`
+	EncryptedCandidateVector  []ElGamalCiphertext        `json:"encryptedCandidateVector"`
+	VectorBallotValidityProof *VectorBallotValidityProof `json:"vectorBallotValidityProof"`
+	Status                    string                     `json:"status"`
+	AuditedAt                 int64                      `json:"auditedAt"`
+	AuditedTxID               string                     `json:"auditedTxID"`
 }
 
 // ============================================================
@@ -1730,7 +1733,7 @@ func (c *VotingContract) CastVote(
 	if election.EncryptionMode == "elgamal-vector-v3" {
 		return fmt.Errorf("vector-v3 투표는 PrepareVectorBallot 후 CastPreparedVectorBallot으로만 제출할 수 있습니다")
 	}
-	return c.castVoteInternal(ctx, electionID, candidateID, nullifierHash)
+	return c.castVoteInternal(ctx, electionID, candidateID, nullifierHash, "")
 }
 
 // castVoteInternal contains the existing validated ledger write. It is not a
@@ -1741,6 +1744,7 @@ func (c *VotingContract) castVoteInternal(
 	electionID string,
 	candidateID string,
 	nullifierHash string,
+	preparedBallotID string,
 ) error {
 
 	// ── Step 0: 입력 형식 검증 (CouchDB 인젝션 방지) ──────────
@@ -1985,6 +1989,7 @@ func (c *VotingContract) castVoteInternal(
 		BallotValidityProof:       publicBallotValidityProof,
 		EncryptedCandidateVector:  encryptedCandVector,
 		VectorBallotValidityProof: publicVectorBallotValidityProof,
+		PreparedBallotID:          preparedBallotID,
 		Timestamp:                 now,
 		EvictCount:                evictCount,
 		LastEvictedAt: func() int64 {
@@ -2215,6 +2220,8 @@ func (c *VotingContract) AuditVectorBallot(
 		Schema: "mongbas-vector-audit-disclosure/v1", BallotID: ballotID, ElectionID: electionID,
 		ArtifactHash: preparation.ArtifactHash, SelectedIndex: selectedIndex, ClientNonce: witness.ClientNonce,
 		Randomness: append([]string(nil), witness.Randomness...), Status: "audited", AuditedAt: now, AuditedTxID: ctx.GetStub().GetTxID(),
+		EncryptedCandidateVector:  append([]ElGamalCiphertext(nil), preparation.Artifact.EncryptedCandidateVector...),
+		VectorBallotValidityProof: preparation.Artifact.VectorBallotValidityProof,
 	}
 	updatedPrivate, err := json.Marshal(preparation)
 	if err != nil {
@@ -2313,7 +2320,7 @@ func (c *VotingContract) CastPreparedVectorBallot(
 	if subtle.ConstantTimeCompare([]byte(preparation.ArtifactHash), []byte(artifactHash)) != 1 {
 		return fmt.Errorf("cast artifact가 준비된 vector ballot과 일치하지 않습니다")
 	}
-	if err := c.castVoteInternal(ctx, electionID, "", nullifierHash); err != nil {
+	if err := c.castVoteInternal(ctx, electionID, "", nullifierHash, ballotID); err != nil {
 		return err
 	}
 	now, err := getTxTime(ctx)
@@ -4464,6 +4471,8 @@ type BulletinBoard struct {
 	EncAggC1                 string                    `json:"encAggC1,omitempty" metadata:",optional"`
 	EncAggC2                 string                    `json:"encAggC2,omitempty" metadata:",optional"`
 	EncAggVector             []ElGamalCiphertext       `json:"encAggVector,omitempty" metadata:",optional"`
+	VectorBallotReceipts     []VectorBallotReceipt     `json:"vectorBallotReceipts,omitempty" metadata:",optional"`
+	VectorAuditDisclosures   []VectorAuditDisclosure   `json:"vectorAuditDisclosures,omitempty" metadata:",optional"`
 }
 
 // EncryptedBallot 공개 원장의 개별 암호화 투표
@@ -4474,6 +4483,7 @@ type EncryptedBallot struct {
 	BallotValidityProof       *BallotValidityProof       `json:"ballotValidityProof,omitempty" metadata:",optional"`
 	EncryptedCandidateVector  []ElGamalCiphertext        `json:"encryptedCandidateVector,omitempty" metadata:",optional"`
 	VectorBallotValidityProof *VectorBallotValidityProof `json:"vectorBallotValidityProof,omitempty" metadata:",optional"`
+	PreparedBallotID          string                     `json:"preparedBallotID,omitempty" metadata:",optional"`
 }
 
 // PublicVerificationResult 공개 검증 결과
@@ -4591,6 +4601,9 @@ func (c *VotingContract) PublishAuditData(
 		if election.EncryptionMode == "elgamal-vector-v3" && (len(nul.EncryptedCandidateVector) != len(election.Candidates) || nul.VectorBallotValidityProof == nil) {
 			return nil, fmt.Errorf("vector-v3 ballot/proof 누락 (nullifier=%s)", nul.NullifierHash)
 		}
+		if election.EncryptionMode == "elgamal-vector-v3" && !isCanonicalSHA256Hex(nul.PreparedBallotID) {
+			return nil, fmt.Errorf("vector-v3 prepared ballot ID 누락 (nullifier=%s)", nul.NullifierHash)
+		}
 		ballots = append(ballots, EncryptedBallot{
 			NullifierHash:             nul.NullifierHash,
 			EncryptedCandidateID:      nul.EncryptedCandidateID,
@@ -4598,7 +4611,65 @@ func (c *VotingContract) PublishAuditData(
 			BallotValidityProof:       nul.BallotValidityProof,
 			EncryptedCandidateVector:  nul.EncryptedCandidateVector,
 			VectorBallotValidityProof: nul.VectorBallotValidityProof,
+			PreparedBallotID:          nul.PreparedBallotID,
 		})
+	}
+
+	var vectorReceipts []VectorBallotReceipt
+	var vectorDisclosures []VectorAuditDisclosure
+	if election.EncryptionMode == "elgamal-vector-v3" {
+		receiptIterator, err := ctx.GetStub().GetStateByRange("VECTOR_PREP_", "VECTOR_PREP_\uffff")
+		if err != nil {
+			return nil, fmt.Errorf("vector receipt 조회 실패: %w", err)
+		}
+		defer receiptIterator.Close()
+		castReceiptIDs := make(map[string]string)
+		for receiptIterator.HasNext() {
+			entry, err := receiptIterator.Next()
+			if err != nil {
+				return nil, fmt.Errorf("vector receipt 순회 실패: %w", err)
+			}
+			var receipt VectorBallotReceipt
+			if err := json.Unmarshal(entry.Value, &receipt); err != nil {
+				return nil, fmt.Errorf("vector receipt 파싱 실패: %w", err)
+			}
+			if receipt.ElectionID != electionID {
+				continue
+			}
+			switch receipt.Status {
+			case "cast":
+				castReceiptIDs[receipt.BallotID] = receipt.ArtifactHash
+				vectorReceipts = append(vectorReceipts, receipt)
+			case "audited":
+				disclosureBytes, err := ctx.GetStub().GetState("VECTOR_AUDIT_" + receipt.BallotID)
+				if err != nil || disclosureBytes == nil {
+					return nil, fmt.Errorf("audited vector disclosure 누락: %s", receipt.BallotID)
+				}
+				var disclosure VectorAuditDisclosure
+				if err := json.Unmarshal(disclosureBytes, &disclosure); err != nil || disclosure.BallotID != receipt.BallotID ||
+					disclosure.ElectionID != electionID || disclosure.ArtifactHash != receipt.ArtifactHash || disclosure.Status != "audited" {
+					return nil, fmt.Errorf("audited vector disclosure 불일치: %s", receipt.BallotID)
+				}
+				vectorReceipts = append(vectorReceipts, receipt)
+				vectorDisclosures = append(vectorDisclosures, disclosure)
+			}
+		}
+		if len(castReceiptIDs) != len(ballots) {
+			return nil, fmt.Errorf("cast vector receipt 수 불일치: receipts=%d ballots=%d", len(castReceiptIDs), len(ballots))
+		}
+		for _, ballot := range ballots {
+			receiptHash, exists := castReceiptIDs[ballot.PreparedBallotID]
+			if !exists {
+				return nil, fmt.Errorf("cast vector receipt 누락: %s", ballot.PreparedBallotID)
+			}
+			artifactHash, err := computeVectorAuditArtifactHash(electionID, election.Candidates,
+				ballot.EncryptedCandidateVector, ballot.VectorBallotValidityProof)
+			if err != nil || subtle.ConstantTimeCompare([]byte(receiptHash), []byte(artifactHash)) != 1 {
+				return nil, fmt.Errorf("cast vector receipt artifact 불일치: %s", ballot.PreparedBallotID)
+			}
+		}
+		sort.Slice(vectorReceipts, func(i, j int) bool { return vectorReceipts[i].BallotID < vectorReceipts[j].BallotID })
+		sort.Slice(vectorDisclosures, func(i, j int) bool { return vectorDisclosures[i].BallotID < vectorDisclosures[j].BallotID })
 	}
 
 	// [PAPER-7] 결정론적 셔플: 제출 순서와 공개 순서의 연결을 끊어 시간 분석 공격 방지
@@ -4647,6 +4718,8 @@ func (c *VotingContract) PublishAuditData(
 		EncAggC1:                 tally.EncAggC1,
 		EncAggC2:                 tally.EncAggC2,
 		EncAggVector:             tally.EncAggVector,
+		VectorBallotReceipts:     vectorReceipts,
+		VectorAuditDisclosures:   vectorDisclosures,
 	}
 	if bb.EncryptionMode == "" {
 		bb.EncryptionMode = "aes"

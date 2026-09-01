@@ -781,6 +781,8 @@ router.get('/:id/election-bundle-source', requireValidElectionID, async (req, re
       aggregateCiphertext: { c1: board.encAggC1, c2: board.encAggC2 },
 	  aggregateCiphertextVector: board.encAggVector,
 	  vectorPartialDecryptions: board.vectorPartialDecryptions,
+      vectorBallotReceipts: board.vectorBallotReceipts,
+      vectorAuditDisclosures: board.vectorAuditDisclosures,
       publishedAt: board.publishedAt,
     });
   } catch (err) {

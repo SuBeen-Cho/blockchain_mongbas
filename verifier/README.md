@@ -52,18 +52,30 @@ The process exits `0` only when every implemented check passes, `1` for an inval
   decryptions with trustee/MSP binding, Fiat–Shamir challenge recomputation,
   Lagrange combination, combined-public-key validation, and tally recovery;
 - deterministic bulletin-board Merkle root;
+- vector-v3 prepared-ballot receipts, exact cast artifact binding, and one-to-one cast receipt coverage;
+- spoiled audit nonce commitment, one-hot proof, disclosed randomness and full ciphertext re-encryption;
+- rejection of missing, duplicate or mutated cast receipts and audit disclosures;
 - threshold of distinct Ed25519 organization signatures over the complete unsigned canonical bundle;
 - downgrade, deletion, replacement, reordering, duplication and proof/signature mutation tests.
 
 ## Current protocol limitations
 
-Bundle v3 verifies one-hot vector ballots and 2-of-3, per-candidate threshold
+Bundle v4 verifies one-hot vector ballots and 2-of-3, per-candidate threshold
 decryptions without reconstructing the complete election private key. This does
 not yet make the deployment institutionally independent: key generation remains
 dealer-assisted, and trustee secret shares currently reside in a shared Fabric
 private-data collection. Production deployment still requires auditable DKG,
 per-organization secret storage and administration, and independently controlled
 bundle-signing keys.
+
+Bundle v4 also carries terminal audit-or-cast receipts. A cast receipt is bound
+to the exact ciphertext/proof artifact and `preparedBallotID`; an audited receipt
+must have a matching public spoiled disclosure whose nonce, randomness, proof
+and selected index independently reconstruct every ciphertext. Public receipt
+identifiers do not contain the credential-bound nullifier, so a spoiled audit
+cannot be linked to a later cast by recomputing its identifier. These checks do
+not prove that the user actually chose to audit or that an uncompromised display
+showed the intended candidate; usability and compromised-device risks remain.
 
 The signed Merkle root detects changes to the exported ballot sequence, but the
 repository now contains an independent checkpoint witness, but a same-host test

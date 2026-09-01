@@ -393,12 +393,86 @@ function verifySignatures(bundle, payloadBytes) {
   return valid;
 }
 
+function lengthPrefixedHash(fields) {
+  const hash = crypto.createHash('sha256');
+  for (const field of fields) {
+    if (typeof field !== 'string') throw new Error('length-prefixed hash field must be a string');
+    const bytes = Buffer.from(field, 'utf8');
+    hash.update(bytes.length.toString(16).padStart(8, '0'));
+    hash.update(bytes);
+  }
+  return hash.digest('hex');
+}
+
+function vectorArtifactHash(electionID, candidates, ciphertextVector, validityProof) {
+  return sha256Hex(canonicalize({
+    schema: 'mongbas-vector-audit-artifact/v1', electionID, candidates,
+    encryptedCandidateVector: ciphertextVector, vectorBallotValidityProof: validityProof,
+  }));
+}
+
+function verifyVectorAuditTrail(bundle, y) {
+  const receipts = bundle.vectorBallotReceipts;
+  const disclosures = bundle.vectorAuditDisclosures;
+  if (!Array.isArray(receipts) || !Array.isArray(disclosures)) throw new Error('audit-or-cast evidence arrays are required');
+  const receiptByID = new Map();
+  for (const [index, receipt] of receipts.entries()) {
+    requireExactKeys(receipt, ['schema', 'ballotID', 'electionID', 'artifactHash', 'status', 'createdAt', 'createdTxID', 'terminalAt', 'terminalTxID'], `vectorBallotReceipts[${index}]`);
+    if (receipt.schema !== 'mongbas-vector-ballot-receipt/v1' || !/^[0-9a-f]{64}$/.test(receipt.ballotID) ||
+        !/^[0-9a-f]{64}$/.test(receipt.artifactHash) || receipt.electionID !== bundle.configuration.electionID ||
+        !['cast', 'audited'].includes(receipt.status) || !Number.isSafeInteger(receipt.createdAt) || !Number.isSafeInteger(receipt.terminalAt) ||
+        typeof receipt.createdTxID !== 'string' || !receipt.createdTxID || typeof receipt.terminalTxID !== 'string' || !receipt.terminalTxID ||
+        receiptByID.has(receipt.ballotID)) throw new Error(`invalid/duplicate receipt ${index}`);
+    receiptByID.set(receipt.ballotID, receipt);
+  }
+  const castIDs = new Set();
+  for (const [index, ballot] of bundle.ballots.entries()) {
+    if (!/^[0-9a-f]{64}$/.test(ballot.preparedBallotID) || castIDs.has(ballot.preparedBallotID)) throw new Error(`ballot ${index} prepared ID invalid/duplicate`);
+    castIDs.add(ballot.preparedBallotID);
+    const receipt = receiptByID.get(ballot.preparedBallotID);
+    const hash = vectorArtifactHash(bundle.configuration.electionID, bundle.configuration.candidates, ballot.ciphertextVector, ballot.validityProof);
+    if (!receipt || receipt.status !== 'cast' || receipt.artifactHash !== hash) throw new Error(`ballot ${index} cast receipt mismatch`);
+  }
+  if ([...receiptByID.values()].filter(receipt => receipt.status === 'cast').length !== bundle.ballots.length) throw new Error('orphan cast receipt');
+  const disclosedIDs = new Set();
+  for (const [index, disclosure] of disclosures.entries()) {
+    requireExactKeys(disclosure, ['schema', 'ballotID', 'electionID', 'artifactHash', 'selectedIndex', 'clientNonce', 'randomness',
+      'encryptedCandidateVector', 'vectorBallotValidityProof', 'status', 'auditedAt', 'auditedTxID'], `vectorAuditDisclosures[${index}]`);
+    if (disclosure.schema !== 'mongbas-vector-audit-disclosure/v1' || disclosure.status !== 'audited' ||
+        disclosure.electionID !== bundle.configuration.electionID || !/^[0-9a-f]{64}$/.test(disclosure.clientNonce) ||
+        !Array.isArray(disclosure.randomness) || disclosure.randomness.length !== bundle.configuration.candidates.length ||
+        !Number.isInteger(disclosure.selectedIndex) || disclosure.selectedIndex < 0 || disclosure.selectedIndex >= bundle.configuration.candidates.length ||
+        disclosedIDs.has(disclosure.ballotID)) throw new Error(`invalid/duplicate disclosure ${index}`);
+    disclosedIDs.add(disclosure.ballotID);
+    const receipt = receiptByID.get(disclosure.ballotID);
+    const artifactHash = vectorArtifactHash(disclosure.electionID, bundle.configuration.candidates,
+      disclosure.encryptedCandidateVector, disclosure.vectorBallotValidityProof);
+    if (!receipt || receipt.status !== 'audited' || receipt.artifactHash !== artifactHash || disclosure.artifactHash !== artifactHash) {
+      throw new Error(`disclosure ${index} receipt/artifact mismatch`);
+    }
+    const expectedBallotID = lengthPrefixedHash(['mongbas/vector-aoc/v1', disclosure.electionID, sha256Hex(disclosure.clientNonce), artifactHash]);
+    if (expectedBallotID !== disclosure.ballotID) throw new Error(`disclosure ${index} ballot ID commitment mismatch`);
+    verifyVectorBallotProof(y, { ciphertextVector: disclosure.encryptedCandidateVector, validityProof: disclosure.vectorBallotValidityProof }, bundle.configuration.candidates.length);
+    disclosure.encryptedCandidateVector.forEach((ciphertext, candidateIndex) => {
+      const randomnessHex = disclosure.randomness[candidateIndex];
+      if (typeof randomnessHex !== 'string' || !/^[0-9a-f]+$/.test(randomnessHex) || (randomnessHex.length > 1 && randomnessHex.startsWith('0'))) throw new Error(`disclosure ${index} randomness encoding`);
+      const randomness = BigInt(`0x${randomnessHex}`);
+      if (randomness <= 0n || randomness >= Q) throw new Error(`disclosure ${index} randomness range`);
+      const expectedC1 = modPow(G, randomness, P).toString(16);
+      const message = candidateIndex === disclosure.selectedIndex ? G : 1n;
+      const expectedC2 = (modPow(y, randomness, P) * message % P).toString(16);
+      if (ciphertext.c1 !== expectedC1 || ciphertext.c2 !== expectedC2) throw new Error(`disclosure ${index} witness mismatch`);
+    });
+  }
+  if ([...receiptByID.values()].filter(receipt => receipt.status === 'audited').length !== disclosures.length) throw new Error('audited receipt/disclosure count mismatch');
+}
+
 function verifyVectorBundle(bundle) {
   const errors = [];
   const check = (label, fn) => { try { return fn(); } catch (error) { errors.push(`${label}: ${error.message}`); return undefined; } };
-  check('bundle envelope', () => validateBundleEnvelope(bundle, 'mongbas-election-bundle/v3', VECTOR_THRESHOLD_ALGORITHM,
+  check('bundle envelope', () => validateBundleEnvelope(bundle, 'mongbas-election-bundle/v4', VECTOR_THRESHOLD_ALGORITHM,
     ['schema', 'algorithms', 'configuration', 'provenance', 'publicKey', 'trusteePublicShares', 'ballots', 'bulletinBoard',
-      'aggregateCiphertextVector', 'tally', 'vectorPartialDecryptions', 'signatures'], { vector: true }));
+      'aggregateCiphertextVector', 'tally', 'vectorPartialDecryptions', 'vectorBallotReceipts', 'vectorAuditDisclosures', 'signatures'], { vector: true }));
   if (bundle?.algorithms?.tally !== VECTOR_THRESHOLD_ALGORITHM) errors.push('algorithms.tally: vector-v3 required (downgrade rejected)');
   const candidates = bundle?.configuration?.candidates;
   if (!Array.isArray(candidates) || candidates.length < 2 || new Set(candidates).size !== candidates.length) errors.push('configuration.candidates: invalid');
@@ -421,6 +495,7 @@ function verifyVectorBundle(bundle) {
       aggregates[candidateIndex].c2 = (aggregates[candidateIndex].c2 * BigInt(`0x${ciphertext.c2}`)) % P;
     });
   }));
+  if (y && Array.isArray(candidates) && Array.isArray(ballots)) check('vectorAuditTrail', () => verifyVectorAuditTrail(bundle, y));
   const aggregateHex = aggregates.map((value) => ({ c1: value.c1.toString(16), c2: value.c2.toString(16) }));
   if (canonicalize(bundle?.aggregateCiphertextVector) !== canonicalize(aggregateHex)) errors.push('aggregateCiphertextVector: mismatch');
   if (bundle?.tally?.totalVotes !== ballots?.length) errors.push('tally.totalVotes: ballot count mismatch');
@@ -434,7 +509,7 @@ function verifyVectorBundle(bundle) {
 }
 
 function verifyBundleUnchecked(bundle) {
-	if (bundle?.schema === 'mongbas-election-bundle/v3') return verifyVectorBundle(bundle);
+	if (bundle?.schema === 'mongbas-election-bundle/v4') return verifyVectorBundle(bundle);
   const errors = [];
   let validSignatures = 0;
   const check = (label, fn) => {
