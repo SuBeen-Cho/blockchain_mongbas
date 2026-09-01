@@ -39,6 +39,7 @@ const BASE = args.url || 'http://localhost:3000';
 const N = parseInt(args.n || '100', 10);
 const WARMUP = parseInt(args.warmup || '10', 10);
 const CANDIDATES = ['CANDIDATE_A', 'CANDIDATE_B', 'CANDIDATE_C'];
+const MAX_BSGS_SEARCH = 4000000000n;
 const TIMESTAMP = new Date().toISOString().replace(/[:.]/g, '').slice(0, 15);
 const OUT = args.out || path.join(__dirname, `../benchmark-reports/elgamal-e2e-${TIMESTAMP}.json`);
 
@@ -346,6 +347,12 @@ async function measureTally(electionID, expectedResults) {
 // ── 메인 ────────────────────────────────────────────────────────
 async function main() {
   console.log('═══════════════════════════════════════════════════');
+
+  let capacityBound = BigInt(N + WARMUP + 1);
+  for (let i = 0; i < CANDIDATES.length - 1; i++) capacityBound *= HOMOMORPHIC_BASE;
+  if (capacityBound > MAX_BSGS_SEARCH) {
+    throw new Error(`scalar-v1 capacity exceeded before run: (N+warmup+1)*base^(candidates-1)=${capacityBound} > ${MAX_BSGS_SEARCH}; implement vector tally for this workload`);
+  }
   console.log(' ElGamal E2E Benchmark');
   console.log('═══════════════════════════════════════════════════');
 
