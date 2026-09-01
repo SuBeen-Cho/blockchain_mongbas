@@ -1,7 +1,6 @@
 /**
  * utils/crypto.js — 브라우저 내 암호 연산
  *
- * voterSecret은 절대 서버로 전송되지 않습니다.
  * 모든 해시 계산은 클라이언트(브라우저) Web Crypto API로 수행합니다.
  */
 
@@ -21,12 +20,8 @@ export async function sha256(text) {
 /**
  * Nullifier 해시를 계산합니다.
  *
- * [CRIT-03 FIX] 결정론적 nullifier 취약점 수정:
- * - 변경 전: nullifierHash = SHA256(voterSecret + electionID)
- *   → 같은 유권자는 모든 선거에서 동일 패턴 → voterSecret 유출 시 전체 투표 이력 역추적 가능
- * - 변경 후: nullifierHash = SHA256(voterSecret + electionID + blindingFactor)
- *   → blindingFactor는 선거별로 다름 (체인코드가 txID 기반으로 생성)
- *   → voterSecret이 유출되어도 각 선거의 blindingFactor 없이는 nullifier 연결 불가
+ * credential에 서명된 선거별 material을 사용하며, 체인코드가 같은
+ * 식을 독립 재계산하여 임의 nullifier로의 중복투표 우회를 차단합니다.
  *
  * blindingFactor는 GET /api/elections/:id/blinding-factor 로 조회합니다.
  *
@@ -88,17 +83,6 @@ export async function computeMerkleRootFromProof(leafHash, proof = []) {
     }
   }
   return current;
-}
-
-/**
- * 랜덤 voterSecret을 생성합니다 (32바이트, hex).
- * 처음 투표 시 생성하여 안전한 곳에 보관하세요.
- * @returns {string}
- */
-export function generateVoterSecret() {
-  const bytes = new Uint8Array(32);
-  crypto.getRandomValues(bytes);
-  return Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('');
 }
 
 /**

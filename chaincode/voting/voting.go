@@ -2,7 +2,7 @@
 // for Hyperledger Fabric using Anonymous Nullifiers and Private Data Collections (PDC).
 //
 // 핵심 프라이버시 설계:
-//   - Nullifier: hash(voterSecret || electionID) → 최종 1표만 유효 (재투표 허용, 이중집계 방지), 익명성 보장
+//   - Nullifier: hash(signed credential material || election scope) → 최종 1표만 유효
 //   - PDC (Private Data Collection): 투표 원본은 피어 비공개 사이드DB에만 저장
 //   - 공개 원장: nullifierHash + candidateID만 기록 (신원 미노출)
 //
@@ -133,8 +133,7 @@ type Election struct {
 	Status      string   `json:"status"`    // CREATED | ACTIVE | CLOSED
 	CreatedBy   string   `json:"createdBy"` // 선거관리자 MSP ID
 	// [CRIT-03 FIX] 선거별 블라인딩 팩터 — nullifier 선거 간 연결 방지
-	// SHA256(voterSecret + electionID + blindingFactor) 으로 nullifier 계산
-	// 선거마다 다른 salt → voterSecret이 유출돼도 선거 간 역추적 불가
+	// SHA256(signed credential material + electionID + blindingFactor)의 선거별 salt
 	BlindingFactor string `json:"blindingFactor"` // SHA256(txID + electionID)
 	// [PAPER-1] 선거 공개 암호화 키 (hex)
 	// 클라이언트가 이 키로 candidateID를 암호화하여 제출.
@@ -152,7 +151,7 @@ type Election struct {
 
 // Nullifier 익명 투표 증명 (공개 원장)
 // 유권자가 투표했다는 사실만 증명하고 누가 투표했는지는 알 수 없음.
-// nullifierHash = SHA256(voterSecret + electionID + blindingFactor) — 클라이언트가 계산
+// nullifierHash = SHA256(signed credential material + electionID + blindingFactor)
 type Nullifier struct {
 	ObjectType                string                     `json:"docType"`       // "nullifier"
 	NullifierHash             string                     `json:"nullifierHash"` // 최종 1표만 유효 키 (재투표 시 덮어쓰기, 원장 Key로도 사용)
@@ -1229,7 +1228,7 @@ func (c *VotingContract) CreateElection(
 
 // GetBlindingFactor [CRIT-03 FIX] 선거의 블라인딩 팩터를 반환합니다.
 // 유권자는 투표 전 반드시 호출하여 nullifier 계산에 사용해야 합니다.
-// nullifierHash = SHA256(voterSecret + electionID + blindingFactor)
+// nullifierHash = SHA256(signed credential material + electionID + blindingFactor)
 func (c *VotingContract) GetBlindingFactor(
 	ctx contractapi.TransactionContextInterface,
 	electionID string,
@@ -1382,7 +1381,7 @@ func (c *VotingContract) CloseElection(
 // 공개 파라미터 (체인에 기록됨):
 //   - electionID:    투표 대상 선거 ID
 //   - candidateID:   선택한 후보자 ID
-//   - nullifierHash: SHA256(voterSecret + electionID + blindingFactor) — 클라이언트 계산
+//   - nullifierHash: SHA256(signed credential material + electionID + blindingFactor)
 //     [CRIT-03 FIX] blindingFactor 추가로 선거 간 nullifier 연결 방지
 //
 // 비공개 데이터 (Transient Map — 체인에 기록 안 됨):
@@ -2752,8 +2751,8 @@ func computeMerkleProof(leaves []string, leafIdx int) []MerkleNode {
 // 유틸리티 함수
 // ============================================================
 
-// ComputeNullifierHash SHA256(voterSecret + electionID) 계산 (테스트/디버그용).
-// 실제 운영에서는 voterSecret이 체인코드로 전달되면 안 되므로 클라이언트에서 계산할 것.
+// ComputeNullifierHash is retained only for legacy compatibility tests.
+// Secure voting uses computeCredentialBoundNullifier and rejects this legacy formula.
 func ComputeNullifierHash(voterSecret, electionID string) string {
 	h := sha256.New()
 	h.Write([]byte(voterSecret + electionID))

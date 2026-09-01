@@ -8,11 +8,10 @@
  *
  * ══ 핵심 프라이버시 설계 ══════════════════════════════════════════
  *
- * nullifierHash = SHA256(voterSecret + electionID)
+ * nullifierHash = SHA256(signedCredentialMaterial + electionID + blindingFactor)
  *
- * voterSecret은 유권자 브라우저에서만 생성·보관됩니다.
- * 절대 서버로 전송되지 않으며, 서버는 nullifierHash만 받습니다.
- * 따라서 서버(백엔드)는 "누가 어디에 투표했는지" 알 수 없습니다.
+ * 체인코드는 자격증명에 서명된 결합값으로 nullifier를 독립 재계산하여,
+ * 자격증명 하나로 임의 nullifier를 여러 개 만드는 중복투표 우회를 차단합니다.
  *
  * ══ Transient 처리 (PDC 비공개 데이터) ══════════════════════════
  *
@@ -41,7 +40,7 @@ const router = express.Router();
 // Body:
 //   electionID    : string   — 선거 ID
 //   candidateID   : string   — 후보자 ID
-//   nullifierHash : string   — SHA256(voterSecret + electionID), 클라이언트 계산
+//   nullifierHash : string   — SHA256(signedCredentialMaterial + electionID + blindingFactor)
 //   voterID       : string   — 유권자 식별자 (PDC 비공개 저장, 원장 미노출)
 //
 router.post('/', async (req, res) => {

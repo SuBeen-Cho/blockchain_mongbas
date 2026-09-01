@@ -362,6 +362,9 @@ async function main() {
   // Health check
   const health = await get('/health');
   if (health.status !== 200) throw new Error('API server not ready');
+  if (health.body?.benchmark?.rateLimitsDisabled !== true) {
+    throw new Error('benchmark requires an isolated backend process with DISABLE_RATE_LIMITS=true');
+  }
   const idemix = health.body.idemix || {};
 
   const label = !idemix.enabled

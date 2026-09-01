@@ -70,7 +70,7 @@
   <img src="./docs/images/fig_castvote.png" width="500" alt="투표 트랜잭션 처리 흐름">
 </p>
 
-1. **유권자 브라우저**에서 `voterSecret`을 로컬 생성하고, `nullifierHash = SHA256(voterSecret || electionID || blindingFactor)`를 산출합니다.
+1. **자격증명 발급자**가 선거별 결합값을 서명하고, 브라우저가 `nullifierHash = SHA256(nullifierMaterial || electionID || blindingFactor)`를 산출합니다. 체인코드도 서명된 값으로 이를 독립 재계산합니다.
 2. 선택한 후보를 **Exponential ElGamal**으로 암호화하고, **이접적 Chaum-Pedersen ZKP**를 생성합니다.
 3. 암호문 + ZKP + nullifier를 **Transient Map**으로 제출합니다 (오더러 및 공개 원장에 기록되지 않음).
 4. **보증 피어**는 입력 형식, 선거 상태, 자격 증명을 검증한 뒤, nullifier 중복 처리(Last-Vote-Wins)를 수행합니다.

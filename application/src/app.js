@@ -124,6 +124,7 @@ app.get('/health', (_req, res) => {
     status:    'ok',
     timestamp: new Date().toISOString(),
     idemix:    idemixStatus(),
+    benchmark: { rateLimitsDisabled: DISABLE_RATE_LIMITS },
     memory: {
       heapUsed:  mem.heapUsed,
       heapTotal: mem.heapTotal,
@@ -153,8 +154,8 @@ app.get('/', (req, res) => {
       'GET  /api/nullifier/:hash'            : '투표 여부 확인',
     },
     notes: [
-      'nullifierHash는 클라이언트(브라우저)에서 계산: SHA256(voterSecret + electionID)',
-      'voterSecret은 절대 서버로 전송되지 않습니다.',
+      'nullifierHash는 서명된 자격증명 결합값과 선거별 블라인딩 팩터로 계산됩니다.',
+      '체인코드가 credential–nullifier 일치를 독립 검증합니다.',
       'CastVote의 비공개 데이터는 Transient Map으로 PDC에만 저장됩니다.',
     ],
   });

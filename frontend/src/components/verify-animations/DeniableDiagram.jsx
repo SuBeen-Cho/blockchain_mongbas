@@ -3,7 +3,7 @@ import { motion } from 'framer-motion';
 const spring = { type: 'spring', stiffness: 260, damping: 22 };
 
 const steps = [
-  { key: 'nullifier', label: 'Nullifier 생성', desc: 'voterSecret + 선거 ID로 고유 식별자를 생성합니다' },
+  { key: 'nullifier', label: 'Nullifier 생성', desc: '서명된 자격증명 결합값과 선거 범위로 중복방지 식별자를 생성합니다' },
   { key: 'proof', label: '비밀번호로 증명 요청', desc: '입력한 비밀번호에 따라 서로 다른 Merkle 경로가 반환됩니다' },
   { key: 'compute', label: 'Root 재계산', desc: '반환된 경로로 Root를 직접 계산합니다' },
   { key: 'compare', label: 'Root 비교 → 검증 성공', desc: '어떤 비밀번호든 "성공"으로 보이지만 내부 경로가 다릅니다' },

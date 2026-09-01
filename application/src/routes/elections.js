@@ -72,7 +72,7 @@ function computeMerkleLeafHashFromNullifier(n) {
 // ── GET /api/elections/:id/blinding-factor ─────────────────────
 // [CRIT-03 FIX] 선거별 블라인딩 팩터 조회 (누구나)
 // 유권자는 투표 전 반드시 호출하여 nullifier 계산에 사용합니다.
-// nullifierHash = SHA256(voterSecret + electionID + blindingFactor)
+// nullifierHash = SHA256(credential.nullifierMaterial + electionID + blindingFactor)
 router.get('/:id/blinding-factor', async (req, res) => {
   const { id } = req.params;
   const { gateway, contract } = await connectGateway();
@@ -295,9 +295,9 @@ router.post('/:id/seed-votes', async (req, res) => {
     for (let i = 0; i < count; i++) {
       const idx = dist && dist[i] != null ? dist[i] % cands.length : Math.floor(Math.random() * cands.length);
       const voterId = `demo${String((i % 100) + 1).padStart(3, '0')}`;
-      const cred = (await J('/api/credential/idemix', { method: 'POST', body: JSON.stringify({ enrollmentID: voterId, enrollmentSecret: `${voterId}pw`, electionID: id }) })).credential;
-      const vs = crypto.randomBytes(32).toString('hex');
-      const nh = crypto.createHash('sha256').update(vs + id + bf).digest('hex');
+      const issued = await J('/api/credential/idemix', { method: 'POST', body: JSON.stringify({ enrollmentID: voterId, enrollmentSecret: `${voterId}pw`, electionID: id }) });
+      const cred = issued.credential;
+      const nh = crypto.createHash('sha256').update(issued.nullifierMaterial + id + bf).digest('hex');
       const v = elgamalEncryptWithZKP(pub, idx, cands.length);
       await J('/api/vote', { method: 'POST', headers: { 'x-idemix-credential': cred }, body: JSON.stringify({ electionID: id, encryptedCandidateID: v.encrypted, nullifierHash: nh, ballotValidityProof: JSON.stringify(v.proof) }) });
       ok++; counts[cands[idx]] = (counts[cands[idx]] || 0) + 1;
@@ -476,7 +476,7 @@ router.get('/:id/merkle', async (req, res) => {
 
 // ── GET /api/elections/:id/proof/:nullifier ────────────────────
 // Merkle 포함 증명 조회 (유권자 자신의 투표 검증)
-// nullifier: SHA256(voterSecret + electionID) — 클라이언트가 계산
+// nullifier: 서명된 자격증명 결합값으로 클라이언트가 계산
 router.get('/:id/proof/:nullifier', async (req, res) => {
   const { id, nullifier } = req.params;
   const { gateway, contract } = await connectGateway();
@@ -510,7 +510,7 @@ router.get('/:id/proof/:nullifier', async (req, res) => {
 // Deniable Verification: 비밀번호로 Normal/Panic 모드 구분
 //
 // Body:
-//   nullifierHash : string — SHA256(voterSecret + electionID)
+//   nullifierHash : string — SHA256(nullifierMaterial + electionID + blindingFactor)
 //   passwordHash  : string — SHA256(password + nullifierHash)
 //                            클라이언트에서 계산 (서버에 평문 비밀번호 전달 금지)
 //
