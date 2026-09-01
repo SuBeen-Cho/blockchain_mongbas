@@ -576,6 +576,32 @@ router.post('/:id/shares', async (req, res) => {
   }
 });
 
+// ElGamal-v2 trustee operation. The chaincode reads the caller's private
+// scalar share and publishes only c1^x_i with a verifiable proof.
+router.post('/:id/partial-decryptions', async (req, res) => {
+  const { id } = req.params;
+  const { shareIndex } = req.body;
+  if (!['1', '2', '3'].includes(String(shareIndex))) {
+    return res.status(400).json({ error: 'shareIndex는 1, 2, 3 중 하나여야 합니다.' });
+  }
+  const { gateway, contract } = await connectGatewayForShareIndex(String(shareIndex));
+  try {
+    const proposal = contract.newProposal('SubmitPartialDecryption', {
+      arguments: [id, String(shareIndex)],
+    });
+    const tx = await proposal.endorse();
+    const submitted = await tx.submit();
+    const st = await submitted.getStatus();
+    if (!st.successful) throw new Error(`트랜잭션 커밋 실패 (code: ${st.code})`);
+    const result = await contract.evaluateTransaction('GetKeyDecryptionStatus', id);
+    res.json(JSON.parse(Buffer.from(result).toString('utf8')));
+  } catch (err) {
+    res.status(500).json({ error: sanitizeError(err) });
+  } finally {
+    gateway.close();
+  }
+});
+
 // ── GET /:id/decryption ───────────────────────────────────────
 // 키 분산/복원 현황 조회
 router.get('/:id/decryption', async (req, res) => {

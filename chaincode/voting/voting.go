@@ -978,6 +978,8 @@ func (c *VotingContract) CreateElection(
 	}
 
 	var elgamalPubKey *ElGamalPublicKey
+	var thresholdPublicShares []ThresholdPublicShare
+	var masterSeed []byte
 
 	// [P2 보안] AES 마스터 키 생성 — 비밀 seed(transient) 기반.
 	//   기존: 공개 txID 해시 → 원장을 읽는 누구나 키 재계산 가능(취약점).
@@ -987,6 +989,7 @@ func (c *VotingContract) CreateElection(
 	var ekRaw [32]byte
 	if tr, tErr := ctx.GetStub().GetTransient(); tErr == nil {
 		if ms, ok := tr["masterSeed"]; ok && len(ms) >= 16 {
+			masterSeed = append([]byte(nil), ms...)
 			ekRaw = sha256.Sum256(append([]byte("ENCRYPTION::"), ms...))
 		} else {
 			ekRaw = sha256.Sum256([]byte(fmt.Sprintf("ENCRYPTION_%s_%s", electionID, txID)))
@@ -1001,34 +1004,54 @@ func (c *VotingContract) CreateElection(
 	}
 
 	if encryptionMode == "elgamal" {
-		// [P2 보안] ElGamal 키를 AES 마스터키에 바인딩 → 동일 Shamir 흐름이 둘 다 보호.
-		//   keySeed = SHA256("ELGAMAL::" + aesKey). aesKey가 비밀이므로 ElGamal 키도 비밀.
-		//   2-of-3 복원으로 aesKey가 복구되면 동일 공식으로 ElGamal 키를 재유도(verifyKeyReconstruction).
-		privKey, pubKey := elgamalGenerateKeyPair(elgamalKeySeedFromAES(ekRaw[:]))
-		elgamalPubKey = pubKey
-
-		pkKey := "ELGAMAL_PRIVKEY_" + electionID
-		if pdcErr := ctx.GetStub().PutPrivateData(VotePrivatePDC, pkKey, []byte(privKey.Text(16))); pdcErr != nil {
-			return fmt.Errorf("ElGamal 비밀키 PDC 저장 실패: %w", pdcErr)
+		if len(masterSeed) < 16 {
+			return fmt.Errorf("ElGamal 선거는 transient masterSeed(16바이트 이상)가 필수입니다")
 		}
-		log.Printf("[CreateElection] ElGamal 키쌍 생성(AES 바인딩) 완료 — pubKey.Y: %s...", pubKey.Y[:16])
+		// Dealer-assisted 2-of-3 threshold key generation. The full secret exists
+		// only during endorsement and is never persisted. Trustees later publish
+		// verifiable partial decryptions, never their scalar shares.
+		privKey, pubKey := elgamalGenerateKeyPair(append([]byte("THRESHOLD-ELGAMAL::"), masterSeed...))
+		elgamalPubKey = pubKey
+		coeffHash := sha256.Sum256(append([]byte("THRESHOLD-COEFF::"), masterSeed...))
+		coefficient := new(big.Int).SetBytes(coeffHash[:])
+		coefficient.Mod(coefficient, elgamalQ)
+		if coefficient.Sign() == 0 {
+			coefficient.SetInt64(1)
+		}
+		shares, shareErr := deriveThresholdShares(privKey, coefficient, ShamirTotalShares)
+		if shareErr != nil {
+			return fmt.Errorf("ElGamal threshold share 생성 실패: %w", shareErr)
+		}
+		for i, share := range shares {
+			index := i + 1
+			shareKey := fmt.Sprintf("ELGAMAL_THRESHOLD_SHARE_%s_%d", electionID, index)
+			if pdcErr := ctx.GetStub().PutPrivateData(VotePrivatePDC, shareKey, []byte(share.Text(16))); pdcErr != nil {
+				return fmt.Errorf("ElGamal threshold share %d PDC 저장 실패: %w", index, pdcErr)
+			}
+			thresholdPublicShares = append(thresholdPublicShares, ThresholdPublicShare{
+				Index: index, MSPID: shareIndexMSP[strconv.Itoa(index)],
+				PublicKeyY: new(big.Int).Exp(elgamalG, share, elgamalP).Text(16),
+			})
+		}
+		log.Printf("[CreateElection] ElGamal 2-of-3 threshold 키 생성 완료 — pubKey.Y: %s...", pubKey.Y[:16])
 	} else {
 		log.Printf("[CreateElection] AES 암호화 키 생성 완료 — PDC key: %s, hex: %s...", ekKey, ekHexStr[:16])
 	}
 
 	election := Election{
-		ObjectType:     "election",
-		ElectionID:     electionID,
-		Title:          title,
-		Description:    description,
-		Candidates:     candidates,
-		StartTime:      startTime,
-		EndTime:        endTime,
-		Status:         "CREATED",
-		CreatedBy:      mspID,
-		BlindingFactor: blindingFactor,
-		EncryptionMode: encryptionMode,
-		ElGamalPubKey:  elgamalPubKey,
+		ObjectType:            "election",
+		ElectionID:            electionID,
+		Title:                 title,
+		Description:           description,
+		Candidates:            candidates,
+		StartTime:             startTime,
+		EndTime:               endTime,
+		Status:                "CREATED",
+		CreatedBy:             mspID,
+		BlindingFactor:        blindingFactor,
+		EncryptionMode:        encryptionMode,
+		ElGamalPubKey:         elgamalPubKey,
+		ThresholdPublicShares: thresholdPublicShares,
 	}
 
 	b, err := json.Marshal(election)
@@ -2559,6 +2582,32 @@ func (c *VotingContract) doInitKeySharing(
 	if existingBytes, _ := ctx.GetStub().GetState(statusKey); existingBytes != nil {
 		return nil, fmt.Errorf("이미 키 분산이 초기화된 선거입니다: %s", electionID)
 	}
+	election, err := c.GetElection(ctx, electionID)
+	if err != nil {
+		return nil, err
+	}
+	if election.EncryptionMode == "elgamal" && len(election.ThresholdPublicShares) == ShamirTotalShares {
+		now, timeErr := getTxTime(ctx)
+		if timeErr != nil {
+			return nil, timeErr
+		}
+		status := KeySharingStatus{
+			ObjectType: "keySharingStatus", ElectionID: electionID,
+			Threshold: ShamirThreshold, TotalShares: ShamirTotalShares,
+			SubmittedBy: []string{}, InitiatedAt: now, Mode: "partial-decryption-v2",
+		}
+		b, marshalErr := json.Marshal(status)
+		if marshalErr != nil {
+			return nil, marshalErr
+		}
+		if putErr := ctx.GetStub().PutState(statusKey, b); putErr != nil {
+			return nil, fmt.Errorf("threshold 상태 저장 실패: %w", putErr)
+		}
+		// AES is not used to decrypt ElGamal-v2 ballots. Delete it so no
+		// misleading alternate reconstruction path remains.
+		_ = ctx.GetStub().DelPrivateData(VotePrivatePDC, "ENCRYPTION_KEY_"+electionID)
+		return &status, nil
+	}
 
 	// [C-4 확장] PDC의 encryptionKey를 masterKey로 사용
 	// 이전: transient에서 외부 masterKey 수신
@@ -2677,6 +2726,9 @@ func (c *VotingContract) SubmitKeyShare(
 	if err := json.Unmarshal(statusBytes, &status); err != nil {
 		return nil, err
 	}
+	if status.Mode == "partial-decryption-v2" {
+		return nil, fmt.Errorf("ElGamal-v2는 비밀 share 제출을 금지합니다. SubmitPartialDecryption을 사용하세요")
+	}
 	if status.IsDecrypted {
 		return &status, nil
 	}
@@ -2746,6 +2798,172 @@ func (c *VotingContract) SubmitKeyShare(
 
 	log.Printf("[SubmitKeyShare] share %s 제출 완료 — election: %s, submitted: %d/%d, decrypted: %v",
 		shareIndex, electionID, status.SubmittedCount, status.Threshold, status.IsDecrypted)
+	return &status, nil
+}
+
+// SubmitPartialDecryption publishes c1^x_i plus a Chaum-Pedersen proof. The
+// trustee scalar x_i never leaves private state and the full election secret is
+// never reconstructed. This is dealer-assisted threshold ElGamal; replacing
+// the dealer/shared collection with DKG and per-organisation collections is a
+// separate hardening step.
+func (c *VotingContract) SubmitPartialDecryption(
+	ctx contractapi.TransactionContextInterface,
+	electionID string,
+	shareIndex string,
+) (*KeySharingStatus, error) {
+	if err := requireShareOwner(ctx, shareIndex); err != nil {
+		return nil, err
+	}
+	index, err := strconv.Atoi(shareIndex)
+	if err != nil {
+		return nil, fmt.Errorf("shareIndex 파싱 실패: %w", err)
+	}
+	election, err := c.GetElection(ctx, electionID)
+	if err != nil {
+		return nil, err
+	}
+	if election.EncryptionMode != "elgamal" || len(election.ThresholdPublicShares) != ShamirTotalShares {
+		return nil, fmt.Errorf("partial decryption-v2 선거가 아닙니다")
+	}
+	statusKey := "KEYSHARING_" + electionID
+	statusBytes, err := ctx.GetStub().GetState(statusKey)
+	if err != nil || statusBytes == nil {
+		return nil, fmt.Errorf("키 분산 상태가 없습니다")
+	}
+	var status KeySharingStatus
+	if err := json.Unmarshal(statusBytes, &status); err != nil {
+		return nil, err
+	}
+	if status.Mode != "partial-decryption-v2" {
+		return nil, fmt.Errorf("레거시 키 복원 선거에서는 partial decryption을 사용할 수 없습니다")
+	}
+	if status.IsDecrypted {
+		return &status, nil
+	}
+	for _, submitted := range status.SubmittedBy {
+		if submitted == shareIndex {
+			return nil, fmt.Errorf("이미 제출된 partial decryption 인덱스입니다: %s", shareIndex)
+		}
+	}
+
+	tallyKey := "TALLY_" + electionID
+	tallyBytes, err := ctx.GetStub().GetState(tallyKey)
+	if err != nil || tallyBytes == nil {
+		return nil, fmt.Errorf("복호화 대기 집계가 없습니다")
+	}
+	var tally VoteTally
+	if err := json.Unmarshal(tallyBytes, &tally); err != nil {
+		return nil, err
+	}
+	if tally.Decrypted || tally.EncAggC1 == "" || tally.EncAggC2 == "" {
+		return nil, fmt.Errorf("복호화 대기 암호문이 없습니다")
+	}
+	c1, ok := parseSubgroupElement(tally.EncAggC1)
+	if !ok {
+		return nil, fmt.Errorf("집계 c1 군 원소 검증 실패")
+	}
+	shareBytes, err := ctx.GetStub().GetPrivateData(
+		VotePrivatePDC, fmt.Sprintf("ELGAMAL_THRESHOLD_SHARE_%s_%d", electionID, index))
+	if err != nil || shareBytes == nil {
+		return nil, fmt.Errorf("threshold share %d 조회 실패", index)
+	}
+	share, ok := parseScalar(string(shareBytes))
+	if !ok || share.Sign() == 0 {
+		return nil, fmt.Errorf("threshold share %d 검증 실패", index)
+	}
+	publicShare := election.ThresholdPublicShares[index-1]
+	if publicShare.Index != index || publicShare.MSPID != shareIndexMSP[shareIndex] ||
+		new(big.Int).Exp(elgamalG, share, elgamalP).Text(16) != publicShare.PublicKeyY {
+		return nil, fmt.Errorf("threshold share %d 공개키 바인딩 검증 실패", index)
+	}
+	partialValue := new(big.Int).Exp(c1, share, elgamalP)
+	proof, err := chaumPedersenProveRaw(
+		share, tally.EncAggC1, partialValue.Text(16), "1",
+		fmt.Sprintf("threshold-partial:%d", index), electionID, "",
+	)
+	if err != nil {
+		return nil, fmt.Errorf("partial decryption 증명 생성 실패: %w", err)
+	}
+	partial := PartialDecryption{
+		Index: index, MSPID: publicShare.MSPID, PublicKeyY: publicShare.PublicKeyY,
+		Value: partialValue.Text(16), Proof: proof,
+	}
+	partialPub := &ElGamalPublicKey{P: elgamalP.Text(16), G: elgamalG.Text(16), Y: publicShare.PublicKeyY}
+	if !chaumPedersenVerifyRaw(partialPub, proof, big.NewInt(1)) {
+		return nil, fmt.Errorf("partial decryption %d 증명 자체 검증 실패", index)
+	}
+	partialBytes, _ := json.Marshal(partial)
+	if err := ctx.GetStub().PutState(fmt.Sprintf("PARTIAL_DECRYPTION_%s_%d", electionID, index), partialBytes); err != nil {
+		return nil, err
+	}
+	status.SubmittedBy = append(status.SubmittedBy, shareIndex)
+	status.SubmittedCount++
+	tally.PartialDecryptions = append(tally.PartialDecryptions, partial)
+
+	if status.SubmittedCount >= status.Threshold {
+		values := map[int]*big.Int{index: partialValue}
+		for _, submitted := range status.SubmittedBy {
+			i, _ := strconv.Atoi(submitted)
+			if i == index {
+				continue
+			}
+			b, getErr := ctx.GetStub().GetState(fmt.Sprintf("PARTIAL_DECRYPTION_%s_%d", electionID, i))
+			if getErr != nil || b == nil {
+				return nil, fmt.Errorf("partial decryption %d 조회 실패", i)
+			}
+			var prior PartialDecryption
+			if json.Unmarshal(b, &prior) != nil {
+				return nil, fmt.Errorf("partial decryption %d 파싱 실패", i)
+			}
+			v, valid := parseSubgroupElement(prior.Value)
+			if !valid {
+				return nil, fmt.Errorf("partial decryption %d 군 원소 검증 실패", i)
+			}
+			values[i] = v
+			if len(values) == status.Threshold {
+				break
+			}
+		}
+		combined, combineErr := combinePartialDecryptionValues(values)
+		if combineErr != nil {
+			return nil, combineErr
+		}
+		c2, valid := parseSubgroupElement(tally.EncAggC2)
+		if !valid {
+			return nil, fmt.Errorf("집계 c2 군 원소 검증 실패")
+		}
+		combinedInv := new(big.Int).ModInverse(combined, elgamalP)
+		if combinedInv == nil {
+			return nil, fmt.Errorf("결합 partial decryption 역원 계산 실패")
+		}
+		gSum := new(big.Int).Mul(c2, combinedInv)
+		gSum.Mod(gSum, elgamalP)
+		if err := validateHomomorphicTallyCapacity(tally.TotalVotes, len(election.Candidates)); err != nil {
+			return nil, err
+		}
+		maxSum := int64(tally.TotalVotes) + 1
+		for i := 0; i < len(election.Candidates)-1; i++ {
+			maxSum *= HomomorphicBase
+		}
+		sum, err := babyStepGiantStep(gSum, elgamalG, elgamalP, maxSum)
+		if err != nil {
+			return nil, fmt.Errorf("threshold 집계 BSGS 복원 실패: %w", err)
+		}
+		counts := decomposeBaseB(sum, len(election.Candidates))
+		for i, candidate := range election.Candidates {
+			tally.Results[candidate] = counts[i]
+		}
+		tally.Decrypted = true
+		status.IsDecrypted = true
+	}
+	tallyBytes, _ = json.Marshal(tally)
+	if err := ctx.GetStub().PutState(tallyKey, tallyBytes); err != nil {
+		return nil, err
+	}
+	statusBytes, _ = json.Marshal(status)
+	if err := ctx.GetStub().PutState(statusKey, statusBytes); err != nil {
+		return nil, err
+	}
 	return &status, nil
 }
 
@@ -2875,6 +3093,13 @@ func (c *VotingContract) GetKeyShare(
 	if err := requireShareOwner(ctx, shareIndex); err != nil {
 		return "", err
 	}
+	election, err := c.GetElection(ctx, electionID)
+	if err != nil {
+		return "", err
+	}
+	if election.EncryptionMode == "elgamal" && len(election.ThresholdPublicShares) > 0 {
+		return "", fmt.Errorf("ElGamal-v2는 비밀 share 조회를 금지합니다")
+	}
 
 	shareKey := fmt.Sprintf("KEYSHARE_%s_%s", electionID, shareIndex)
 	shareBytes, err := ctx.GetStub().GetPrivateData(VotePrivatePDC, shareKey)
@@ -2966,6 +3191,61 @@ func (c *VotingContract) VerifyElGamalProofs(
 	var tally VoteTally
 	if err := json.Unmarshal(tallyBytes, &tally); err != nil {
 		return "", fmt.Errorf("Tally 파싱 실패: %w", err)
+	}
+	if len(tally.PartialDecryptions) > 0 {
+		values := make(map[int]*big.Int)
+		publicValues := make(map[int]*big.Int)
+		failed := 0
+		for _, partial := range tally.PartialDecryptions {
+			if partial.Index < 1 || partial.Index > len(election.ThresholdPublicShares) || values[partial.Index] != nil {
+				failed++
+				continue
+			}
+			expected := election.ThresholdPublicShares[partial.Index-1]
+			value, valueOK := parseSubgroupElement(partial.Value)
+			y, yOK := parseSubgroupElement(partial.PublicKeyY)
+			pub := &ElGamalPublicKey{P: elgamalP.Text(16), G: elgamalG.Text(16), Y: partial.PublicKeyY}
+			if !valueOK || !yOK || partial.MSPID != expected.MSPID || partial.PublicKeyY != expected.PublicKeyY ||
+				!chaumPedersenVerifyRaw(pub, partial.Proof, big.NewInt(1)) {
+				failed++
+				continue
+			}
+			values[partial.Index] = value
+			publicValues[partial.Index] = y
+		}
+		valid := failed == 0 && len(values) >= ShamirThreshold && tally.Decrypted
+		if valid {
+			combined, combineErr := combinePartialDecryptionValues(values)
+			combinedPublic, publicErr := combinePartialDecryptionValues(publicValues)
+			c2, c2OK := parseSubgroupElement(tally.EncAggC2)
+			electionY, electionYOK := parseSubgroupElement(election.ElGamalPubKey.Y)
+			if combineErr != nil || publicErr != nil || !c2OK || !electionYOK || combinedPublic.Cmp(electionY) != 0 {
+				valid = false
+			} else {
+				sum := int64(0)
+				base := int64(1)
+				for _, candidate := range election.Candidates {
+					sum += int64(tally.Results[candidate]) * base
+					base *= HomomorphicBase
+				}
+				expectedGSum := new(big.Int).Exp(elgamalG, big.NewInt(sum), elgamalP)
+				combinedInv := new(big.Int).ModInverse(combined, elgamalP)
+				if combinedInv == nil {
+					valid = false
+				} else {
+					actualGSum := new(big.Int).Mul(c2, combinedInv)
+					actualGSum.Mod(actualGSum, elgamalP)
+					valid = actualGSum.Cmp(expectedGSum) == 0
+				}
+			}
+		}
+		result := map[string]interface{}{
+			"electionID": electionID, "encryptionMode": "elgamal-threshold-v2",
+			"totalProofs": len(tally.PartialDecryptions), "verified": len(values),
+			"failed": failed, "resultsMatch": valid, "originalResults": tally.Results, "isValid": valid,
+		}
+		resultJSON, _ := json.Marshal(result)
+		return string(resultJSON), nil
 	}
 
 	// 각 ZKP 검증

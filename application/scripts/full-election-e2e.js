@@ -657,16 +657,13 @@ async function main() {
     throw new Error('decryption proofs must not exist before threshold reconstruction');
   }
 
-  // 14g. 2-of-3 share 복원 후에만 결과와 복호화 증명이 생성되어야 함
+  // 14g. 2-of-3 verifiable partial decryptions. Raw scalar shares must never
+  // be returned by the API or published on the ledger.
   for (const idx of ['1', '2']) {
-    const shareResp = await assertOk(`get ElGamal share ${idx}`,
-      requestJson(`/api/elections/${EG_ELECTION_ID}/shares/${idx}`)
-    );
-    if (!shareResp.shareHex) throw new Error(`ElGamal share ${idx} is undefined or empty`);
-    await assertOk(`submit ElGamal share ${idx}`,
-      requestJson(`/api/elections/${EG_ELECTION_ID}/shares`, {
+    await assertOk(`submit ElGamal partial decryption ${idx}`,
+      requestJson(`/api/elections/${EG_ELECTION_ID}/partial-decryptions`, {
         method: 'POST',
-        body: JSON.stringify({ shareIndex: idx, shareHex: shareResp.shareHex }),
+        body: JSON.stringify({ shareIndex: idx }),
       })
     );
   }
@@ -674,7 +671,10 @@ async function main() {
     requestJson(`/api/elections/${EG_ELECTION_ID}/decryption`)
   );
   if (!egDecStatus.restored && !egDecStatus.isDecrypted) {
-    throw new Error(`ElGamal threshold reconstruction did not complete: ${JSON.stringify(egDecStatus)}`);
+    throw new Error(`ElGamal threshold partial decryption did not complete: ${JSON.stringify(egDecStatus)}`);
+  }
+  if (egDecStatus.mode !== 'partial-decryption-v2') {
+    throw new Error(`ElGamal must use partial-decryption-v2, got: ${JSON.stringify(egDecStatus)}`);
   }
 
   // 14h. 복원 후 동형 집계 결과 검증
@@ -692,6 +692,9 @@ async function main() {
 
   if (egTally.decrypted !== true) {
     throw new Error(`ElGamal tally must be marked decrypted after threshold reconstruction: ${JSON.stringify(egTally)}`);
+  }
+  if (egTally.partialDecryptions?.length !== 2 || egTally.partialDecryptions.some((p) => !p.value || !p.proof || p.shareHex)) {
+    throw new Error(`expected exactly two proof-carrying partial decryptions and no raw shares: ${JSON.stringify(egTally.partialDecryptions)}`);
   }
 
   // 14i. ZKP 검증 (동형 집계 증명)
