@@ -5,12 +5,13 @@ const crypto = require('crypto');
 const http = require('http');
 const path = require('path');
 require('dotenv').config({ path: path.join(__dirname, '../.env'), quiet: true });
-const { generateVectorBallot } = require('../src/lib/vectorElgamal');
+const { generateVectorBallot, verifyVectorAuditWitness } = require('../src/lib/vectorElgamal');
 
 const BASE = process.env.MONGBAS_PROBE_URL || 'http://127.0.0.1:3000';
 const ADMIN_API_TOKEN = process.env.ADMIN_API_TOKEN || '';
 const CANDIDATES = ['CANDIDATE_A', 'CANDIDATE_B', 'CANDIDATE_C'];
 const VOTES = Number(process.env.MONGBAS_PROBE_VOTES || 1);
+const AUDIT_BALLOTS = Number(process.env.MONGBAS_PROBE_AUDIT_BALLOTS || 0);
 
 function request(method, pathname, body, headers = {}, timeoutMs = 120000) {
   return new Promise((resolve) => {
@@ -54,6 +55,9 @@ async function retryPartial(electionID, shareIndex) {
 async function main() {
   if (!ADMIN_API_TOKEN) throw new Error('ADMIN_API_TOKEN is required');
   if (!Number.isSafeInteger(VOTES) || VOTES < 1 || VOTES > 100) throw new Error('MONGBAS_PROBE_VOTES must be an integer from 1 to 100');
+  if (!Number.isSafeInteger(AUDIT_BALLOTS) || AUDIT_BALLOTS < 0 || AUDIT_BALLOTS > 10) {
+    throw new Error('MONGBAS_PROBE_AUDIT_BALLOTS must be an integer from 0 to 10');
+  }
   requireStatus(await get('/health'), 'health');
   const electionID = `fault-probe-${Date.now()}`;
   const now = Math.floor(Date.now() / 1000);
@@ -84,6 +88,39 @@ async function main() {
     { 'x-idemix-credential': issued.credential }, 180000), `vote ${index + 1}`);
     expectedResults[CANDIDATES[candidateIndex]] += 1;
   }
+  for (let index = 0; index < AUDIT_BALLOTS; index += 1) {
+    const voterNumber = VOTES + index + 1;
+    const enrollmentID = `demo${String(voterNumber).padStart(3, '0')}`;
+    const issued = requireStatus(await post('/api/credential/idemix', {
+      enrollmentID, enrollmentSecret: `${enrollmentID}pw`, electionID,
+    }), `audit credential ${index + 1}`);
+    const nullifierHash = crypto.createHash('sha256').update(issued.nullifierMaterial + electionID + blinding).digest('hex');
+    const selectedIndex = index % CANDIDATES.length;
+    const ballot = generateVectorBallot(pubKey, selectedIndex, CANDIDATES.length);
+    if (!verifyVectorAuditWitness(pubKey, ballot.encryptedCandidateVector, ballot._auditWitness)) {
+      throw new Error(`local audit witness ${index + 1} failed`);
+    }
+    const clientNonce = crypto.randomBytes(32).toString('hex');
+    const headers = { 'x-idemix-credential': issued.credential };
+    const prepared = requireStatus(await post('/api/vote/prepare-vector', {
+      electionID,
+      nullifierHash,
+      clientNonceHash: crypto.createHash('sha256').update(clientNonce).digest('hex'),
+      encryptedCandidateVector: ballot.encryptedCandidateVector,
+      vectorBallotValidityProof: ballot.vectorBallotValidityProof,
+    }, headers, 180000), `audit prepare ${index + 1}`);
+    const disclosure = requireStatus(await post('/api/vote/audit-vector', {
+      electionID,
+      ballotID: prepared.ballotID,
+      nullifierHash,
+      selectedIndex,
+      clientNonce,
+      randomness: ballot._auditWitness.randomness,
+    }, headers, 180000), `audit disclose ${index + 1}`);
+    if (disclosure.status !== 'audited' || disclosure.selectedIndex !== selectedIndex) {
+      throw new Error(`audit disclosure ${index + 1} mismatch`);
+    }
+  }
   const close = await post(`/api/elections/${electionID}/close`, {}, {}, 300000);
   requireStatus(close, 'close/aggregate');
   const partial1 = await retryPartial(electionID, '1');
@@ -99,7 +136,8 @@ async function main() {
   }
   process.stdout.write(`${JSON.stringify({ success: true, electionID, closeMs: +close.ms.toFixed(1),
     tallyReadMs: +tallyResult.ms.toFixed(1), partialAttempts: [partial1.attempts, partial2.attempts],
-    totalVotes: tally.totalVotes, expectedResults, results: tally.results, vectorPartialDecryptionProofs: tally.vectorPartialDecryptions.length })}\n`);
+    totalVotes: tally.totalVotes, auditedBallots: AUDIT_BALLOTS, expectedResults, results: tally.results,
+    vectorPartialDecryptionProofs: tally.vectorPartialDecryptions.length })}\n`);
 }
 
 main().catch((error) => { process.stderr.write(`[fault-probe] ${error.message}\n`); process.exit(1); });
