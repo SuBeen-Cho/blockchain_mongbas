@@ -2594,7 +2594,8 @@ func (c *VotingContract) doInitKeySharing(
 		status := KeySharingStatus{
 			ObjectType: "keySharingStatus", ElectionID: electionID,
 			Threshold: ShamirThreshold, TotalShares: ShamirTotalShares,
-			SubmittedBy: []string{}, InitiatedAt: now, Mode: "partial-decryption-v2",
+			SubmittedBy: []string{}, ShareCommitments: []string{},
+			InitiatedAt: now, Mode: "partial-decryption-v2",
 		}
 		b, marshalErr := json.Marshal(status)
 		if marshalErr != nil {

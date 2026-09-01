@@ -258,6 +258,11 @@ cmd_deploy() {
   fi
 
   # ── CCAAS 패키지 생성 ─────────────────────────────────────────
+  # A CCAAS package contains connection metadata only. Rebuild the executable
+  # image so a lifecycle upgrade never restarts stale chaincode code.
+  step "[배포 0/7] 현재 소스로 CCAAS 이미지 재빌드..."
+  docker compose -f "${NETWORK_DIR}/docker-compose.yaml" build voting-chaincode
+
   step "[배포 1/7] CCAAS 패키지 생성..."
   CCAAS_PKG="/tmp/voting_ccaas_pkg"
   rm -rf "${CCAAS_PKG}" && mkdir -p "${CCAAS_PKG}"

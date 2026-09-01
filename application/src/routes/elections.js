@@ -596,6 +596,7 @@ router.post('/:id/partial-decryptions', async (req, res) => {
     const result = await contract.evaluateTransaction('GetKeyDecryptionStatus', id);
     res.json(JSON.parse(Buffer.from(result).toString('utf8')));
   } catch (err) {
+    console.error('[elections] SubmitPartialDecryption error:', err.message, err.details || '');
     res.status(500).json({ error: sanitizeError(err) });
   } finally {
     gateway.close();
