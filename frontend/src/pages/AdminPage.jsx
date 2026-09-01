@@ -182,10 +182,9 @@ export default function AdminPage() {
   const [newTitle,      setNewTitle]      = useState('');
   const [newDesc,       setNewDesc]       = useState('');
   const [newCandidates, setNewCandidates] = useState('');
-  const [newEncMode,    setNewEncMode]    = useState('aes');
+  const [newEncMode,    setNewEncMode]    = useState('elgamal-vector-v3');
   const [eid,           setEid]           = useState('');
   const [shareIdx,      setShareIdx]      = useState('1');
-  const [shareHex,      setShareHex]      = useState('');
 
   const endTime = Math.floor(Date.now() / 1000) + 60 * 60 * 24 * 7;
 
@@ -283,8 +282,10 @@ export default function AdminPage() {
             </div>
             <div className="bg-slate-50 rounded-lg p-4 text-center">
               <p className="text-sm font-bold text-slate-900 mt-1.5">
-                {electionInfo.encryptionMode === 'elgamal' ? (
-                  <span className="px-2 py-0.5 bg-purple-100 text-purple-700 rounded text-xs">ElGamal</span>
+                {electionInfo.encryptionMode === 'elgamal-vector-v3' ? (
+                  <span className="px-2 py-0.5 bg-purple-100 text-purple-700 rounded text-xs">Vector ElGamal v3</span>
+                ) : electionInfo.encryptionMode === 'elgamal' ? (
+                  <span className="px-2 py-0.5 bg-amber-100 text-amber-700 rounded text-xs">Legacy scalar ElGamal</span>
                 ) : (
                   <span className="px-2 py-0.5 bg-blue-100 text-blue-700 rounded text-xs">AES-256-GCM</span>
                 )}
@@ -339,18 +340,18 @@ export default function AdminPage() {
           <div className="space-y-2">
             <div className="flex items-center gap-3">
               <span className="text-xs font-medium text-slate-500">암호화:</span>
-              {['aes', 'elgamal'].map(m => (
+              {['elgamal-vector-v3', 'aes'].map(m => (
                 <button key={m} onClick={() => setNewEncMode(m)}
                   className={`px-3 py-1.5 rounded-lg border text-sm font-medium transition-all duration-200 ${
                     newEncMode === m ? 'border-blue-500 bg-blue-50 text-blue-700' : 'border-slate-200 text-slate-600 hover:border-blue-300'
                   }`}
-                >{m === 'aes' ? 'AES-256-GCM' : 'ElGamal'}</button>
+                >{m === 'aes' ? 'AES-256-GCM (legacy)' : 'Vector ElGamal v3'}</button>
               ))}
             </div>
             <p className="text-[11px] text-slate-400 px-1">
-              {newEncMode === 'elgamal'
-                ? 'ElGamal: 동형 암호화로 복호화 없이 집계 가능 + Chaum-Pedersen ZKP로 투표 유효성 증명. 권장.'
-                : 'AES: 대칭키 암호화. 집계 시 복호화 필요. ElGamal 대비 보안성 낮음.'}
+              {newEncMode === 'elgamal-vector-v3'
+                ? 'Vector ElGamal v3: 후보별 one-hot 암호문, ballot ZKP, 2-of-3 증명된 partial decryption을 사용합니다. 정식 검증 프로파일입니다.'
+                : 'AES는 레거시 비교·데모용이며 threshold ElGamal 보안성 평가 대상이 아닙니다.'}
             </p>
           </div>
           {err.create && <Alert variant="error">{err.create}</Alert>}
@@ -473,41 +474,29 @@ export default function AdminPage() {
 
       {/* ═══════ 6. Shamir SSS ═══════ */}
       <div ref={el => sectionRefs.current[5] = el}>
-        <Section title="Shamir SSS — 분산 개표 키 관리" number="6" open={openSection === 5} done={doneSections.has(5)} onToggle={() => toggleSection(5)}>
-          <p className="text-xs text-slate-500">masterKey를 3개 기관에 분산합니다. 2개 이상 제출 시 자동 복원.</p>
+        <Section title="2-of-3 threshold partial decryption" number="6" open={openSection === 5} done={doneSections.has(5)} onToggle={() => toggleSection(5)}>
+          <p className="text-xs text-slate-500">완전한 private key를 복원하지 않고, 기관별 partial decryption과 Chaum–Pedersen proof를 제출합니다.</p>
 
-          {/* 키 분산 초기화 */}
-          {err.initKey && <Alert variant="error">{err.initKey}</Alert>}
-          {res.initKey && <SuccessBanner>키 분산이 초기화되었습니다 — 각 기관의 Share를 조회하고 제출하세요.</SuccessBanner>}
-          <Btn loading={busy.initKey} onClick={run('initKey', () => apiPost(`${API}/elections/${eid}/keysharing`))}>키 분산 초기화</Btn>
-
-          {/* Share 조회 & 제출 */}
+          {/* 기관별 partial decryption 제출 */}
           <div className="bg-slate-50 rounded-lg p-4 space-y-3">
-            <p className="text-xs font-semibold text-slate-600">Share 조회 & 제출</p>
+            <p className="text-xs font-semibold text-slate-600">기관 partial decryption 제출</p>
             <div className="flex gap-2 items-center">
               <select className={`${INPUT} w-auto`} value={shareIdx} onChange={e => setShareIdx(e.target.value)}>
-                <option value="1">Share 1 (선관위)</option>
-                <option value="2">Share 2 (참관정당)</option>
-                <option value="3">Share 3 (시민단체)</option>
+                <option value="1">기관 1 (선관위)</option>
+                <option value="2">기관 2 (참관정당)</option>
+                <option value="3">기관 3 (시민단체)</option>
               </select>
-              <Btn variant="secondary" loading={busy.getShare} onClick={run('getShare', async () => {
-                const r = await apiGet(`${API}/elections/${eid}/shares/${shareIdx}`);
-                setShareHex(r.shareHex || ''); return r;
-              })}>조회</Btn>
-              <Btn variant="success" loading={busy.submitShare} onClick={run('submitShare', () => apiPost(`${API}/elections/${eid}/shares`, { shareIndex: shareIdx, shareHex }))}>제출</Btn>
+              <Btn variant="success" loading={busy.submitShare} onClick={run('submitShare', () => apiPost(`${API}/elections/${eid}/partial-decryptions`, { shareIndex: shareIdx }))}>증명 생성 + 제출</Btn>
             </div>
-            {shareHex && (
-              <input className={`w-full text-xs font-mono bg-white ${INPUT}`} readOnly value={shareHex} />
-            )}
             {err.submitShare && <Alert variant="error">{err.submitShare}</Alert>}
             {res.submitShare && (
               <div className="space-y-2">
-                <SuccessBanner>Share {shareIdx}이 제출되었습니다.</SuccessBanner>
+                <SuccessBanner>기관 {shareIdx}의 partial decryption과 proof가 제출되었습니다.</SuccessBanner>
                 <div className="flex items-center gap-3 text-xs text-slate-600">
                   <span>제출: <span className="font-bold">{res.submitShare.submittedCount || '?'}</span> / {res.submitShare.totalShares || 3}</span>
                   <span>Threshold: <span className="font-bold">{res.submitShare.threshold || 2}</span></span>
                   {res.submitShare.isDecrypted && (
-                    <span className="px-2 py-0.5 bg-emerald-100 text-emerald-700 rounded-full font-bold">키 복원 완료</span>
+                    <span className="px-2 py-0.5 bg-emerald-100 text-emerald-700 rounded-full font-bold">threshold 복호화 완료</span>
                   )}
                 </div>
               </div>
@@ -520,8 +509,8 @@ export default function AdminPage() {
             <div className="bg-slate-50 rounded-lg p-4 space-y-2">
               <div className="flex items-center gap-3">
                 <span className="text-sm font-medium text-slate-700">복원 상태:</span>
-                <span className={`px-2 py-0.5 rounded-full text-xs font-bold ${res.decStatus.restored ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>
-                  {res.decStatus.restored ? '복원 완료' : '대기 중'}
+                <span className={`px-2 py-0.5 rounded-full text-xs font-bold ${res.decStatus.isDecrypted ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>
+                  {res.decStatus.isDecrypted ? 'threshold 복호화 완료' : '대기 중'}
                 </span>
               </div>
               <div className="flex gap-4 text-sm text-slate-600">
