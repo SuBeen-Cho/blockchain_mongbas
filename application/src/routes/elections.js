@@ -139,13 +139,19 @@ router.post('/:id/verify-elgamal', async (req, res) => {
 });
 
 // ── GET /api/elections/security-properties ───────────────────
-// [PAPER-5] 시스템 보안 속성 요약 (감사 및 논문용)
+// 체인코드가 선언하는 기능 메타데이터. 독립 보안 증거가 아님.
 // 주의: /:id 라우트보다 먼저 정의해야 함 (Express 라우팅 우선순위)
 router.get('/security-properties', async (_req, res) => {
   const { gateway, contract } = await connectGateway();
   try {
     const result = await contract.evaluateTransaction('GetSecurityProperties');
-    res.json(JSON.parse(Buffer.from(result).toString('utf8')));
+    const properties = JSON.parse(Buffer.from(result).toString('utf8'));
+    res.json({
+      evidenceClass: 'self-declared-capabilities',
+      independentlyVerified: false,
+      warning: '이 응답은 체인코드의 자기 선언이며 7대 보안 속성의 독립 검증 증거가 아닙니다.',
+      properties,
+    });
   } catch (err) {
     console.error('[elections] GetSecurityProperties error:', err.message);
     res.status(500).json({ error: sanitizeError(err) });
@@ -262,6 +268,9 @@ router.get('/:id/demo-events', (req, res) => {
 // Body: { count: number, dist?: number[] }  dist 미지정 시 무작위 후보.
 // 내부 HTTP로 자격증명 발급 + /api/vote 경로를 그대로 재사용한다(DISABLE_RATE_LIMITS 권장).
 router.post('/:id/seed-votes', async (req, res) => {
+  if (process.env.ENABLE_DEMO_ENDPOINTS !== 'true') {
+    return res.status(404).json({ error: '사용할 수 없는 엔드포인트입니다.' });
+  }
   const { id } = req.params;
   const count = Math.min(Math.max(parseInt(req.body.count, 10) || 5, 1), 50);
   const dist = Array.isArray(req.body.dist) ? req.body.dist : null;
@@ -296,7 +305,7 @@ router.post('/:id/seed-votes', async (req, res) => {
     res.json({ message: `${ok}표 자동 주입 완료`, injected: ok, breakdown: counts });
   } catch (err) {
     console.error('[seed-votes]', err.message);
-    res.status(500).json({ error: '투표 자동 주입에 실패했습니다.', debug: err.message });
+    res.status(500).json({ error: '투표 자동 주입에 실패했습니다.' });
   }
 });
 

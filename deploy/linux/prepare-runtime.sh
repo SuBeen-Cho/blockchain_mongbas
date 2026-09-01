@@ -8,16 +8,24 @@ if [ ! -f "${MONGBAS_ENV_FILE}" ]; then
   install -m 0600 "${MONGBAS_REPO_DIR}/application/.env.example" "${MONGBAS_ENV_FILE}"
   session_secret="$(openssl rand -base64 48)"
   credential_secret="$(openssl rand -base64 48)"
+  admin_api_token="$(openssl rand -base64 48)"
   sed -i \
     -e "s|^SESSION_SECRET=.*|SESSION_SECRET=${session_secret}|" \
     -e "s|^# *SESSION_SECRET=.*|SESSION_SECRET=${session_secret}|" \
     -e "s|^CREDENTIAL_SECRET=.*|CREDENTIAL_SECRET=${credential_secret}|" \
     -e "s|^# *CREDENTIAL_SECRET=.*|CREDENTIAL_SECRET=${credential_secret}|" \
+    -e "s|^# *ADMIN_API_TOKEN=.*|ADMIN_API_TOKEN=${admin_api_token}|" \
     "${MONGBAS_ENV_FILE}"
-  unset session_secret credential_secret
-  log "created secret template with generated session/credential secrets"
+  unset session_secret credential_secret admin_api_token
+  log "created secret template with generated session/credential/admin secrets"
 else
   chmod 0600 "${MONGBAS_ENV_FILE}"
+  if ! grep -q '^ADMIN_API_TOKEN=' "${MONGBAS_ENV_FILE}"; then
+    admin_api_token="$(openssl rand -base64 48)"
+    printf '\nADMIN_API_TOKEN=%s\n' "${admin_api_token}" >> "${MONGBAS_ENV_FILE}"
+    unset admin_api_token
+    log "added a generated admin API token to the existing secret env"
+  fi
   log "preserved existing secret env"
 fi
 

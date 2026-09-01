@@ -3,11 +3,14 @@
 'use strict';
 
 const crypto = require('crypto');
+const path = require('path');
+require('dotenv').config({ path: path.join(__dirname, '../.env') });
 const { generateVectorBallot } = require('../src/lib/vectorElgamal');
 
 const BASE_URL = (process.env.E2E_BASE_URL || 'http://localhost:3000').replace(/\/$/, '');
 const ELECTION_ID = process.env.E2E_ELECTION_ID || `full-e2e-${Date.now()}`;
 const CANDIDATES = ['CANDIDATE_A', 'CANDIDATE_B', 'CANDIDATE_C'];
+const ADMIN_API_TOKEN = process.env.ADMIN_API_TOKEN || '';
 
 function sha256Hex(input) {
   return crypto.createHash('sha256').update(input).digest('hex');
@@ -16,7 +19,11 @@ function sha256Hex(input) {
 async function requestJson(path, options = {}) {
   const res = await fetch(`${BASE_URL}${path}`, {
     ...options,
-    headers: { 'content-type': 'application/json', ...(options.headers || {}) },
+    headers: {
+      'content-type': 'application/json',
+      ...(ADMIN_API_TOKEN ? { authorization: `Bearer ${ADMIN_API_TOKEN}` } : {}),
+      ...(options.headers || {}),
+    },
   });
   const text = await res.text();
   let body = null;
@@ -94,6 +101,7 @@ function computeLocalRoot(leafHash, proofPath) {
 }
 
 async function main() {
+  if (!ADMIN_API_TOKEN) throw new Error('ADMIN_API_TOKEN is required for election administration E2E');
   console.log('═══════════════════════════════════════════════════');
   console.log(' Full Election E2E Integration Test');
   console.log('═══════════════════════════════════════════════════');
@@ -385,17 +393,22 @@ async function main() {
   // ── Phase 11: Security Properties (PAPER-5) ─────────────────
   console.log('\n── Phase 11: Security Properties ──');
   const secProps = await assertOk('security properties', requestJson('/api/elections/security-properties'));
-  const achieved = [
-    secProps.ballotSecrecy,
-    secProps.castAsIntended,
-    secProps.recordedAsCast,
-    secProps.talliedAsRecorded,
-    secProps.eligibilityVerify,
+  if (secProps.evidenceClass !== 'self-declared-capabilities' || secProps.independentlyVerified !== false) {
+    throw new Error('security-properties endpoint must identify itself as non-independent metadata');
+  }
+  const declared = secProps.properties;
+  const declaredAchieved = [
+    declared.ballotSecrecy,
+    declared.castAsIntended,
+    declared.recordedAsCast,
+    declared.talliedAsRecorded,
+    declared.eligibilityVerify,
   ].filter(p => p.status === 'achieved').length;
-  const partial = secProps.coercionResistance.status === 'partial' ? 1 : 0;
-  console.log(`[INFO] Security properties: ${achieved} achieved, ${partial} partial`);
-  console.log(`[INFO] Crypto: ${secProps.cryptoPrimitives.join(', ')}`);
-  console.log(`[INFO] Endorsement: ${secProps.endorsementPolicy}`);
+  const declaredPartial = declared.coercionResistance.status === 'partial' ? 1 : 0;
+  console.log(`[INFO] Self-declared capability metadata only: ${declaredAchieved} achieved labels, ${declaredPartial} partial label`);
+  console.log('[INFO] This phase is not independent evidence for any of the seven security properties.');
+  console.log(`[INFO] Crypto: ${declared.cryptoPrimitives.join(', ')}`);
+  console.log(`[INFO] Endorsement: ${declared.endorsementPolicy}`);
 
   // ── Phase 12: Universal Verifiability (PAPER-6) ────────────
   console.log('\n── Phase 12: Universal Verifiability ──');
@@ -849,7 +862,7 @@ async function main() {
   console.log(`  Benaloh:      audit verified=${benalohVerified} (cast-as-intended)`);
   console.log(`  Universal:    public verify=${universalVerified} (PAPER-6)`);
   console.log(`  ReceiptFree:  ${receiptFreeOk} (PAPER-8)`);
-  console.log(`  Security:     ${achieved}/5 achieved, ${partial}/1 partial`);
+  console.log('  Security:     self-declared metadata inspected (not a 7/7 verification)');
   console.log(`  ElGamal ZKP:  ${elgamalZkpOk} (Chaum-Pedersen, PAPER-11)`);
   console.log(`  Coercion:     panic_filter=${panicFilterOk} (Deniable Credential Duality, PAPER-12)`);
   console.log('═══════════════════════════════════════════════════');

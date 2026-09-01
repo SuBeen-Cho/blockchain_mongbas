@@ -29,11 +29,13 @@ const electionsRouter              = require('./routes/elections');
 const voteRouter                   = require('./routes/vote');
 const { router: credentialRouter } = require('./routes/credential');
 const { requireVoterAuth, measureAuthLatency, idemixStatus } = require('./middleware/auth');
+const { guardElectionAdminRoutes, validateAdminConfiguration } = require('./middleware/admin');
 
 const app  = express();
 const PORT = process.env.PORT || 3000;
 const DISABLE_RATE_LIMITS = process.env.DISABLE_RATE_LIMITS === 'true';
 const noRateLimit = (_req, _res, next) => next();
+validateAdminConfiguration();
 
 // ── 운영 환경 필수 환경변수 검증 ──────────────────────────────────
 if (process.env.NODE_ENV === 'production') {
@@ -120,7 +122,7 @@ const credentialLimiter = rateLimit({
 });
 
 // ── 라우터 ──────────────────────────────────────────────────────
-app.use('/api/elections',  electionsRouter);
+app.use('/api/elections', guardElectionAdminRoutes, electionsRouter);
 app.use('/api/nullifier',  voteRouter);
 app.use('/api/credential', DISABLE_RATE_LIMITS ? noRateLimit : credentialLimiter, credentialRouter);    // Idemix 자격증명 발급
 app.use('/api/vote',       DISABLE_RATE_LIMITS ? noRateLimit : voteLimiter, requireVoterAuth, voteRouter); // Idemix 인증 미들웨어 적용

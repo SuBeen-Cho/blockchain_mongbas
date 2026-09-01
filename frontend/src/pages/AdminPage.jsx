@@ -9,11 +9,15 @@ import { useState, useRef, useEffect, useCallback } from 'react';
 import Alert from '../components/Alert.jsx';
 
 const API = '/api';
+let activeAdminToken = '';
 
 async function apiPost(url, body) {
   const res = await fetch(url, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+      'Content-Type': 'application/json',
+      ...(activeAdminToken ? { Authorization: `Bearer ${activeAdminToken}` } : {}),
+    },
     body: body ? JSON.stringify(body) : undefined,
   });
   const data = await res.json();
@@ -127,6 +131,7 @@ function SuccessBanner({ children }) {
 const INPUT = "h-10 px-3 border border-slate-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none transition-colors duration-200";
 
 export default function AdminPage() {
+  const [adminToken, setAdminToken] = useState('');
   const [busy, setBusy] = useState({});
   const [res,  setRes]  = useState({});
   const [err,  setErr]  = useState({});
@@ -212,6 +217,19 @@ export default function AdminPage() {
         <p className="text-sm text-slate-500 mt-1">각 단계를 완료하면 다음 단계가 자동으로 열립니다.</p>
       </div>
 
+      <div className="bg-amber-50 rounded-xl border border-amber-200 p-4 space-y-2">
+        <label className="block text-sm font-semibold text-amber-900">관리자 API 토큰</label>
+        <input
+          type="password"
+          autoComplete="off"
+          className={`w-full font-mono ${INPUT}`}
+          value={adminToken}
+          onChange={(e) => { activeAdminToken = e.target.value; setAdminToken(e.target.value); }}
+          placeholder="Linux runtime의 ADMIN_API_TOKEN을 입력하세요"
+        />
+        <p className="text-xs text-amber-800">토큰은 이 페이지의 메모리에만 유지되며 localStorage·URL·Git에 저장되지 않습니다.</p>
+      </div>
+
       {/* 선거 ID 입력 + 상태 조회 */}
       <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6 space-y-4">
         <label className="block text-sm font-medium text-slate-700">선거 ID (모든 작업에 공통)</label>
@@ -274,8 +292,8 @@ export default function AdminPage() {
               <p className="text-xs text-slate-500 mt-2">암호화 모드</p>
             </div>
             <div className="bg-slate-50 rounded-lg p-4 text-center">
-              <p className="text-2xl font-bold text-emerald-600">7/7</p>
-              <p className="text-xs text-slate-500 mt-1">보안 속성</p>
+              <p className="text-sm font-bold text-amber-600 mt-1.5">독립 검증 진행 중</p>
+              <p className="text-xs text-slate-500 mt-2">7대 보안 속성</p>
             </div>
           </div>
         )}
@@ -546,27 +564,27 @@ export default function AdminPage() {
       {/* ═══════ 8. 보안 속성 ═══════ */}
       <div ref={el => sectionRefs.current[7] = el}>
         <Section title="Security Properties (보안 속성 진단)" number="8" open={openSection === 7} done={doneSections.has(7)} onToggle={() => toggleSection(7)}>
-          <p className="text-xs text-slate-500">체인코드에서 자가 진단한 7가지 보안 속성 현황입니다.</p>
+          <Alert variant="warning">이 화면은 체인코드가 선언한 기능 메타데이터만 보여줍니다. 7대 보안 속성의 독립 검증이나 7/7 달성 증거로 사용할 수 없습니다.</Alert>
           {err.secProps && <Alert variant="error">{err.secProps}</Alert>}
           {res.secProps && (
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              {Object.entries(res.secProps).filter(([k]) =>
+              {Object.entries(res.secProps.properties || {}).filter(([k]) =>
                 !['electionID', 'verifiedAt', 'docType'].includes(k)
               ).map(([key, prop]) => {
                 if (!prop || typeof prop !== 'object') return null;
                 return (
                   <div key={key} className={`rounded-lg border p-3 ${
-                    prop.status === 'ACHIEVED' ? 'bg-emerald-50 border-emerald-200' :
+                    prop.status === 'ACHIEVED' ? 'bg-blue-50 border-blue-200' :
                     prop.status === 'PARTIAL'  ? 'bg-amber-50 border-amber-200' :
                     'bg-slate-50 border-slate-200'
                   }`}>
                     <div className="flex justify-between items-start mb-1.5">
                       <span className="text-sm font-semibold text-slate-800">{key}</span>
                       <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
-                        prop.status === 'ACHIEVED' ? 'bg-emerald-200 text-emerald-800' :
+                        prop.status === 'ACHIEVED' ? 'bg-blue-200 text-blue-800' :
                         prop.status === 'PARTIAL'  ? 'bg-amber-200 text-amber-800' :
                         'bg-slate-200 text-slate-600'
-                      }`}>{prop.status}</span>
+                      }`}>선언: {prop.status}</span>
                     </div>
                     <p className="text-xs text-slate-600 leading-relaxed">{prop.mechanism}</p>
                     {prop.assumption && <p className="text-[11px] text-slate-400 mt-1">assumption: {prop.assumption}</p>}

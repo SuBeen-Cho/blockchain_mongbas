@@ -4,6 +4,7 @@
   "description": "다조직 합의 익명 전자투표 블록체인 REST API 서버",
   "main": "src/app.js",
   "scripts": {
+    "test": "node --test test/*.test.js",
     "start": "node src/app.js",
     "dev": "nodemon src/app.js",
     "keys:ed25519": "node scripts/generate-ed25519-env.js",

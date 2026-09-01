@@ -15,6 +15,7 @@ const API = '/api';
 const CANDIDATES = ['치킨', '피자', '떡볶이'];
 // [부스 시연] Firebase 릴레이 — 새 세션의 키오스크 URL을 여기에 기록하면 쇼케이스 QR이 자동 동기화됨
 const FB_KIOSK = 'https://mongbas-blockchain-vote-default-rtdb.firebaseio.com/kioskUrl.json';
+let activeControlAdminToken = '';
 
 const T = {
   font: '"Pretendard Variable",Pretendard,-apple-system,system-ui,"Apple SD Gothic Neo","Malgun Gothic",sans-serif',
@@ -25,7 +26,11 @@ const tr = (s, n = 10) => (s ? `${s.slice(0, n)}…${s.slice(-4)}` : '—');
 
 async function J(path, opts = {}) {
   const { headers, ...rest } = opts;
-  const r = await fetch(API + path, { headers: { 'Content-Type': 'application/json', ...(headers || {}) }, ...rest });
+  const r = await fetch(API + path, { headers: {
+    'Content-Type': 'application/json',
+    ...(activeControlAdminToken ? { Authorization: `Bearer ${activeControlAdminToken}` } : {}),
+    ...(headers || {}),
+  }, ...rest });
   const t = await r.text(); let j; try { j = JSON.parse(t); } catch { j = {}; }
   if (!r.ok) throw new Error(j.error || `${path} ${r.status}`);
   return j;
@@ -71,6 +76,7 @@ function computeTallyMath(pubKey, ballots, results, candidates) {
 }
 
 export default function ControlPage() {
+  const [adminToken, setAdminToken] = useState('');
   const [eid, setEid] = useState(null);
   const [status, setStatus] = useState('-');
   const [view, setView] = useState('session');     // session | tally | verify
@@ -245,6 +251,15 @@ export default function ControlPage() {
         <Nav label="검증" sub="Merkle 봉인" active={view === 'verify'} onClick={() => setView('verify')} />
         <div style={{ height: 1, background: T.line, margin: '14px 0' }} />
         <div style={{ fontSize: 11, fontWeight: 900, letterSpacing: '0.14em', color: T.sub, marginBottom: 6 }}>세션 제어</div>
+        <input
+          type="password"
+          autoComplete="off"
+          aria-label="관리자 API 토큰"
+          placeholder="관리자 토큰"
+          value={adminToken}
+          onChange={(e) => { activeControlAdminToken = e.target.value; setAdminToken(e.target.value); }}
+          style={{ width: '100%', boxSizing: 'border-box', border: `1px solid ${T.line}`, borderRadius: 8, padding: '9px 10px', fontSize: 12, marginBottom: 6 }}
+        />
         <SBtn onClick={newSession} disabled={dis} solid>＋ 새 세션 시작</SBtn>
         <div style={{ fontSize: 11, fontWeight: 800, color: T.sub, margin: '10px 0 2px' }}>커스텀 투표 주입 (후보별)</div>
         {CANDIDATES.map((c, i) => {

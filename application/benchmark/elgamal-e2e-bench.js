@@ -28,6 +28,7 @@ const crypto = require('crypto');
 const fs = require('fs');
 const http = require('http');
 const path = require('path');
+require('dotenv').config({ path: path.join(__dirname, '../.env') });
 const { generateVectorBallot } = require('../src/lib/vectorElgamal');
 
 // ── CLI 인자 ────────────────────────────────────────────────────
@@ -43,6 +44,7 @@ const CANDIDATES = ['CANDIDATE_A', 'CANDIDATE_B', 'CANDIDATE_C'];
 const MAX_BSGS_SEARCH = 4000000000n;
 const TIMESTAMP = new Date().toISOString().replace(/[:.]/g, '').slice(0, 15);
 const OUT = args.out || path.join(__dirname, `../benchmark-reports/elgamal-e2e-${TIMESTAMP}.json`);
+const ADMIN_API_TOKEN = process.env.ADMIN_API_TOKEN || '';
 
 // ── HTTP 헬퍼 ───────────────────────────────────────────────────
 function rawRequest(method, urlPath, body = null, headers = {}, timeoutMs = 60000) {
@@ -57,6 +59,7 @@ function rawRequest(method, urlPath, body = null, headers = {}, timeoutMs = 6000
       method,
       headers: {
         ...(payload ? { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload) } : {}),
+        ...(ADMIN_API_TOKEN ? { Authorization: `Bearer ${ADMIN_API_TOKEN}` } : {}),
         ...headers,
       },
     }, res => {
@@ -344,6 +347,7 @@ async function measureTally(electionID, expectedResults) {
 
 // ── 메인 ────────────────────────────────────────────────────────
 async function main() {
+  if (!ADMIN_API_TOKEN) throw new Error('ADMIN_API_TOKEN is required for election administration benchmark');
   console.log('═══════════════════════════════════════════════════');
 
   console.log(' ElGamal E2E Benchmark');

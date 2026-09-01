@@ -93,21 +93,19 @@
 
 ---
 
-## 보안 속성
+## 보안 속성 검증 상태
 
-학술 전자투표 보안 프레임워크 기준 **7개 속성 모두 달성**:
+이 프로젝트는 7대 전자투표 보안 속성을 목표로 개발 중이지만, 현재 **7/7이 독립적으로 완전 검증되었다고 주장하지 않습니다.** `GetSecurityProperties`는 구현 기능을 나열하는 자기 선언일 뿐 보안 증명이 아닙니다.
 
-| 속성 | 달성 | 메커니즘 | 설명 |
-|------|:----:|----------|------|
-| **Ballot Secrecy** | **O** | DDH assumption (Exponential ElGamal) | 유권자의 후보 선택이 공개되어서는 안 된다 |
-| **Cast-as-Intended** | **O** | Benaloh Challenge | 시스템이 유권자의 의도를 정확히 암호화하였음을 검증할 수 있어야 한다 |
-| **Recorded-as-Cast** | **O** | Merkle Proof | 제출된 투표가 원장에 올바르게 포함되었음을 확인할 수 있어야 한다 |
-| **Tallied-as-Recorded** | **O** | Homomorphic ZKP (Chaum-Pedersen) | 투표가 최종 결과에 정확히 반영되었음을 제3자가 독립적으로 검증할 수 있어야 한다 |
-| **Universal Verifiability** | **O** | Homomorphic ZKP + Bulletin Board | 투표 과정의 정당성을 누구나 공개적으로 검증할 수 있어야 한다 |
-| **Eligibility Verifiability** | **O** | HMAC / Ed25519 chaincode verification | 선거에 참여한 모든 유권자가 적절한 자격을 갖추었는지 검증 가능해야 한다 |
-| **Coercion Resistance** | **O** | Panic Credential + Re-voting + Panic Password + Receipt-Free | 강압자가 유권자에게 특정 후보에 대한 투표를 강요하더라도, 유권자가 이를 실질적으로 거부할 수 있어야 한다 |
-
-> 보안 증명: BPRIV game-based proof (DDH reduction sketch for ballot privacy)
+| 속성 | 현재 구현·증거 | 주요 미해결 조건 |
+|---|---|---|
+| Ballot secrecy | vector ElGamal, threshold partial decryption, ballot proof | dealerless DKG, metadata privacy game, key deletion |
+| Cast-as-intended | audit-or-cast 기능 및 E2E 테스트 | 엄격한 상태기계·독립 audit 증거 |
+| Recorded-as-cast | Merkle inclusion 검증 | 서명된 checkpoint, omission/fork witness |
+| Tallied-as-recorded | 후보별 동형 집계, 2-of-3 partial proof, tamper tests | 더 넓은 공모·장애 평가 |
+| Universal verifiability | standalone bundle verifier와 tamper corpus | 외부 witness/checkpoint와 다른 운영 주체 검증 |
+| Eligibility | election-bound credential 검증 | 실제 등록부, credential-bound nullifier, revocation |
+| Coercion resistance | panic/revote 실험 메커니즘 | 강압자 모델, 패턴·타이밍·네트워크 사이드채널 공격 평가 |
 
 ---
 
@@ -124,11 +122,11 @@
   </tr>
   <tr>
     <td align="center"><strong>검증자 — E2E 검증</strong></td>
-    <td align="center"><strong>보안 속성 — 7/7 달성</strong></td>
+    <td align="center"><strong>보안 속성 — 구현 현황(독립 검증 진행 중)</strong></td>
   </tr>
   <tr>
     <td><img src="./docs/images/screenshot_verify.png" width="400" alt="E2E 검증 화면"></td>
-    <td><img src="./docs/images/screenshot_security.png" width="400" alt="보안 속성 7가지 달성"></td>
+    <td><img src="./docs/images/screenshot_security.png" width="400" alt="보안 속성 구현 현황 화면"></td>
   </tr>
 </table>
 
