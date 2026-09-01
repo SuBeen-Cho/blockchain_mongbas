@@ -18,9 +18,14 @@ git -C "${MONGBAS_REPO_DIR}" rev-parse HEAD >"${out}/git-commit.txt"
 
 generate_sbom() {
   local label="$1" directory="$2"
-  (cd "${directory}" && npm sbom --package-lock-only --omit=optional --sbom-format cyclonedx) >"${out}/sbom/${label}.cdx.json"
+  # This inventory describes the production dependency set. npm's full
+  # application graph currently emits an invalid duplicate bom-ref for the
+  # dev-only nodemon copy of ms and the runtime send copy. Build/dev tooling
+  # is intentionally a separate future inventory rather than silently
+  # weakening the unique-reference validator.
+  (cd "${directory}" && npm sbom --package-lock-only --omit=dev --omit=optional --sbom-format cyclonedx) >"${out}/sbom/${label}.cdx.json"
   set +e
-  (cd "${directory}" && npm audit --omit=optional --json) >"${out}/audit/${label}.json"
+  (cd "${directory}" && npm audit --omit=dev --omit=optional --json) >"${out}/audit/${label}.json"
   local audit_status=$?
   set -e
   printf '%s\n' "${audit_status}" >"${out}/audit/${label}.exit-status.txt"
