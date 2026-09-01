@@ -8,6 +8,17 @@ npm test
 node bin/mongbas-verify.js path/to/canonical-election-bundle.json
 ```
 
+To build and sign an exported source without sending private keys to the server:
+
+```bash
+node bin/mongbas-bundle.js build election-bundle-source.json election-bundle.json
+node bin/mongbas-bundle.js sign election-bundle.json ec /secure/ec-ed25519.pem election-bundle.ec.json
+node bin/mongbas-bundle.js sign election-bundle.ec.json civil /secure/civil-ed25519.pem election-bundle.signed.json
+node bin/mongbas-verify.js election-bundle.signed.json
+```
+
+The builder writes files with mode `0600`. Signing verifies that the private key matches the organization's public key declared in the bundle. Private keys are read locally and never included in output.
+
 The process exits `0` only when every implemented check passes, `1` for an invalid bundle, and `2` for incorrect CLI usage.
 
 ## Implemented checks

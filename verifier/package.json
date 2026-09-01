@@ -5,7 +5,8 @@
   "description": "Standalone verifier for canonical Mongbas election bundles",
   "type": "commonjs",
   "bin": {
-    "mongbas-verify": "bin/mongbas-verify.js"
+    "mongbas-verify": "bin/mongbas-verify.js",
+    "mongbas-bundle": "bin/mongbas-bundle.js"
   },
   "scripts": {
     "test": "node --test"

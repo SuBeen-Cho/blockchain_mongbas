@@ -647,6 +647,73 @@ router.get('/:id/bulletin-board', requireValidElectionID, async (req, res) => {
   }
 });
 
+// ── GET /:id/election-bundle-source ─────────────────────────────
+// Standalone verifier용 bundle의 공개 source. 서명 private key는 API로 받지 않고
+// verifier/bin/mongbas-bundle.js로 각 기관이 offline 서명한다.
+router.get('/:id/election-bundle-source', requireValidElectionID, async (req, res) => {
+  let organizations;
+  try {
+    organizations = JSON.parse(process.env.BUNDLE_ORGANIZATIONS_JSON || '[]');
+  } catch {
+    return res.status(503).json({ error: 'BUNDLE_ORGANIZATIONS_JSON이 유효한 JSON이 아닙니다.' });
+  }
+  const signatureThreshold = Number(process.env.BUNDLE_SIGNATURE_THRESHOLD || 0);
+  const gitCommit = process.env.MONGBAS_GIT_COMMIT;
+  const imageDigest = process.env.MONGBAS_IMAGE_DIGEST;
+  const softwareVersion = process.env.MONGBAS_SOFTWARE_VERSION;
+  if (!Array.isArray(organizations) || organizations.length === 0 ||
+      !Number.isSafeInteger(signatureThreshold) || signatureThreshold < 1 || signatureThreshold > organizations.length) {
+    return res.status(503).json({ error: 'bundle 조직 공개키/서명 threshold 설정이 없거나 잘못되었습니다.' });
+  }
+  if (!/^[0-9a-f]{40}$/.test(gitCommit || '') || !/^sha256:[0-9a-f]{64}$/.test(imageDigest || '') || !softwareVersion) {
+    return res.status(503).json({ error: 'MONGBAS_GIT_COMMIT, MONGBAS_IMAGE_DIGEST, MONGBAS_SOFTWARE_VERSION을 정확히 설정해야 합니다.' });
+  }
+  const { id } = req.params;
+  const { gateway, contract } = await connectGateway();
+  try {
+    const [electionRaw, boardRaw] = await Promise.all([
+      contract.evaluateTransaction('GetElection', id),
+      contract.evaluateTransaction('GetBulletinBoard', id),
+    ]);
+    const election = JSON.parse(Buffer.from(electionRaw).toString('utf8'));
+    const board = JSON.parse(Buffer.from(boardRaw).toString('utf8'));
+    if (board.encryptionMode !== 'elgamal' || !board.elgamalPubKey) {
+      return res.status(409).json({ error: 'bundle v1은 ElGamal 선거만 지원합니다.' });
+    }
+    const ballots = (board.encryptedBallots || []).filter((ballot) => ballot.encryptedCandidateID);
+    if (ballots.length !== board.totalVotes) {
+      return res.status(409).json({
+        error: '게시 ballot 수와 유효 집계 표수가 달라 독립 bundle을 만들 수 없습니다.',
+        reason: 'panic/dummy filtering과 universal verifiability를 동시에 충족하는 padding/filtering proof가 필요합니다.',
+      });
+    }
+    if (ballots.some((ballot) => !ballot.ballotValidityProof)) {
+      return res.status(409).json({ error: 'ballot validity proof가 누락된 레거시 투표가 있어 bundle을 만들 수 없습니다.' });
+    }
+    res.json({
+      schema: 'mongbas-election-bundle-source/v1',
+      encryptionMode: board.encryptionMode,
+      configuration: {
+        electionID: id,
+        candidates: election.candidates,
+        signatureThreshold,
+        organizations,
+      },
+      provenance: { gitCommit, imageDigest, softwareVersion },
+      publicKey: board.elgamalPubKey,
+      ballots,
+      tallyResults: board.tallyResults,
+      totalVotes: board.totalVotes,
+      decryptionProofs: board.decryptionProofs,
+      publishedAt: board.publishedAt,
+    });
+  } catch (err) {
+    res.status(500).json({ error: sanitizeError(err) });
+  } finally {
+    gateway.close();
+  }
+});
+
 // ── POST /:id/verify-public ─────────────────────────────────
 // [PAPER-6] 공개 독립 검증 (키 불필요 — Bulletin Board에서 자동 사용)
 router.post('/:id/verify-public', requireValidElectionID, async (req, res) => {

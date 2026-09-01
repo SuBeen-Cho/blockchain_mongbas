@@ -7,6 +7,7 @@ const {
   G, HOMOMORPHIC_BASE, P, P_HEX, Q,
   canonicalize, merkleRoot, modInverse, modPow, sha256Hex, unsignedBundle, verifyBundle, verifyBundleBytes,
 } = require('../src/verify');
+const { buildUnsignedBundle, signBundle } = require('../src/bundle');
 
 function scalar(label) {
   const value = BigInt(`0x${sha256Hex(label)}`) % Q;
@@ -177,4 +178,51 @@ test('rejects non-canonical JSON bytes', () => {
   const result = verifyBundleBytes(Buffer.from(JSON.stringify(buildBundle(), null, 2)));
   assert.equal(result.valid, false);
   assert.match(result.summary, /not canonical/);
+});
+
+test('builds and independently signs an exported live-source shape', () => {
+  const fixture = buildBundle();
+  const signer1 = crypto.generateKeyPairSync('ed25519');
+  const signer2 = crypto.generateKeyPairSync('ed25519');
+  const organizations = [signer1, signer2].map((signer, index) => ({
+    id: index === 0 ? 'ec' : 'civil',
+    ed25519PublicKeyDer: signer.publicKey.export({ format: 'der', type: 'spki' }).toString('base64'),
+  }));
+  const source = {
+    schema: 'mongbas-election-bundle-source/v1',
+    encryptionMode: 'elgamal',
+    configuration: { ...fixture.configuration, organizations },
+    provenance: fixture.provenance,
+    publicKey: fixture.publicKey,
+    ballots: fixture.ballots.map((ballot) => ({
+      nullifierHash: ballot.nullifierHash,
+      candidateCommitment: ballot.candidateCommitment,
+      encryptedCandidateID: `${ballot.ciphertext.c1}:${ballot.ciphertext.c2}`,
+      ballotValidityProof: ballot.validityProof,
+    })),
+    tallyResults: fixture.tally.results,
+    totalVotes: fixture.tally.totalVotes,
+    decryptionProofs: [{
+      nullifierHash: 'HOMOMORPHIC_TALLY',
+      encryptedCandidateID: `${fixture.aggregateCiphertext.c1}:${fixture.aggregateCiphertext.c2}`,
+      decryptedHash: fixture.decryptionProof.decryptedHash,
+      zkProof: fixture.decryptionProof,
+    }],
+    publishedAt: fixture.bulletinBoard.publishedAt,
+  };
+  let bundle = buildUnsignedBundle(source);
+  assert.equal(verifyBundle(bundle).valid, false, 'unsigned bundle must not verify');
+  bundle = signBundle(bundle, 'ec', signer1.privateKey.export({ format: 'pem', type: 'pkcs8' }));
+  assert.equal(verifyBundle(bundle).valid, false, 'below-threshold bundle must not verify');
+  bundle = signBundle(bundle, 'civil', signer2.privateKey.export({ format: 'pem', type: 'pkcs8' }));
+  const result = verifyBundle(bundle);
+  assert.equal(result.valid, true, result.errors.join('\n'));
+  assert.equal(result.validSignatures, 2);
+});
+
+test('offline signer rejects a key that does not match the configured organization', () => {
+  const bundle = buildBundle();
+  bundle.signatures = [];
+  const wrongKey = crypto.generateKeyPairSync('ed25519').privateKey.export({ format: 'pem', type: 'pkcs8' });
+  assert.throws(() => signBundle(bundle, 'ec', wrongKey), /does not match/);
 });

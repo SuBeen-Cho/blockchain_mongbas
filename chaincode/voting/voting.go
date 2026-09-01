@@ -151,15 +151,16 @@ type Election struct {
 // 유권자가 투표했다는 사실만 증명하고 누가 투표했는지는 알 수 없음.
 // nullifierHash = SHA256(voterSecret + electionID + blindingFactor) — 클라이언트가 계산
 type Nullifier struct {
-	ObjectType           string `json:"docType"`       // "nullifier"
-	NullifierHash        string `json:"nullifierHash"` // 최종 1표만 유효 키 (재투표 시 덮어쓰기, 원장 Key로도 사용)
-	ElectionID           string `json:"electionID"`
-	CandidateID          string `json:"candidateID" metadata:",optional"` // 레거시 호환 전용. 신규 투표에서는 평문 후보자를 저장하지 않음.
-	CandidateCommitment  string `json:"candidateCommitment"`              // SHA256(electionID|nullifierHash|encryptedCandidateID)
-	EncryptedCandidateID string `json:"encryptedCandidateID"`             // [C-4] AES-GCM 암호화된 후보자 ID
-	Timestamp            int64  `json:"timestamp"`
-	EvictCount           int    `json:"evictCount"`    // 재투표 횟수 (0 = 최초 투표)
-	LastEvictedAt        int64  `json:"lastEvictedAt"` // 마지막 재투표 시각
+	ObjectType           string               `json:"docType"`       // "nullifier"
+	NullifierHash        string               `json:"nullifierHash"` // 최종 1표만 유효 키 (재투표 시 덮어쓰기, 원장 Key로도 사용)
+	ElectionID           string               `json:"electionID"`
+	CandidateID          string               `json:"candidateID" metadata:",optional"`                   // 레거시 호환 전용. 신규 투표에서는 평문 후보자를 저장하지 않음.
+	CandidateCommitment  string               `json:"candidateCommitment"`                                // SHA256(electionID|nullifierHash|encryptedCandidateID)
+	EncryptedCandidateID string               `json:"encryptedCandidateID"`                               // [C-4] AES-GCM 암호화된 후보자 ID
+	BallotValidityProof  *BallotValidityProof `json:"ballotValidityProof,omitempty" metadata:",optional"` // ElGamal 투표 유효성 공개 증거
+	Timestamp            int64                `json:"timestamp"`
+	EvictCount           int                  `json:"evictCount"`    // 재투표 횟수 (0 = 최초 투표)
+	LastEvictedAt        int64                `json:"lastEvictedAt"` // 마지막 재투표 시각
 	// [CRIT-01/02 FIX] 자격증명 감사 해시
 	CredentialHash string `json:"credentialHash"` // SHA256(credential token)
 	// [PAPER-4] 자격증명 검증 수준
@@ -1330,6 +1331,7 @@ func (c *VotingContract) CastVote(
 	// A 방식에서 체인코드는 평문 후보자를 절대 보지 않음 → ballot secrecy 강화
 	var encryptedCandID string
 	var candidateCommitment string
+	var publicBallotValidityProof *BallotValidityProof
 
 	encKey, ekErr := getEncryptionKey(ctx, electionID)
 
@@ -1360,6 +1362,7 @@ func (c *VotingContract) CastVote(
 			if !verifyBallotValidityZKP(election.ElGamalPubKey, parts[0], parts[1], len(election.Candidates), &bvp) {
 				return fmt.Errorf("투표 유효성 ZKP 검증 실패: 유효하지 않은 후보 인코딩")
 			}
+			publicBallotValidityProof = &bvp
 
 			encryptedCandID = vp.EncryptedCandidateID
 			candidateCommitment = computeCandidateCommitment(electionID, nullifierHash, encryptedCandID)
@@ -1443,6 +1446,7 @@ func (c *VotingContract) CastVote(
 		ElectionID:           electionID,
 		CandidateCommitment:  candidateCommitment,
 		EncryptedCandidateID: encryptedCandID,
+		BallotValidityProof:  publicBallotValidityProof,
 		Timestamp:            now,
 		EvictCount:           evictCount,
 		LastEvictedAt: func() int64 {
@@ -3044,9 +3048,10 @@ type BulletinBoard struct {
 
 // EncryptedBallot 공개 원장의 개별 암호화 투표
 type EncryptedBallot struct {
-	NullifierHash        string `json:"nullifierHash"`
-	EncryptedCandidateID string `json:"encryptedCandidateID"`
-	CandidateCommitment  string `json:"candidateCommitment"`
+	NullifierHash        string               `json:"nullifierHash"`
+	EncryptedCandidateID string               `json:"encryptedCandidateID"`
+	CandidateCommitment  string               `json:"candidateCommitment"`
+	BallotValidityProof  *BallotValidityProof `json:"ballotValidityProof,omitempty" metadata:",optional"`
 }
 
 // PublicVerificationResult 공개 검증 결과
@@ -3098,6 +3103,14 @@ func (c *VotingContract) PublishAuditData(
 
 	// 암호화 키 / ElGamal 공개키 조회
 	isElGamal := election.EncryptionMode == "elgamal"
+	if isElGamal {
+		if !tally.Decrypted {
+			return nil, fmt.Errorf("ElGamal 집계는 threshold 복원과 복호화 완료 후에만 게시할 수 있습니다")
+		}
+		if len(tally.DecryptionProofs) == 0 {
+			return nil, fmt.Errorf("ElGamal 집계 복호화 증명이 없어 게시할 수 없습니다")
+		}
+	}
 	var encKey []byte
 	var encKeyHex string
 	if !isElGamal {
@@ -3137,12 +3150,16 @@ func (c *VotingContract) PublishAuditData(
 		}
 		var nul Nullifier
 		if err := json.Unmarshal(qr.Value, &nul); err != nil {
-			continue
+			return nil, fmt.Errorf("Nullifier 역직렬화 실패: %w", err)
+		}
+		if isElGamal && nul.EncryptedCandidateID != "" && nul.BallotValidityProof == nil {
+			return nil, fmt.Errorf("ElGamal ballot validity proof 누락 (nullifier=%s)", nul.NullifierHash)
 		}
 		ballots = append(ballots, EncryptedBallot{
 			NullifierHash:        nul.NullifierHash,
 			EncryptedCandidateID: nul.EncryptedCandidateID,
 			CandidateCommitment:  nul.CandidateCommitment,
+			BallotValidityProof:  nul.BallotValidityProof,
 		})
 	}
 

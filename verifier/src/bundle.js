@@ -1,0 +1,88 @@
+'use strict';
+
+const crypto = require('node:crypto');
+const { ALGORITHM, P, canonicalize, merkleRoot, unsignedBundle } = require('./verify');
+
+function requireString(value, label) {
+  if (typeof value !== 'string' || value.length === 0) throw new Error(`${label} is required`);
+  return value;
+}
+
+function splitCiphertext(value, label) {
+  const parts = requireString(value, label).split(':');
+  if (parts.length !== 2) throw new Error(`${label} must contain c1:c2`);
+  return { c1: parts[0], c2: parts[1] };
+}
+
+function buildUnsignedBundle(source) {
+  if (source?.schema !== 'mongbas-election-bundle-source/v1') throw new Error('unsupported bundle source schema');
+  if (source.encryptionMode !== 'elgamal') throw new Error('bundle v1 supports ElGamal elections only');
+  if (!Array.isArray(source.ballots) || source.ballots.length === 0) throw new Error('bundle source contains no ballots');
+  const ballots = source.ballots.map((ballot, index) => {
+    if (!ballot.ballotValidityProof) throw new Error(`ballot ${index} has no validity proof`);
+    return {
+      nullifierHash: requireString(ballot.nullifierHash, `ballot ${index} nullifierHash`),
+      candidateCommitment: requireString(ballot.candidateCommitment, `ballot ${index} candidateCommitment`),
+      ciphertext: splitCiphertext(ballot.encryptedCandidateID, `ballot ${index} ciphertext`),
+      validityProof: ballot.ballotValidityProof,
+    };
+  });
+  let c1 = 1n;
+  let c2 = 1n;
+  for (const ballot of ballots) {
+    c1 = (c1 * BigInt(`0x${ballot.ciphertext.c1}`)) % P;
+    c2 = (c2 * BigInt(`0x${ballot.ciphertext.c2}`)) % P;
+  }
+  const aggregateCiphertext = { c1: c1.toString(16), c2: c2.toString(16) };
+  const aggregateProofs = (source.decryptionProofs || []).filter((proof) => proof.nullifierHash === 'HOMOMORPHIC_TALLY');
+  if (aggregateProofs.length !== 1 || !aggregateProofs[0].zkProof) throw new Error('exactly one homomorphic tally proof is required');
+  const sourceProof = aggregateProofs[0].zkProof;
+  const decryptionProof = {
+    nullifierHash: 'HOMOMORPHIC_TALLY',
+    c1: sourceProof.c1,
+    c2: sourceProof.c2,
+    decryptedHash: sourceProof.decryptedHash,
+    a1: sourceProof.a1,
+    a2: sourceProof.a2,
+    e: sourceProof.e,
+    z: sourceProof.z,
+  };
+  if (decryptionProof.c1 !== aggregateCiphertext.c1 || decryptionProof.c2 !== aggregateCiphertext.c2) {
+    throw new Error('source aggregate proof does not match recomputed ballot aggregate');
+  }
+  return {
+    schema: 'mongbas-election-bundle/v1',
+    algorithms: {
+      canonicalization: 'mongbas-canonical-json-v1',
+      hash: 'sha-256',
+      signature: 'ed25519',
+      tally: ALGORITHM,
+    },
+    configuration: source.configuration,
+    provenance: source.provenance,
+    publicKey: source.publicKey,
+    ballots,
+    bulletinBoard: { root: merkleRoot(ballots), publishedAt: source.publishedAt },
+    aggregateCiphertext,
+    tally: { results: source.tallyResults, totalVotes: source.totalVotes },
+    decryptionProof,
+    signatures: [],
+  };
+}
+
+function signBundle(bundle, organizationID, privateKeyPem) {
+  const organization = bundle?.configuration?.organizations?.find((entry) => entry.id === organizationID);
+  if (!organization) throw new Error(`organization is not configured: ${organizationID}`);
+  const privateKey = crypto.createPrivateKey(privateKeyPem);
+  if (privateKey.asymmetricKeyType !== 'ed25519') throw new Error('signing key must be Ed25519');
+  const derivedPublic = crypto.createPublicKey(privateKey).export({ format: 'der', type: 'spki' }).toString('base64');
+  if (derivedPublic !== organization.ed25519PublicKeyDer) throw new Error(`private key does not match configured public key for ${organizationID}`);
+  const payload = Buffer.from(canonicalize(unsignedBundle(bundle)));
+  const signature = crypto.sign(null, payload, privateKey).toString('base64');
+  const signatures = (bundle.signatures || []).filter((entry) => entry.organizationID !== organizationID);
+  signatures.push({ organizationID, signature });
+  signatures.sort((left, right) => left.organizationID.localeCompare(right.organizationID));
+  return { ...bundle, signatures };
+}
+
+module.exports = { buildUnsignedBundle, signBundle, splitCiphertext };
