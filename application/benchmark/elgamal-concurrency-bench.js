@@ -244,10 +244,10 @@ function prepareVote(electionID, pubKey, blindingFactor, i, credential) {
   };
 }
 
-function castPreparedVote(prepared) {
+function castPreparedVote(prepared, index) {
   return post('/api/vote', prepared.body, prepared.headers, 180000).then(res => {
     const ok = res.status >= 200 && res.status < 300;
-    return { ok, status: res.status, ms: res.ms, error: ok ? null : (res.body?.error || 'error') };
+    return { index, ok, status: res.status, ms: res.ms, error: ok ? null : (res.body?.error || 'error') };
   });
 }
 
@@ -301,6 +301,7 @@ async function runConcurrency(label, concurrency, idemixEnabled) {
     elapsedSec: +elapsedSec.toFixed(2),
     latency: stats(ok.map(r => r.ms)),
     errors,
+    failedSamples: fail.slice(0, 20).map(({ index, status, ms, error }) => ({ index, status, ms: +ms.toFixed(1), error })),
   };
 
   console.log(`  성공=${round.success}/${concurrency} TPS=${round.tps} avg=${round.latency.avg}ms P95=${round.latency.p95}ms fail=${round.failRate}%`);

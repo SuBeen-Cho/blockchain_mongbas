@@ -34,6 +34,10 @@ const app  = express();
 const PORT = process.env.PORT || 3000;
 const DISABLE_RATE_LIMITS = process.env.DISABLE_RATE_LIMITS === 'true';
 const noRateLimit = (_req, _res, next) => next();
+const HTTP_LISTEN_BACKLOG = Number(process.env.HTTP_LISTEN_BACKLOG || 2048);
+if (!Number.isSafeInteger(HTTP_LISTEN_BACKLOG) || HTTP_LISTEN_BACKLOG < 128 || HTTP_LISTEN_BACKLOG > 65535) {
+  throw new Error('HTTP_LISTEN_BACKLOG는 128~65535 범위의 정수여야 합니다.');
+}
 validateAdminConfiguration();
 
 // ── 운영 환경 필수 환경변수 검증 ──────────────────────────────────
@@ -177,7 +181,7 @@ app.use((err, req, res, _next) => {
 });
 
 // ── 서버 기동 ───────────────────────────────────────────────────
-app.listen(PORT, () => {
+app.listen(PORT, '0.0.0.0', HTTP_LISTEN_BACKLOG, () => {
   console.log(`
 ╔══════════════════════════════════════════════════════╗
 ║  팀 몽바스 — 다조직 합의 익명 전자투표 API 서버 기동  ║
@@ -186,6 +190,7 @@ app.listen(PORT, () => {
 
 [INFO] 엔드포인트 목록: http://localhost:${PORT}/
 [INFO] 헬스 체크: http://localhost:${PORT}/health
+[INFO] HTTP listen backlog: ${HTTP_LISTEN_BACKLOG}
 [INFO] Panic Mode 비밀번호: 환경변수 PANIC_PASSWORD 참조
 
 [WARNING] 네트워크가 기동된 상태에서만 정상 동작합니다.
