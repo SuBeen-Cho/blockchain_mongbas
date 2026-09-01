@@ -109,9 +109,28 @@ async function main() {
   await ok('correct artifact survives failed tamper', request('/api/vote/cast-vector', { method: 'POST', headers: tamperHeaders,
     body: JSON.stringify({ ...tamperCommon, ballotID: tamperPrepared.receipt.ballotID }) }));
 
+  const raceCredential = await issue('demo004', ELECTION_ID);
+  const raceNullifier = sha256(raceCredential.nullifierMaterial + ELECTION_ID + blind.blindingFactor);
+  const raceHeaders = { 'x-idemix-credential': raceCredential.credential };
+  const raceBallot = generateVectorBallot(pubKey, 1, CANDIDATES.length);
+  const raceCommon = ballotRequest(ELECTION_ID, raceNullifier, raceBallot);
+  const racePrepared = await prepare(raceHeaders, raceCommon);
+  const raceAuditBody = { electionID: ELECTION_ID, ballotID: racePrepared.receipt.ballotID, nullifierHash: raceNullifier,
+    selectedIndex: 1, clientNonce: racePrepared.clientNonce, randomness: raceBallot._auditWitness.randomness };
+  const [raceAudit, raceCast] = await Promise.all([
+    request('/api/vote/audit-vector', { method: 'POST', headers: raceHeaders, body: JSON.stringify(raceAuditBody) }),
+    request('/api/vote/cast-vector', { method: 'POST', headers: raceHeaders,
+      body: JSON.stringify({ ...raceCommon, ballotID: racePrepared.receipt.ballotID }) }),
+  ]);
+  if (Number(raceAudit.ok) + Number(raceCast.ok) !== 1) {
+    throw new Error(`concurrent audit/cast must commit exactly one: audit=${raceAudit.status} cast=${raceCast.status}`);
+  }
+  process.stdout.write(`[OK] concurrent audit/cast committed exactly one (${raceAudit.ok ? 'audit' : 'cast'})\n`);
+
   process.stdout.write(`${JSON.stringify({ schema: 'mongbas-vector-audit-or-cast-e2e/v1', electionID: ELECTION_ID,
     preparedAuditCastMutuallyExclusive: true, directCastRejected: true, artifactTamperRejected: true,
-    localWitnessVerified: true, claimBoundary: 'state-machine E2E; independent bundle verification remains separate' })}\n`);
+    concurrentTerminalCommitExactlyOne: true, localWitnessVerified: true,
+    claimBoundary: 'state-machine E2E; independent bundle verification remains separate' })}\n`);
 }
 
 main().catch(error => { process.stderr.write(`[FAIL] ${error.message}\n`); process.exitCode = 1; });
