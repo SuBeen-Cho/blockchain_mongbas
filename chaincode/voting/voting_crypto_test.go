@@ -3,6 +3,7 @@ package main
 import (
 	"crypto/sha256"
 	"math/big"
+	"strings"
 	"testing"
 )
 
@@ -80,6 +81,20 @@ func TestHomomorphicCapacityRejectsAmbiguousOrInfeasibleTallies(t *testing.T) {
 	}
 	if err := validateHomomorphicTallyCapacity(1, 10); err == nil {
 		t.Fatal("overflowing candidate encoding must be rejected")
+	}
+}
+
+func TestHMACCredentialFailsClosedWithoutStrongSecret(t *testing.T) {
+	t.Setenv("CREDENTIAL_SECRET", "")
+	err := verifyHMACCredentialToken(nil, CredentialVerification{}, "election", 1)
+	if err == nil || !strings.Contains(err.Error(), "미설정") {
+		t.Fatalf("missing HMAC secret must fail closed, got %v", err)
+	}
+
+	t.Setenv("CREDENTIAL_SECRET", "too-short")
+	err = verifyHMACCredentialToken(nil, CredentialVerification{}, "election", 1)
+	if err == nil || !strings.Contains(err.Error(), "너무 짧") {
+		t.Fatalf("short HMAC secret must fail closed, got %v", err)
 	}
 }
 

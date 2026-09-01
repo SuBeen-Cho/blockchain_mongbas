@@ -254,9 +254,10 @@ async function main() {
       console.log(`[OK] nullifier for ${label} has no plaintext candidateID`);
     }
     // [PAPER-4] credential 검증 수준 확인
-    if (nr.credVerifyLevel) {
-      console.log(`[INFO] ${label} credVerifyLevel: ${nr.credVerifyLevel}`);
+    if (!nr.credVerifyLevel || !nr.credVerifyLevel.startsWith('chaincode-')) {
+      throw new Error(`${label} credential was not independently verified by chaincode: ${nr.credVerifyLevel || 'missing'}`);
     }
+    console.log(`[OK] ${label} credVerifyLevel: ${nr.credVerifyLevel}`);
   }
 
   // ── Phase 7: 선거 종료 + 집계 ──────────────────────────────
@@ -346,7 +347,7 @@ async function main() {
   }
 
   const decStatus = await assertOk('decryption status', requestJson(`/api/elections/${encodeURIComponent(ELECTION_ID)}/decryption`));
-  if (!decStatus.restored && !decStatus.isDecrypted) {
+  if (decStatus.isDecrypted !== true) {
     throw new Error('Shamir key restoration expected after 2-of-3 shares');
   }
   console.log('[OK] Shamir 2-of-3 key restoration verified');
@@ -418,6 +419,11 @@ async function main() {
   );
   console.log(`[INFO] Public verification: valid=${publicVerify.isValid}, verified=${publicVerify.decryptionVerified}/${publicVerify.totalBallots}`);
   console.log(`[INFO]   Results match: ${publicVerify.resultsMatch}, Proof hash match: ${publicVerify.proofHashMatch}, Shuffle verified: ${publicVerify.shuffleVerified}`);
+  if (publicVerify.isValid !== true || publicVerify.resultsMatch !== true ||
+      publicVerify.proofHashMatch !== true || publicVerify.shuffleVerified !== true ||
+      publicVerify.decryptionFailed !== 0 || publicVerify.totalBallots !== tally.totalVotes) {
+    throw new Error(`public tally verification failed: ${JSON.stringify(publicVerify)}`);
+  }
 
   // 12d. 중복 게시 방지 확인
   const dupPublish = await requestJson(`/api/elections/${ELECTION_ID}/publish-audit`, { method: 'POST' });
@@ -805,9 +811,8 @@ async function main() {
   // HONEST=1, COERCED=1 (real만 집계)
   const crHonestVotes = crTally.results['HONEST'] || 0;
   const crCoercedVotes = crTally.results['COERCED'] || 0;
-  // 더미 nullifier 포함되므로 정확한 수 대신 비율 검증
-  // 패닉 투표(COERCED 1표)가 필터링되면 real COERCED 1표만 남아야 함
-  const panicFilterOk = crHonestVotes >= 1 && crCoercedVotes >= 1;
+  // 패닉 투표(COERCED 1표)가 필터링되면 정확히 real 2표만 남아야 함.
+  const panicFilterOk = crHonestVotes === 1 && crCoercedVotes === 1 && crTally.totalVotes === 2;
   console.log(`[INFO] Panic filter: HONEST=${crHonestVotes}, COERCED=${crCoercedVotes}, filtered=${panicFilterOk}`);
   if (!panicFilterOk) {
     throw new Error(`panic vote filtering failed: HONEST=${crHonestVotes}, COERCED=${crCoercedVotes}`);
@@ -822,7 +827,7 @@ async function main() {
   console.log(`  Tally:        ${JSON.stringify(tally.results)}`);
   console.log(`  Merkle Root:  ${chainRoot}`);
   console.log(`  Merkle Leaves:${merkleResult.leafCount}`);
-  console.log(`  Shamir:       2-of-3 restored=${decStatus.restored}`);
+  console.log(`  Shamir:       2-of-3 isDecrypted=${decStatus.isDecrypted}`);
   console.log(`  Deniable:     normal/panic proof tested`);
   console.log(`  Credential:   ${health.idemix?.impl || 'unknown'}`);
   console.log(`  Blind Mode:   voter4 -> ${blindVoter.candidate} (client-side encryption)`);

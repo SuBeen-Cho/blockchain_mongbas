@@ -248,6 +248,15 @@ cmd_up() {
 cmd_deploy() {
   cd "$NETWORK_DIR"
 
+  # HMAC credential은 API와 chaincode가 같은 secret으로 각각 검증한다.
+  # 누락된 상태로 배포하면 체인코드 검증이 우회되는 구성이 되므로 fail closed.
+  if [ -z "${CREDENTIAL_SECRET:-}" ]; then
+    error "CREDENTIAL_SECRET 미설정: 최소 32바이트 secret을 환경변수로 전달해야 합니다. 값은 로그에 출력하지 않습니다."
+  fi
+  if [ "$(printf '%s' "${CREDENTIAL_SECRET}" | wc -c | tr -d ' ')" -lt 32 ]; then
+    error "CREDENTIAL_SECRET 길이 부족: 최소 32바이트가 필요합니다."
+  fi
+
   # ── CCAAS 패키지 생성 ─────────────────────────────────────────
   step "[배포 1/7] CCAAS 패키지 생성..."
   CCAAS_PKG="/tmp/voting_ccaas_pkg"
@@ -272,8 +281,10 @@ EOF
 EOF
 
   cd "${CCAAS_PKG}"
-  tar czf code.tar.gz connection.json
-  tar czf "${NETWORK_DIR}/${CHAINCODE_LABEL}_ccaas.tar.gz" code.tar.gz metadata.json
+  # macOS가 AppleDouble (._*) metadata를 archive에 넣으면 같은 입력에서도
+  # package ID가 달라지고 Fabric이 경고한다. Linux에서는 이 변수가 무해하다.
+  COPYFILE_DISABLE=1 tar czf code.tar.gz connection.json
+  COPYFILE_DISABLE=1 tar czf "${NETWORK_DIR}/${CHAINCODE_LABEL}_ccaas.tar.gz" code.tar.gz metadata.json
   cd "${NETWORK_DIR}"
   info "CCAAS 패키지 완료: ${CHAINCODE_LABEL}_ccaas.tar.gz"
 
@@ -299,9 +310,12 @@ EOF
   # ── 패키지 ID 조회 + voting-chaincode 컨테이너에 주입 ────────
   step "[배포 3/7] 패키지 ID 조회 및 CCAAS 컨테이너 기동..."
   use_ec0
-  PACKAGE_ID=$(peer lifecycle chaincode queryinstalled \
-    --output json \
-    | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['installed_chaincodes'][0]['package_id'])")
+  # queryinstalled의 첫 항목은 동일 label의 과거 패키지일 수 있다. 방금 만든
+  # archive에서 결정론적으로 계산한 ID를 사용하고 실제 설치 여부를 확인한다.
+  PACKAGE_ID=$(peer lifecycle chaincode calculatepackageid "${CHAINCODE_LABEL}_ccaas.tar.gz")
+  peer lifecycle chaincode queryinstalled --output json \
+    | python3 -c 'import json,sys; expected=sys.argv[1]; data=json.load(sys.stdin); ids={x["package_id"] for x in data.get("installed_chaincodes", [])}; sys.exit(0 if expected in ids else 1)' "${PACKAGE_ID}" \
+    || error "방금 생성한 CCAAS package ID가 peer0.ec 설치 목록에 없습니다."
   info "Package ID: ${PACKAGE_ID}"
 
   # voting-chaincode 컨테이너에 패키지 ID 설정 후 재시작
@@ -317,6 +331,7 @@ EOF
     --network voting-net \
     -e CHAINCODE_SERVER_ADDRESS=0.0.0.0:7052 \
     -e CHAINCODE_ID="${PACKAGE_ID}" \
+    -e CREDENTIAL_SECRET="${CREDENTIAL_SECRET}" \
     -e ED25519_PUBLIC_KEY_DER_B64="${ED25519_PUBLIC_KEY_DER_B64:-}" \
     -e PS_ISSUER_PUBLIC_KEY_B64="${PS_ISSUER_PUBLIC_KEY_B64:-}" \
     -e BBS_PUBLIC_KEY_B64="${BBS_PUBLIC_KEY_B64:-}" \

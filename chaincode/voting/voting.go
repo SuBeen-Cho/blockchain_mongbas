@@ -165,6 +165,13 @@ type Nullifier struct {
 	CredentialHash string `json:"credentialHash"` // SHA256(credential token)
 	// [PAPER-4] 자격증명 검증 수준
 	CredVerifyLevel string `json:"credVerifyLevel,omitempty" metadata:",optional"` // "chaincode" | "metadata-only"
+	// IsPadding marks the pre-created panic-mode padding records.  The existing
+	// DUMMY_IDX keys already reveal these records, so making the type explicit
+	// does not weaken the current scheme; it prevents AES padding ciphertexts
+	// from being interpreted as malformed voter-supplied ElGamal ciphertexts.
+	// A future coercion-resistance design must replace the publicly linkable
+	// DUMMY_IDX mechanism with indistinguishable, proof-carrying padding ballots.
+	IsPadding bool `json:"isPadding,omitempty" metadata:",optional"`
 }
 
 // CredentialVerification [CRIT-01/02 FIX] 체인코드 독립 검증용 자격증명 메타데이터
@@ -704,9 +711,10 @@ func verifyEd25519CredentialToken(ctx contractapi.TransactionContextInterface, c
 func verifyHMACCredentialToken(ctx contractapi.TransactionContextInterface, cv CredentialVerification, electionID string, txNow int64) error {
 	credSecret := os.Getenv("CREDENTIAL_SECRET")
 	if credSecret == "" {
-		// CREDENTIAL_SECRET 미설정 시 메타데이터 검증만으로 통과 (하위 호환)
-		log.Printf("[verifyHMACCredentialToken] CREDENTIAL_SECRET 미설정 — 메타데이터 검증만 수행")
-		return nil
+		return fmt.Errorf("CREDENTIAL_SECRET 미설정 — HMAC credential을 체인코드에서 검증할 수 없습니다")
+	}
+	if len([]byte(credSecret)) < 32 {
+		return fmt.Errorf("CREDENTIAL_SECRET이 너무 짧습니다 — 최소 32바이트가 필요합니다")
 	}
 
 	transient, err := ctx.GetStub().GetTransient()
@@ -1034,6 +1042,7 @@ func (c *VotingContract) CreateElection(
 				CandidateCommitment:  dummyCommitment,
 				EncryptedCandidateID: encDummyCandID,
 				Timestamp:            now,
+				IsPadding:            true,
 			}
 			db, err := json.Marshal(dummy)
 			if err != nil {
@@ -1711,6 +1720,13 @@ func (c *VotingContract) tallyVotesInternal(
 			return nil, fmt.Errorf("Nullifier 역직렬화 실패: %w", err)
 		}
 
+		// Pre-created panic-mode padding is not a cast ballot and must never enter
+		// the tally. In particular, ElGamal elections historically stored these
+		// records using AES-GCM, which otherwise looks like a malformed ciphertext.
+		if nullifier.IsPadding {
+			continue
+		}
+
 		// [PAPER-12] Cleansing-Hiding: PDC에서 credentialType 확인
 		// panic 투표는 집계에서 제외 (CHide 원칙: 제거 수 비공개)
 		// PDC 조회 실패 또는 항목 없음 → real로 간주 (더미 nullifier 포함)
@@ -1724,7 +1740,8 @@ func (c *VotingContract) tallyVotesInternal(
 			}
 		}
 
-		// 더미 nullifier (PDC 항목 없음, EncryptedCandidateID 없음) → 동형 누적에서 제외
+		// 레거시 평문 레코드만 호환한다. 신규 레코드의 빈 암호문은 아래
+		// ElGamal 형식 검증에서 실패하도록 암묵적인 dummy 판정을 하지 않는다.
 		if nullifier.EncryptedCandidateID == "" {
 			// 레거시 평문 또는 더미 nullifier
 			candID := nullifier.CandidateID
@@ -3152,6 +3169,13 @@ func (c *VotingContract) PublishAuditData(
 		if err := json.Unmarshal(qr.Value, &nul); err != nil {
 			return nil, fmt.Errorf("Nullifier 역직렬화 실패: %w", err)
 		}
+		// Padding records are not cast ballots and are excluded from the official
+		// tally, so publishing them as encrypted ballots would make independent
+		// recomputation disagree with TotalVotes. DUMMY_IDX already makes these
+		// legacy padding records publicly identifiable.
+		if nul.IsPadding {
+			continue
+		}
 		if isElGamal && nul.EncryptedCandidateID != "" && nul.BallotValidityProof == nil {
 			return nil, fmt.Errorf("ElGamal ballot validity proof 누락 (nullifier=%s)", nul.NullifierHash)
 		}
@@ -3386,7 +3410,7 @@ func (c *VotingContract) VerifyTallyPublic(
 
 	result := &PublicVerificationResult{
 		ElectionID:         electionID,
-		IsValid:            len(bb.DecryptionProofs) > 0 && verified > 0 && resultsMatch && proofHashMatch && shuffleVerified && failed == 0,
+		IsValid:            len(bb.DecryptionProofs) > 0 && verified > 0 && len(bb.EncryptedBallots) == bb.TotalVotes && resultsMatch && proofHashMatch && shuffleVerified && failed == 0,
 		RecomputedResults:  recomputed,
 		OriginalResults:    bb.TallyResults,
 		ResultsMatch:       resultsMatch,
