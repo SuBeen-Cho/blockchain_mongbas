@@ -3146,12 +3146,19 @@ func (c *VotingContract) submitVectorPartialDecryption(
 			if convErr != nil {
 				return nil, fmt.Errorf("trustee index 파싱 실패: %w", convErr)
 			}
-			b, getErr := ctx.GetStub().GetState(fmt.Sprintf("PARTIAL_DECRYPTION_%s_%d", election.ElectionID, trusteeIndex))
-			if getErr != nil || b == nil {
-				return nil, fmt.Errorf("vector partial %d 조회 실패", trusteeIndex)
-			}
 			var prior VectorPartialDecryption
-			if json.Unmarshal(b, &prior) != nil || len(prior.Values) != len(partials) || len(prior.Proofs) != len(partials) ||
+			if trusteeIndex == index {
+				prior = partial
+			} else {
+				b, getErr := ctx.GetStub().GetState(fmt.Sprintf("PARTIAL_DECRYPTION_%s_%d", election.ElectionID, trusteeIndex))
+				if getErr != nil || b == nil {
+					return nil, fmt.Errorf("vector partial %d 조회 실패", trusteeIndex)
+				}
+				if json.Unmarshal(b, &prior) != nil {
+					return nil, fmt.Errorf("vector partial %d 파싱 실패", trusteeIndex)
+				}
+			}
+			if len(prior.Values) != len(partials) || len(prior.Proofs) != len(partials) ||
 				prior.Index != trusteeIndex || trusteeIndex < 1 || trusteeIndex > len(election.ThresholdPublicShares) {
 				return nil, fmt.Errorf("vector partial %d 구조 검증 실패", trusteeIndex)
 			}
