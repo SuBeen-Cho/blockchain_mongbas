@@ -44,6 +44,40 @@ func TestVectorAuditArtifactHashMatchesNodeVector(t *testing.T) {
 	}
 }
 
+func TestVectorAuditWitnessReconstructionAndTamperRejection(t *testing.T) {
+	secret := big.NewInt(7)
+	pub := &ElGamalPublicKey{P: elgamalP.Text(16), G: elgamalG.Text(16), Y: new(big.Int).Exp(elgamalG, secret, elgamalP).Text(16)}
+	randomness := []string{"5", "6", "7"}
+	vector := make([]ElGamalCiphertext, len(randomness))
+	for index, encoded := range randomness {
+		r, _ := new(big.Int).SetString(encoded, 16)
+		c1 := new(big.Int).Exp(elgamalG, r, elgamalP)
+		c2 := new(big.Int).Exp(new(big.Int).Exp(elgamalG, secret, elgamalP), r, elgamalP)
+		if index == 1 {
+			c2.Mul(c2, elgamalG).Mod(c2, elgamalP)
+		}
+		vector[index] = ElGamalCiphertext{C1: c1.Text(16), C2: c2.Text(16)}
+	}
+	if !verifyVectorAuditWitness(pub, vector, 1, randomness) {
+		t.Fatal("valid vector audit witness rejected")
+	}
+	if verifyVectorAuditWitness(pub, vector, 0, randomness) {
+		t.Fatal("wrong selected index accepted")
+	}
+	tampered := append([]ElGamalCiphertext(nil), vector...)
+	tampered[0].C2 = "1"
+	if verifyVectorAuditWitness(pub, tampered, 1, randomness) {
+		t.Fatal("tampered ciphertext accepted")
+	}
+	for _, invalid := range []string{"", "0", "05", "A", elgamalQ.Text(16)} {
+		changed := append([]string(nil), randomness...)
+		changed[0] = invalid
+		if verifyVectorAuditWitness(pub, vector, 1, changed) {
+			t.Fatalf("invalid scalar %q accepted", invalid)
+		}
+	}
+}
+
 func proveDisjunctionForTest(pub *ElGamalPublicKey, ciphertext ElGamalCiphertext,
 	messages []*big.Int, actual int, nonce, witness *big.Int, domain string) *BallotValidityProof {
 	y, _ := new(big.Int).SetString(pub.Y, 16)

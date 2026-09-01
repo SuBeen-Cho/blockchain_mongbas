@@ -4917,6 +4917,53 @@ func parseScalar(encoded string) (*big.Int, bool) {
 	return v, true
 }
 
+func parseCanonicalNonzeroScalar(encoded string) (*big.Int, bool) {
+	if encoded == "" || strings.ToLower(encoded) != encoded || (len(encoded) > 1 && encoded[0] == '0') {
+		return nil, false
+	}
+	for _, char := range encoded {
+		if !((char >= '0' && char <= '9') || (char >= 'a' && char <= 'f')) {
+			return nil, false
+		}
+	}
+	v, ok := parseScalar(encoded)
+	if !ok || v.Sign() <= 0 {
+		return nil, false
+	}
+	return v, true
+}
+
+// verifyVectorAuditWitness independently reconstructs every component of a
+// prepared one-hot vector. It intentionally does not trust the submitted ZKP:
+// the disclosed randomness and selected index must reproduce the exact stored
+// ciphertext bytes before an audit transition can commit.
+func verifyVectorAuditWitness(pubKey *ElGamalPublicKey, vector []ElGamalCiphertext, selectedIndex int, randomness []string) bool {
+	if pubKey == nil || pubKey.P != elgamalP.Text(16) || pubKey.G != elgamalG.Text(16) ||
+		len(vector) < 2 || len(randomness) != len(vector) || selectedIndex < 0 || selectedIndex >= len(vector) {
+		return false
+	}
+	y, ok := parseSubgroupElement(pubKey.Y)
+	if !ok {
+		return false
+	}
+	for index, ciphertext := range vector {
+		r, valid := parseCanonicalNonzeroScalar(randomness[index])
+		if !valid {
+			return false
+		}
+		expectedC1 := new(big.Int).Exp(elgamalG, r, elgamalP)
+		expectedC2 := new(big.Int).Exp(y, r, elgamalP)
+		if index == selectedIndex {
+			expectedC2.Mul(expectedC2, elgamalG)
+			expectedC2.Mod(expectedC2, elgamalP)
+		}
+		if ciphertext.C1 != expectedC1.Text(16) || ciphertext.C2 != expectedC2.Text(16) {
+			return false
+		}
+	}
+	return true
+}
+
 func deriveThresholdShares(secret, coefficient *big.Int, total int) ([]*big.Int, error) {
 	if secret == nil || coefficient == nil || secret.Sign() <= 0 || secret.Cmp(elgamalQ) >= 0 ||
 		coefficient.Sign() <= 0 || coefficient.Cmp(elgamalQ) >= 0 || total < 2 {
