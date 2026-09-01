@@ -171,7 +171,10 @@ app.get('/', (req, res) => {
       'GET  /api/elections/:id/merkle'       : 'Merkle Root 조회',
       'GET  /api/elections/:id/proof/:null'  : 'Merkle 포함 증명 조회 (E2E 검증)',
       'POST /api/elections/:id/proof'        : 'Deniable Verification (Normal/Panic 모드)',
-      'POST /api/vote'                       : '투표 제출',
+      'POST /api/vote'                       : 'AES/legacy ElGamal 투표 제출 (vector-v3 직접 제출 거부)',
+      'POST /api/vote/prepare-vector'        : 'vector-v3 ciphertext/proof 준비 커밋',
+      'POST /api/vote/audit-vector'          : '준비된 vector-v3 투표 공개 검증 및 폐기',
+      'POST /api/vote/cast-vector'           : '준비된 vector-v3 투표 원자적 제출',
       'GET  /api/nullifier/:hash'            : '투표 여부 확인',
     },
     notes: [
