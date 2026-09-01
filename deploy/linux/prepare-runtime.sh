@@ -13,6 +13,7 @@ if [ ! -f "${MONGBAS_ENV_FILE}" ]; then
     -e "s|^# *CREDENTIAL_SECRET=.*|CREDENTIAL_SECRET=${credential_secret}|" \
     -e "s|^# *ADMIN_API_TOKEN=.*|ADMIN_API_TOKEN=${admin_api_token}|" \
     "${MONGBAS_ENV_FILE}"
+  sed -i 's/^ENABLE_DEMO_CREDENTIALS=.*/ENABLE_DEMO_CREDENTIALS=true/' "${MONGBAS_ENV_FILE}"
   unset credential_secret admin_api_token
   log "created secret template with generated credential/admin secrets"
 else
@@ -22,6 +23,9 @@ else
     printf '\nADMIN_API_TOKEN=%s\n' "${admin_api_token}" >> "${MONGBAS_ENV_FILE}"
     unset admin_api_token
     log "added a generated admin API token to the existing secret env"
+  fi
+  if ! grep -q '^ENABLE_DEMO_CREDENTIALS=' "${MONGBAS_ENV_FILE}"; then
+    printf '\nENABLE_DEMO_CREDENTIALS=true\n' >> "${MONGBAS_ENV_FILE}"
   fi
   log "preserved existing secret env"
 fi

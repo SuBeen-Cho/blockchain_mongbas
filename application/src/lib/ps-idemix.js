@@ -55,8 +55,8 @@ function g2ToBuffer(P) {
   ]);
 }
 
-// 속성 수: voterEligible, electionID, exp
-const ATTR_COUNT = 3;
+// 속성 수: voterEligible, electionID, exp, nullifierMaterial
+const ATTR_COUNT = 4;
 
 // 발급자 키 싱글톤
 let _issuerKeys = null;
@@ -132,7 +132,7 @@ function exportPublicKeyB64() {
 /**
  * PS 서명 발급
  *
- * 입력: attributes = [voterEligible, electionID, exp]
+ * 입력: attributes = [voterEligible, electionID, exp, nullifierMaterial]
  * 출력: { h_b64, s_b64, attrs, expMs }
  *
  * 서명: (h = g1^u, σ = h^(x + Σ yi*mi))
@@ -225,6 +225,7 @@ function verifyCredential(credObj) {
       electionID: attrs[1],
       expUnix:    Math.floor(Number(attrs[2]) / 1000),
       credType:   'ps',
+      nullifierMaterial: attrs[3],
     };
   } catch (e) {
     return { valid: false, reason: `PS 파싱 오류: ${e.message}` };

@@ -3,7 +3,7 @@
  */
 
 import { useState, useRef, useEffect } from 'react';
-import { computeMerkleRootFromProof, computeNullifier, computePasswordHash, verifyBulletinBoard, verifyChaumPedersen } from '../utils/crypto.js';
+import { computeMerkleRootFromProof, computePasswordHash, verifyBulletinBoard, verifyChaumPedersen } from '../utils/crypto.js';
 import HashDisplay from '../components/HashDisplay.jsx';
 import Alert from '../components/Alert.jsx';
 import MerkleTreeDiagram from '../components/verify-animations/MerkleTreeDiagram.jsx';
@@ -24,7 +24,6 @@ const MODES = [
 
 export default function VerifyPage() {
   const [electionID,    setElectionID]    = useState('');
-  const [voterSecret,   setVoterSecret]   = useState('');
   const [nullifierHash, setNullifierHash] = useState('');
   const [password,      setPassword]      = useState('');
   const [mode,          setMode]          = useState('simple');
@@ -59,14 +58,7 @@ export default function VerifyPage() {
       // Step 1: Nullifier 조회
       setVerifySteps(['nullifier']);
       let hash = nullifierHash;
-      if (!hash && voterSecret && electionID) {
-        const bfRes = await fetch(`${API}/elections/${electionID}/blinding-factor`);
-        if (!bfRes.ok) throw new Error('블라인딩 팩터 조회 실패');
-        const { blindingFactor } = await bfRes.json();
-        hash = await computeNullifier(voterSecret, electionID, blindingFactor);
-        setNullifierHash(hash);
-      }
-      if (!hash) throw new Error('nullifierHash 또는 (voterSecret + electionID)가 필요합니다.');
+      if (!hash) throw new Error('투표 완료 시 받은 nullifierHash가 필요합니다.');
       setVerifySteps(s => [...s, 'nullifier_done']);
 
       // Step 2: Merkle Proof 수신
@@ -170,14 +162,7 @@ export default function VerifyPage() {
     try {
       setVerifySteps(['rf_query']);
       let hash = nullifierHash;
-      if (!hash && voterSecret && electionID) {
-        const bfRes = await fetch(`${API}/elections/${electionID}/blinding-factor`);
-        if (!bfRes.ok) throw new Error('블라인딩 팩터 조회 실패');
-        const { blindingFactor } = await bfRes.json();
-        hash = await computeNullifier(voterSecret, electionID, blindingFactor);
-        setNullifierHash(hash);
-      }
-      if (!hash) throw new Error('nullifierHash 또는 voterSecret이 필요합니다.');
+      if (!hash) throw new Error('투표 완료 시 받은 nullifierHash가 필요합니다.');
       const res = await fetch(`${API}/elections/${electionID}/vote-counted/${hash}`);
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || '확인 실패');
@@ -248,21 +233,6 @@ export default function VerifyPage() {
         {(mode === 'simple' || mode === 'receipt-free') && (
           <>
             <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1.5">voterSecret</label>
-              <input
-                className="w-full h-11 px-4 border border-slate-200 rounded-lg text-sm font-mono bg-white
-                  focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none transition-colors duration-200"
-                placeholder="투표 시 사용한 voterSecret"
-                value={voterSecret}
-                onChange={e => setVoterSecret(e.target.value)}
-              />
-            </div>
-            <div className="flex items-center gap-3">
-              <div className="flex-1 h-px bg-slate-200" />
-              <span className="text-xs text-slate-400">또는</span>
-              <div className="flex-1 h-px bg-slate-200" />
-            </div>
-            <div>
               <label className="block text-sm font-medium text-slate-700 mb-1.5">nullifierHash (직접 입력)</label>
               <input
                 className="w-full h-11 px-4 border border-slate-200 rounded-lg text-sm font-mono bg-white
@@ -278,13 +248,13 @@ export default function VerifyPage() {
         {mode === 'deniable' && (
           <>
             <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1.5">voterSecret</label>
+              <label className="block text-sm font-medium text-slate-700 mb-1.5">nullifierHash</label>
               <input
                 className="w-full h-11 px-4 border border-slate-200 rounded-lg text-sm font-mono bg-white
                   focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none transition-colors duration-200"
-                placeholder="voterSecret"
-                value={voterSecret}
-                onChange={e => setVoterSecret(e.target.value)}
+                placeholder="투표 완료 시 받은 추적 번호"
+                value={nullifierHash}
+                onChange={e => setNullifierHash(e.target.value)}
               />
             </div>
             <div>

@@ -31,14 +31,15 @@ const {
 } = require('@mattrglobal/bbs-signatures');
 const { randomBytes, createHash } = require('crypto');
 
-// 속성 순서: [voterEligible, electionID, exp]
-const ATTR_INDICES = { voterEligible: 0, electionID: 1, exp: 2 };
+// 속성 순서: [voterEligible, electionID, exp, nullifierMaterial]
+const ATTR_INDICES = { voterEligible: 0, electionID: 1, exp: 2, nullifierMaterial: 3 };
 // 체인코드 검증용 공개 속성: voterEligible, electionID, exp
 // voterID는 credential 속성에 포함하지 않으므로 신원은 노출되지 않는다.
 const REVEALED_INDICES = [
   ATTR_INDICES.voterEligible,
   ATTR_INDICES.electionID,
   ATTR_INDICES.exp,
+  ATTR_INDICES.nullifierMaterial,
 ];
 
 // 발급자 키 싱글톤 (비동기 초기화)
@@ -64,7 +65,7 @@ async function exportPublicKeyB64() {
 /**
  * BBS+ 자격증명 발급
  *
- * 속성 [voterEligible, electionID, exp]에 대한 BBS+ 서명
+ * 속성 [voterEligible, electionID, exp, nullifierMaterial]에 대한 BBS+ 서명
  * 서명 크기: 112 bytes (상수)
  */
 async function issueCredential(attributes) {
@@ -107,7 +108,7 @@ async function verifyCredential(credObj) {
     }
 
     const attrs = credObj.attrs;
-    if (!Array.isArray(attrs) || attrs.length < 3) {
+    if (!Array.isArray(attrs) || attrs.length < 4) {
       return { valid: false, reason: '속성 배열 길이 부족' };
     }
 
@@ -150,6 +151,7 @@ async function verifyCredential(credObj) {
       electionID: attrs[ATTR_INDICES.electionID],
       expUnix:    Math.floor(Number(attrs[ATTR_INDICES.exp]) / 1000),
       credType:   'bbs',
+      nullifierMaterial: attrs[ATTR_INDICES.nullifierMaterial],
       bbsProof: {
         type: 'bbs-proof',
         proof: Buffer.from(proof).toString('base64url'),

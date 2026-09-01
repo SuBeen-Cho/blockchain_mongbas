@@ -25,6 +25,7 @@
 'use strict';
 
 const crypto  = require('crypto');
+const fs      = require('fs');
 const express = require('express');
 const router  = express.Router();
 
@@ -45,27 +46,49 @@ function getPsIdemix()  { return _psIdemix  || (_psIdemix  = require('../lib/ps-
 function getBbsIdemix() { return _bbsIdemix || (_bbsIdemix = require('../lib/bbs-idemix')); }
 
 // ── 등록 유권자 DB (운영 시 실제 DB로 교체) ─────────────────────
-const VOTER_REGISTRY = new Map([
-  ['voter1', { secret: 'voter1pw', eligible: true }],
-  ['voter2', { secret: 'voter2pw', eligible: true }],
-  ['voter3', { secret: 'voter3pw', eligible: true }],
-  ['voter4', { secret: 'voter4pw', eligible: true }],
-  ['voter5', { secret: 'voter5pw', eligible: true }],
-  ['admin',  { secret: 'adminpw',  eligible: false }], // 관리자는 투표 불가
-]);
+const VOTER_REGISTRY = new Map();
+const ENABLE_DEMO_CREDENTIALS = process.env.ENABLE_DEMO_CREDENTIALS === 'true';
+const registryFile = process.env.VOTER_REGISTRY_FILE || '';
+if (registryFile) {
+  const records = JSON.parse(fs.readFileSync(registryFile, 'utf8'));
+  if (!Array.isArray(records)) throw new Error('VOTER_REGISTRY_FILE은 JSON 배열이어야 합니다.');
+  for (const record of records) {
+    if (!record.enrollmentID || !/^[0-9a-f]{32,}$/i.test(record.salt || '') || !/^[0-9a-f]{64}$/i.test(record.secretHash || '')) {
+      throw new Error(`유권자 레지스트리 레코드 형식 오류: ${record.enrollmentID || '<missing-id>'}`);
+    }
+    VOTER_REGISTRY.set(record.enrollmentID, {
+      salt: record.salt.toLowerCase(), secretHash: record.secretHash.toLowerCase(), eligible: record.eligible === true,
+    });
+  }
+}
 
 // ── [부스 시연용] 데모 유권자 풀 ────────────────────────────────
 // 전시 부스에서 다수의 폰이 동시에 투표할 수 있도록 데모 자격증명을 추가한다.
-// - demo001..demo100: 폰마다 고유 enrollmentID를 배정 → eligibility(자격검증) 시연용
-// - demo(공용): 여러 폰이 공유 가능한 간편 자격증명. 실제 표 구분은 폰별 voterSecret로
-//   계산되는 nullifierHash가 담당하므로 자격증명 공유는 프라이버시/중복에 영향 없음.
-// 운영 환경(NODE_ENV=production)에서는 추가하지 않는다.
-if (process.env.NODE_ENV !== 'production') {
-  for (let i = 1; i <= 100; i++) {
-    const id = `demo${String(i).padStart(3, '0')}`;
-    VOTER_REGISTRY.set(id, { secret: `${id}pw`, eligible: true });
+// - demo001..demo1000: 폰/벤치마크별 고유 enrollmentID 배정
+// - demo(공용)는 동일 선거에서 항상 같은 nullifier를 만드므로 다중투표에 쓸 수 없다.
+// NODE_ENV와 무관하게 ENABLE_DEMO_CREDENTIALS=true일 때만 추가한다.
+if (ENABLE_DEMO_CREDENTIALS) {
+  for (let i = 1; i <= 5; i++) {
+    VOTER_REGISTRY.set(`voter${i}`, { secret: `voter${i}pw`, eligible: true, demo: true });
   }
-  VOTER_REGISTRY.set('demo', { secret: 'demopw', eligible: true });
+  for (let i = 1; i <= 1000; i++) {
+    const id = `demo${String(i).padStart(3, '0')}`;
+    VOTER_REGISTRY.set(id, { secret: `${id}pw`, eligible: true, demo: true });
+  }
+  VOTER_REGISTRY.set('demo', { secret: 'demopw', eligible: true, demo: true });
+}
+
+function verifyEnrollmentSecret(voter, supplied) {
+  if (!voter || typeof supplied !== 'string') return false;
+  if (voter.demo) {
+    const actual = Buffer.from(supplied);
+    const expected = Buffer.from(voter.secret);
+    return actual.length === expected.length && crypto.timingSafeEqual(actual, expected);
+  }
+  if (!voter.salt || !voter.secretHash) return false;
+  const actual = crypto.scryptSync(supplied, Buffer.from(voter.salt, 'hex'), 32);
+  const expected = Buffer.from(voter.secretHash, 'hex');
+  return actual.length === expected.length && crypto.timingSafeEqual(actual, expected);
 }
 
 // ════════════════════════════════════════════════════════════════
@@ -79,9 +102,9 @@ if (process.env.NODE_ENV !== 'production') {
 function issueCredential(voterID, electionID) {
   const nonce = crypto
     .createHmac('sha256', CREDENTIAL_SECRET)
-    .update(`nonce:${voterID}:${electionID}`)
+    .update(`nullifier:${voterID}:${electionID}`)
     .digest('base64url')
-    .slice(0, 16);
+    .slice(0, 32);
 
   const payload = {
     voterEligible: '1',
@@ -108,15 +131,19 @@ function issueCredential(voterID, electionID) {
  *
  * B단계 대비 개선점:
  *   1. 비대칭 키 — 공개키만 있으면 검증 가능, 비밀키 없이도 검증 → 서버 신뢰 불필요
- *   2. 랜덤 nonce — 매 발급마다 fresh random → voterID와 연결 불가 (비연결성 강화)
+ *   2. 선거별 결정론적 nonce — 재발급해도 동일 nullifier를 생성하도록 서명에 바인딩
  *   3. iat 제거 — payload 최소화 (크기 절감)
  *   4. alg 헤더 포함 — 검증 방식 명시 (HMAC vs Ed25519 구분)
  */
-function issueAsymCredential(voterID, electionID) {  // eslint-disable-line no-unused-vars
+function issueAsymCredential(voterID, electionID) {
   const { privateKey } = getEd25519Keys();
 
-  // 랜덤 nonce: voterID와 무관 → 서버가 nonce로 voterID 역추적 불가
-  const nonce = crypto.randomBytes(12).toString('base64url');
+  // 서명된 결합값: 서버/클라이언트가 임의 nullifier로 중복투표 방지를 우회하지 못한다.
+  const nonce = crypto
+    .createHmac('sha256', CREDENTIAL_SECRET)
+    .update(`nullifier:${voterID}:${electionID}`)
+    .digest('base64url')
+    .slice(0, 32);
 
   const payload = {
     voterEligible: '1',
@@ -140,25 +167,30 @@ function issueAsymCredential(voterID, electionID) {  // eslint-disable-line no-u
 
 // ── 현재 설정에 따라 발급 방식 선택 ────────────────────────────
 async function issueCredentialAuto(voterID, electionID) {
+  const nullifierMaterial = crypto
+    .createHmac('sha256', CREDENTIAL_SECRET)
+    .update(`nullifier:${voterID}:${electionID}`)
+    .digest('base64url')
+    .slice(0, 32);
   if (IDEMIX_IMPL === 'ps') {
     // [B단계] PS/CL on BN254
     const ps   = getPsIdemix();
-    const cred = ps.issueCredential(['1', electionID, String(Date.now() + CREDENTIAL_TTL_MS)]);
-    return { token: ps.credToToken(cred), credType: 'PS-BN254', sizeBytes: ps.credToToken(cred).length };
+    const cred = ps.issueCredential(['1', electionID, String(Date.now() + CREDENTIAL_TTL_MS), nullifierMaterial]);
+    return { token: ps.credToToken(cred), credType: 'PS-BN254', sizeBytes: ps.credToToken(cred).length, nullifierMaterial };
   }
   if (IDEMIX_IMPL === 'bbs') {
     // [C단계] BBS+ on BLS12-381
     const bbs  = getBbsIdemix();
-    const cred = await bbs.issueCredential(['1', electionID, String(Date.now() + CREDENTIAL_TTL_MS)]);
+    const cred = await bbs.issueCredential(['1', electionID, String(Date.now() + CREDENTIAL_TTL_MS), nullifierMaterial]);
     const tok  = bbs.credToToken(cred);
-    return { token: tok, credType: 'BBS+-BLS12381', sizeBytes: tok.length };
+    return { token: tok, credType: 'BBS+-BLS12381', sizeBytes: tok.length, nullifierMaterial };
   }
   if (ASYM_CRED_ENABLED) {
     const tok = issueAsymCredential(voterID, electionID);
-    return { token: tok, credType: 'Ed25519-asym', sizeBytes: Buffer.byteLength(tok, 'utf8') };
+    return { token: tok, credType: 'Ed25519-asym', sizeBytes: Buffer.byteLength(tok, 'utf8'), nullifierMaterial };
   }
   const tok = issueCredential(voterID, electionID);
-  return { token: tok, credType: 'HMAC-SHA256', sizeBytes: Buffer.byteLength(tok, 'utf8') };
+  return { token: tok, credType: 'HMAC-SHA256', sizeBytes: Buffer.byteLength(tok, 'utf8'), nullifierMaterial };
 }
 
 // ── POST /api/credential/idemix ──────────────────────────────────
@@ -173,7 +205,7 @@ router.post('/idemix', async (req, res) => {
   }
 
   const voter = VOTER_REGISTRY.get(enrollmentID);
-  if (!voter || voter.secret !== enrollmentSecret) {
+  if (!verifyEnrollmentSecret(voter, enrollmentSecret)) {
     logCredentialFailure({ electionID, reason: 'auth-failed' });
     return res.status(401).json({ error: '등록되지 않은 유권자이거나 비밀번호 불일치' });
   }
@@ -182,7 +214,7 @@ router.post('/idemix', async (req, res) => {
     return res.status(403).json({ error: '투표 자격이 없는 계정입니다.' });
   }
 
-  const { token, credType, sizeBytes } = await issueCredentialAuto(enrollmentID, electionID);
+  const { token, credType, sizeBytes, nullifierMaterial } = await issueCredentialAuto(enrollmentID, electionID);
 
   logCredentialIssuance({
     credentialHash: crypto.createHash('sha256').update(token).digest('hex'),
@@ -197,6 +229,7 @@ router.post('/idemix', async (req, res) => {
     expiresIn:  CREDENTIAL_TTL_MS / 1000,
     credType,
     sizeBytes,
+    nullifierMaterial,
     message:    'Idemix 자격증명 발급 완료. x-idemix-credential 헤더로 투표 시 전송하세요.',
   });
 });
@@ -217,7 +250,7 @@ router.get('/public-key', (_req, res) => {
 });
 
 // ── GET /api/credential/voters (개발·테스트 전용) ───────────────
-if (process.env.NODE_ENV !== 'production') {
+if (ENABLE_DEMO_CREDENTIALS && process.env.NODE_ENV !== 'production') {
   router.get('/voters', (_req, res) => {
     const list = [...VOTER_REGISTRY.entries()].map(([id, v]) => ({
       enrollmentID: id,

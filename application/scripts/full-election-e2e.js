@@ -143,22 +143,22 @@ async function main() {
   ];
 
   const credentials = [];
+  const credentialMaterials = [];
   for (const v of voters) {
     const cred = await assertOk(`issue credential (${v.id})`, requestJson('/api/credential/idemix', {
       method: 'POST',
       body: JSON.stringify({ enrollmentID: v.id, enrollmentSecret: v.secret, electionID: ELECTION_ID }),
     }));
     credentials.push(cred.credential);
+    credentialMaterials.push(cred.nullifierMaterial);
   }
 
   // ── Phase 4: Credential 검증 (실패 조건) ────────────────────
   console.log('\n── Phase 4: Credential Failure Tests ──');
   const bf = await assertOk('fetch blinding factor', requestJson(`/api/elections/${encodeURIComponent(ELECTION_ID)}/blinding-factor`));
 
-  const makeNullifier = (suffix) => {
-    const voterSecret = sha256Hex(`${ELECTION_ID}:${Date.now()}:${crypto.randomBytes(16).toString('hex')}:${suffix}`);
-    return sha256Hex(voterSecret + ELECTION_ID + bf.blindingFactor);
-  };
+  const makeNullifier = (material) => sha256Hex(material + ELECTION_ID + bf.blindingFactor);
+  const arbitraryNullifier = (suffix) => sha256Hex(`unbound:${suffix}:${Date.now()}:${crypto.randomBytes(16).toString('hex')}`);
 
   const isBypass = health.idemix?.mode === 'bypass';
   if (isBypass) {
@@ -168,13 +168,21 @@ async function main() {
     await assertRejected('tampered credential', requestJson('/api/vote', {
       method: 'POST',
       headers: { 'x-idemix-credential': mutateTokenSignature(credentials[0]) },
-      body: JSON.stringify({ electionID: ELECTION_ID, candidateID: 'CANDIDATE_A', nullifierHash: makeNullifier('tampered') }),
+      body: JSON.stringify({ electionID: ELECTION_ID, candidateID: 'CANDIDATE_A', nullifierHash: arbitraryNullifier('tampered') }),
     }));
 
     // credential 누락 거부
     await assertRejected('missing credential', requestJson('/api/vote', {
       method: 'POST',
-      body: JSON.stringify({ electionID: ELECTION_ID, candidateID: 'CANDIDATE_A', nullifierHash: makeNullifier('nocred') }),
+      body: JSON.stringify({ electionID: ELECTION_ID, candidateID: 'CANDIDATE_A', nullifierHash: arbitraryNullifier('nocred') }),
+    }));
+
+    // 유효한 credential을 그대로 쓰고 nullifier만 바꾸는 다중투표 우회를
+    // API가 아닌 chaincode가 거부해야 한다.
+    await assertRejected('valid credential with arbitrary nullifier', requestJson('/api/vote', {
+      method: 'POST',
+      headers: { 'x-idemix-credential': credentials[0] },
+      body: JSON.stringify({ electionID: ELECTION_ID, candidateID: 'CANDIDATE_A', nullifierHash: arbitraryNullifier('credential-reuse') }),
     }));
   }
 
@@ -182,7 +190,7 @@ async function main() {
   console.log('\n── Phase 5: Vote Submission ──');
   const nullifiers = [];
   for (let i = 0; i < voters.length; i++) {
-    const nh = makeNullifier(`voter${i}`);
+    const nh = makeNullifier(credentialMaterials[i]);
     await assertOk(`vote (${voters[i].id} -> ${voters[i].candidate})`, requestJson('/api/vote', {
       method: 'POST',
       headers: { 'x-idemix-credential': credentials[i] },
@@ -204,7 +212,7 @@ async function main() {
   // 클라이언트-사이드 AES-GCM 암호화
   const encCandID = encryptAESGCM(ekResp.encryptionKeyHex, blindVoter.candidate);
   console.log(`[INFO] encrypted candidateID: ${encCandID.substring(0, 32)}...`);
-  const blindNH = makeNullifier('blind-voter4');
+  const blindNH = makeNullifier(blindCred.nullifierMaterial);
   const blindResult = await assertOk(`vote blind (${blindVoter.id} -> ${blindVoter.candidate})`, requestJson('/api/vote', {
     method: 'POST',
     headers: { 'x-idemix-credential': blindCred.credential },
@@ -607,17 +615,18 @@ async function main() {
 
   // 14e-1. ElGamal 투표용 credential 발급
   const egCredentials = [];
+  const egCredentialMaterials = [];
   for (const v of voters.slice(0, 2)) {
     const cred = await assertOk(`issue ElGamal credential (${v.id})`, requestJson('/api/credential/idemix', {
       method: 'POST',
       body: JSON.stringify({ enrollmentID: v.id, enrollmentSecret: v.secret, electionID: EG_ELECTION_ID }),
     }));
     egCredentials.push(cred.credential);
+    egCredentialMaterials.push(cred.nullifierMaterial);
   }
 
   // 투표 1: ALICE (index=0)
-  const egVoterSecret1 = crypto.randomBytes(32).toString('hex');
-  const egNullifier1 = sha256Hex(egVoterSecret1 + EG_ELECTION_ID + egBf.blindingFactor);
+  const egNullifier1 = sha256Hex(egCredentialMaterials[0] + EG_ELECTION_ID + egBf.blindingFactor);
   const vote1 = generateVectorBallot(egPubKey.pubKey, 0, EG_CANDIDATES.length);
 
   await assertOk('cast ElGamal vote (ALICE)',
@@ -635,8 +644,7 @@ async function main() {
   console.log('[INFO] Exponential ElGamal vote (ALICE) cast with ZKP');
 
   // 투표 2: BOB (index=1)
-  const egVoterSecret2 = crypto.randomBytes(32).toString('hex');
-  const egNullifier2 = sha256Hex(egVoterSecret2 + EG_ELECTION_ID + egBf.blindingFactor);
+  const egNullifier2 = sha256Hex(egCredentialMaterials[1] + EG_ELECTION_ID + egBf.blindingFactor);
   const vote2 = generateVectorBallot(egPubKey.pubKey, 1, EG_CANDIDATES.length);
 
   await assertOk('cast ElGamal vote (BOB)',
@@ -770,17 +778,18 @@ async function main() {
 
   // 15c-1. Coercion 테스트용 credential 발급
   const crCredentials = [];
+  const crCredentialMaterials = [];
   for (const v of voters) {
     const cred = await assertOk(`issue coercion credential (${v.id})`, requestJson('/api/credential/idemix', {
       method: 'POST',
       body: JSON.stringify({ enrollmentID: v.id, enrollmentSecret: v.secret, electionID: CR_ELECTION_ID }),
     }));
     crCredentials.push(cred.credential);
+    crCredentialMaterials.push(cred.nullifierMaterial);
   }
 
   // 15d. 정상 투표 (real credential)
-  const crRealSecret = crypto.randomBytes(32).toString('hex');
-  const crRealNullifier = sha256Hex(crRealSecret + CR_ELECTION_ID + crBf.blindingFactor);
+  const crRealNullifier = sha256Hex(crCredentialMaterials[0] + CR_ELECTION_ID + crBf.blindingFactor);
   await assertOk('cast REAL vote (HONEST)',
     requestJson('/api/vote', {
       method: 'POST',
@@ -794,8 +803,7 @@ async function main() {
   );
 
   // 15e. 패닉 투표 (panic credential) — 강압 하에 제출
-  const crPanicSecret = crypto.randomBytes(32).toString('hex');
-  const crPanicNullifier = sha256Hex(crPanicSecret + CR_ELECTION_ID + crBf.blindingFactor);
+  const crPanicNullifier = sha256Hex(crCredentialMaterials[1] + CR_ELECTION_ID + crBf.blindingFactor);
   await assertOk('cast PANIC vote (COERCED)',
     requestJson('/api/vote', {
       method: 'POST',
@@ -810,8 +818,7 @@ async function main() {
   );
 
   // 15f. 두 번째 정상 투표 (다른 유권자)
-  const crReal2Secret = crypto.randomBytes(32).toString('hex');
-  const crReal2Nullifier = sha256Hex(crReal2Secret + CR_ELECTION_ID + crBf.blindingFactor);
+  const crReal2Nullifier = sha256Hex(crCredentialMaterials[2] + CR_ELECTION_ID + crBf.blindingFactor);
   await assertOk('cast REAL vote 2 (COERCED)',
     requestJson('/api/vote', {
       method: 'POST',

@@ -1,7 +1,6 @@
 import { useState, useEffect } from 'react';
 import {
   computeNullifier,
-  generateVoterSecret,
   elgamalEncrypt,
   generateBallotValidityProof,
   generateVectorBallotV3,
@@ -39,6 +38,7 @@ export default function KioskPage({ electionId }) {
   const [pub, setPub] = useState(null);
   const [bf, setBf] = useState(null);
   const [cred, setCred] = useState(null);
+  const [nullifierMaterial, setNullifierMaterial] = useState(null);
   const [pick, setPick] = useState(null);
   const [phase, setPhase] = useState('loading');
   const [err, setErr] = useState('');
@@ -56,7 +56,10 @@ export default function KioskPage({ electionId }) {
         if (el.encryptionMode === 'elgamal' || el.encryptionMode === 'elgamal-vector-v3') setPub((await J(`/elections/${encodeURIComponent(electionId)}/elgamal-pubkey`)).pubKey);
         setBf((await J(`/elections/${encodeURIComponent(electionId)}/blinding-factor`)).blindingFactor);
         const voter = getDemoVoter();
-        setCred((await J('/credential/idemix', { method: 'POST', body: JSON.stringify({ enrollmentID: voter, enrollmentSecret: `${voter}pw`, electionID: electionId }) })).credential);
+        const issued = await J('/credential/idemix', { method: 'POST', body: JSON.stringify({ enrollmentID: voter, enrollmentSecret: `${voter}pw`, electionID: electionId }) });
+        if (!issued.credential || !issued.nullifierMaterial) throw new Error('자격증명 nullifier 바인딩 재료가 누락됐습니다.');
+        setCred(issued.credential);
+        setNullifierMaterial(issued.nullifierMaterial);
         setPhase('choose');
       } catch (e) { setErr(e.message); setPhase('error'); }
     })();
@@ -66,9 +69,7 @@ export default function KioskPage({ electionId }) {
     if (pick == null) return;
     setPhase('voting');
     try {
-      let vs = localStorage.getItem(`mongbas_vs_${electionId}`);
-      if (!vs) { vs = generateVoterSecret(); localStorage.setItem(`mongbas_vs_${electionId}`, vs); }
-      const nh = await computeNullifier(vs, electionId, bf);
+      const nh = await computeNullifier(nullifierMaterial, electionId, bf);
       const candidateID = election.candidates[pick];
       const body = { electionID: electionId, nullifierHash: nh, credentialType: mode === 'panic' ? 'panic' : 'real' };
 	  if (election.encryptionMode === 'elgamal-vector-v3') {

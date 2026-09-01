@@ -105,6 +105,7 @@ function verifyAsymCredential(token) {
       electionID: payload.electionID,
       expUnix: Math.floor(payload.exp / 1000),
       credType: 'ed25519',
+      nullifierMaterial: payload.nonce,
     };
   } catch (e) {
     return { valid: false, reason: `Ed25519 파싱 오류: ${e.message}` };
@@ -153,6 +154,7 @@ function verifyCredential(token) {
       electionID: payload.electionID,
       expUnix: Math.floor(payload.exp / 1000),
       credType: 'hmac',
+      nullifierMaterial: payload.nonce,
     };
   } catch (e) {
     return { valid: false, reason: `파싱 오류: ${e.message}` };
@@ -209,6 +211,7 @@ async function verifyVoterEligibility(req) {
       credType:   'ps',
       expUnix:    verified.expUnix || Math.floor(Date.now() / 1000) + 300,
       credHash:   crypto.createHash('sha256').update(credHeader).digest('hex'),
+      nullifierMaterial: verified.nullifierMaterial,
     };
   }
 
@@ -228,6 +231,7 @@ async function verifyVoterEligibility(req) {
       expUnix:    verified.expUnix || Math.floor(Date.now() / 1000) + 300,
       credHash:   crypto.createHash('sha256').update(bbsProofJson).digest('hex'),
       bbsProof:   verified.bbsProof,
+      nullifierMaterial: verified.nullifierMaterial,
     };
   }
 
@@ -261,6 +265,7 @@ async function verifyVoterEligibility(req) {
     credType:    verified.credType  || (ASYM_CRED_ENABLED ? 'ed25519' : 'hmac'),
     expUnix:     verified.expUnix  || Math.floor(Date.now() / 1000) + 300,
     credHash:    crypto.createHash('sha256').update(credHeader).digest('hex'),
+    nullifierMaterial: verified.nullifierMaterial,
   };
 
   if (CACHE_ENABLED) _cacheSet(cacheKey, result);

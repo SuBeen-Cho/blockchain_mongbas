@@ -30,16 +30,19 @@ export async function sha256(text) {
  *
  * blindingFactor는 GET /api/elections/:id/blinding-factor 로 조회합니다.
  *
- * @param {string} voterSecret    - 유권자 비밀값 (로컬 보관, 서버 미전송)
+ * @param {string} nullifierMaterial - 서명된 자격증명이 바인딩하는 선거별 중복방지 재료
  * @param {string} electionID     - 선거 ID
  * @param {string} blindingFactor - 선거별 블라인딩 팩터 (서버에서 조회)
  * @returns {Promise<string>} nullifierHash (hex)
  */
-export async function computeNullifier(voterSecret, electionID, blindingFactor) {
+export async function computeNullifier(nullifierMaterial, electionID, blindingFactor) {
+  if (!nullifierMaterial) {
+    throw new Error('credential 발급 응답의 nullifierMaterial이 필요합니다.');
+  }
   if (!blindingFactor) {
     throw new Error('blindingFactor 필요 — GET /api/elections/:id/blinding-factor 로 조회하세요.');
   }
-  return sha256(voterSecret + electionID + blindingFactor);
+  return sha256(nullifierMaterial + electionID + blindingFactor);
 }
 
 /**

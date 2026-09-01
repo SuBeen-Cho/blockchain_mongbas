@@ -2,6 +2,7 @@ package main
 
 import (
 	"crypto/sha256"
+	"fmt"
 	"math/big"
 	"strings"
 	"testing"
@@ -248,6 +249,26 @@ func TestHMACCredentialFailsClosedWithoutStrongSecret(t *testing.T) {
 	err = verifyHMACCredentialToken(nil, CredentialVerification{}, "election", 1)
 	if err == nil || !strings.Contains(err.Error(), "너무 짧") {
 		t.Fatalf("short HMAC secret must fail closed, got %v", err)
+	}
+}
+
+func TestCredentialBoundNullifierIsDeterministicAndElectionScoped(t *testing.T) {
+	wantRaw := sha256.Sum256([]byte("signed-material" + "election-a" + "blind-a"))
+	want := fmt.Sprintf("%x", wantRaw)
+	got, err := computeCredentialBoundNullifier("signed-material", "election-a", "blind-a")
+	if err != nil || got != want {
+		t.Fatalf("bound nullifier mismatch: got=%s want=%s err=%v", got, want, err)
+	}
+	again, _ := computeCredentialBoundNullifier("signed-material", "election-a", "blind-a")
+	if again != got {
+		t.Fatal("credential reissuance material must map to the same nullifier")
+	}
+	otherElection, _ := computeCredentialBoundNullifier("signed-material", "election-b", "blind-b")
+	if otherElection == got {
+		t.Fatal("the same credential material must not link to the same nullifier across elections")
+	}
+	if _, err := computeCredentialBoundNullifier("", "election-a", "blind-a"); err == nil {
+		t.Fatal("missing signed material must fail closed")
 	}
 }
 

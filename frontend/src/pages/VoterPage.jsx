@@ -3,7 +3,7 @@
  *
  * Step 1: 유권자 인증 (Idemix)
  * Step 2: 선거 선택
- * Step 3: 투표 옵션 설정 (Blind Mode, Panic, voterSecret)
+ * Step 3: 투표 옵션 설정 (Blind Mode, Panic)
  * Step 4: 후보 선택
  * Step 5: 검증 & 제출 (Benaloh Challenge + 제출)
  * Step 6: 완료 & 영수증
@@ -13,7 +13,6 @@ import { useState, useEffect } from 'react';
 import {
   computeNullifier,
   computePasswordHash,
-  generateVoterSecret,
   encryptCandidateID,
   verifyBenalohAudit,
   elgamalEncrypt,
@@ -38,10 +37,10 @@ export default function VoterPage() {
   const [enrollmentID,     setEnrollmentID]     = useState('');
   const [enrollmentSecret, setEnrollmentSecret] = useState('');
   const [idemixCredential, setIdemixCredential] = useState('');
+  const [nullifierMaterial, setNullifierMaterial] = useState('');
   const [credStatus,       setCredStatus]       = useState('');
 
   // ── 투표 입력 ───────────────────────────────────────
-  const [voterSecret,    setVoterSecret]    = useState('');
   const [candidateID,    setCandidateID]    = useState('');
   const [normalPassword, setNormalPassword] = useState('');
   const [panicPassword,  setPanicPassword]  = useState('');
@@ -102,6 +101,7 @@ export default function VoterPage() {
     if (!election || !electionID || !enrollmentID || !enrollmentSecret) return;
     setCredStatus('fetching');
     setIdemixCredential('');
+    setNullifierMaterial('');
     fetch(`${API}/credential/idemix`, {
       method:  'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -109,29 +109,29 @@ export default function VoterPage() {
     })
       .then(res => res.json())
       .then(data => {
-        if (data.credential) { setIdemixCredential(data.credential); setCredStatus('ok'); }
+        if (data.credential && data.nullifierMaterial) {
+          setIdemixCredential(data.credential);
+          setNullifierMaterial(data.nullifierMaterial);
+          setCredStatus('ok');
+        }
         else setCredStatus('error');
       })
       .catch(() => setCredStatus('error'));
   }, [election, electionID, enrollmentID, enrollmentSecret]);
 
   async function fetchElection() {
-    setError(''); setElection(null); setIdemixCredential(''); setCredStatus('');
+    setError(''); setElection(null); setIdemixCredential(''); setNullifierMaterial(''); setCredStatus('');
     try {
       const res = await fetch(`${API}/elections/${electionID}`);
       if (!res.ok) throw new Error((await res.json()).error);
       const data = await res.json();
       setElection(data);
-      // 선거가 ACTIVE면 voterSecret 자동 생성 (자동 step 이동은 하지 않음 — 사용자가 확인 후 직접 이동)
-      if (data.status === 'ACTIVE') {
-        if (!voterSecret) setVoterSecret(generateVoterSecret());
-      }
     } catch (e) { setError(e.message); }
   }
 
   async function submitVote() {
-    if (!voterSecret || !candidateID) {
-      return setError('유권자 비밀값과 후보자를 선택하세요.');
+    if (!nullifierMaterial || !candidateID) {
+      return setError('자격증명을 발급받고 후보자를 선택하세요.');
     }
     if (blindMode && !encryptionKey) {
       return setError('Blind Mode: 암호화 키를 불러오지 못했습니다.');
@@ -145,7 +145,7 @@ export default function VoterPage() {
       const bfRes = await fetch(`${API}/elections/${electionID}/blinding-factor`);
       if (!bfRes.ok) throw new Error('블라인딩 팩터 조회 실패');
       const { blindingFactor } = await bfRes.json();
-      const nullifierHash = await computeNullifier(voterSecret, electionID, blindingFactor);
+      const nullifierHash = await computeNullifier(nullifierMaterial, electionID, blindingFactor);
       setEncProgress(p => [...p, 'nullifier_done']);
 
       const body = { electionID, nullifierHash };
@@ -252,7 +252,7 @@ export default function VoterPage() {
     switch (step) {
       case 0: return enrollmentID && enrollmentSecret;
       case 1: return election?.status === 'ACTIVE';
-      case 2: return voterSecret;
+      case 2: return !!nullifierMaterial;
       case 3: return candidateID;
       case 4: return true;
       default: return false;
@@ -479,28 +479,6 @@ export default function VoterPage() {
               </span>
             </div>
           </label>
-
-          {/* voterSecret */}
-          <div>
-            <label className="block text-sm font-medium text-slate-700 mb-1.5">
-              유권자 비밀값 <span className="text-red-500 text-xs font-normal">(서버 미전송, 로컬 보관 필수)</span>
-            </label>
-            <div className="flex gap-2">
-              <input
-                className="flex-1 h-11 px-4 border border-slate-200 rounded-lg text-sm font-mono bg-white
-                  focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none transition-colors duration-200"
-                placeholder="직접 입력하거나 자동 생성"
-                value={voterSecret}
-                onChange={e => setVoterSecret(e.target.value)}
-              />
-              <button
-                onClick={() => setVoterSecret(generateVoterSecret())}
-                className="h-11 px-4 border border-slate-300 rounded-lg text-sm font-medium text-slate-700
-                  hover:bg-slate-50 active:scale-[0.98] transition-all duration-200"
-              >자동 생성</button>
-            </div>
-            <p className="text-xs text-slate-400 mt-1.5">이 값을 잃어버리면 E2E 검증이 불가합니다.</p>
-          </div>
 
           {/* Deniable Passwords */}
           <details className="rounded-xl border border-slate-200 overflow-hidden">
@@ -777,7 +755,7 @@ export default function VoterPage() {
                 <div className="flex gap-3">
                   <button
                     onClick={submitVote}
-                    disabled={loading || !voterSecret || !candidateID}
+                    disabled={loading || !nullifierMaterial || !candidateID}
                     className={`flex-1 h-12 text-white rounded-xl font-bold text-sm
                       active:scale-[0.99] disabled:opacity-40 transition-all duration-200 shadow-sm ${
                       panicMode
@@ -849,7 +827,7 @@ export default function VoterPage() {
           </div>
           {result.isRevote && (
             <Alert variant="warning">
-              이전 투표가 이 투표로 대체되었습니다. 동일한 voterSecret으로 투표하면 마지막 투표만 집계에 반영됩니다 (Last-Vote-Wins 정책).
+              이전 투표가 이 투표로 대체되었습니다. 동일한 선거별 자격증명은 항상 같은 nullifier로 연결되어 마지막 투표만 집계됩니다.
             </Alert>
           )}
 
@@ -862,7 +840,7 @@ export default function VoterPage() {
                 재투표 시 최종 1표만 유효합니다.
               </p>
               <div className="bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 text-xs text-amber-700 text-center">
-                <span className="font-semibold">voterSecret을 안전하게 보관하세요</span> — 검증 탭에서 투표 포함 여부를 확인하려면 이 값이 필요합니다. 서버에 저장되지 않으므로 분실 시 복구 불가.
+                <span className="font-semibold">투표 추적 번호를 안전하게 보관하세요.</span> 검증 탭에서 투표 포함 여부를 확인할 때 사용합니다.
               </div>
             </div>
           )}

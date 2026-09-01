@@ -221,11 +221,12 @@ function generateBallotValidityProof(pubKey, c1Hex, c2Hex, r, actualIndex, numCa
 }
 
 // ── 자격증명 발급 ───────────────────────────────────────────────
-async function issueCredential(electionID) {
+async function issueCredential(electionID, voterNumber = 1) {
+  const enrollmentID = `demo${String(voterNumber).padStart(3, '0')}`;
   const t0 = process.hrtime.bigint();
   const res = await post('/api/credential/idemix', {
-    enrollmentID: 'voter1',
-    enrollmentSecret: 'voter1pw',
+    enrollmentID,
+    enrollmentSecret: `${enrollmentID}pw`,
     electionID,
   });
   const ms = Number(process.hrtime.bigint() - t0) / 1e6;
@@ -237,6 +238,7 @@ async function issueCredential(electionID) {
     credType: res.body.credType,
     sizeBytes: Buffer.byteLength(res.body.credential, 'utf8'),
     latencyMs: +ms.toFixed(2),
+    nullifierMaterial: res.body.nullifierMaterial,
   };
 }
 
@@ -263,15 +265,19 @@ async function createElGamalElection(label) {
   if (pubKeyRes.status >= 400) throw new Error(`pubkey failed: ${pubKeyRes.status}`);
 
   const pubKey = pubKeyRes.body.pubKey || pubKeyRes.body;
-  return { electionID, pubKey };
+  const bfRes = await get(`/api/elections/${electionID}/blinding-factor`);
+  if (bfRes.status >= 400 || !bfRes.body?.blindingFactor) throw new Error(`blinding factor failed: ${bfRes.status}`);
+  return { electionID, pubKey, blindingFactor: bfRes.body.blindingFactor };
 }
 
 // ── 단일 투표 E2E 측정 ──────────────────────────────────────────
-async function measureSingleVote(electionID, pubKey, candidateIdx, authHeaders, voteIndex) {
+async function measureSingleVote(electionID, pubKey, candidateIdx, authHeaders, voteIndex, nullifierMaterial, blindingFactor) {
   const timings = {};
 
   // 1. Nullifier 생성
-  const nullifierHash = sha256Hex(`elgamal-bench-${voteIndex}-${Date.now()}-${electionID}`);
+  const nullifierHash = nullifierMaterial
+    ? sha256Hex(nullifierMaterial + electionID + blindingFactor)
+    : sha256Hex(`elgamal-bench-${voteIndex}-${Date.now()}-${electionID}`);
 
   // 2. ElGamal 암호화
   const t_enc_start = process.hrtime.bigint();
@@ -374,7 +380,7 @@ async function main() {
 
   // 1. 선거 생성 (ElGamal 모드)
   console.log('\n[1/5] 선거 생성 (ElGamal 모드)...');
-  const { electionID, pubKey } = await createElGamalElection(label);
+  const { electionID, pubKey, blindingFactor } = await createElGamalElection(label);
   console.log(`  electionID: ${electionID}`);
   console.log(`  pubKey.p length: ${pubKey.p?.length || 0} hex chars`);
 
@@ -382,11 +388,12 @@ async function main() {
   console.log('\n[2/5] 자격증명 발급...');
   const credentialSamples = [];
   let authHeaders = {};
+  const voteCredentials = [];
   if (idemix.enabled) {
-    for (let i = 0; i < 5; i++) {
-      const cred = await issueCredential(electionID);
+    for (let i = 0; i < N + WARMUP; i++) {
+      const cred = await issueCredential(electionID, i + 1);
       credentialSamples.push(cred);
-      if (i === 0) authHeaders = { 'x-idemix-credential': cred.credential };
+      voteCredentials.push(cred);
     }
     console.log(`  credType: ${credentialSamples[0].credType}`);
     console.log(`  avg latency: ${(credentialSamples.reduce((s, c) => s + c.latencyMs, 0) / credentialSamples.length).toFixed(1)}ms`);
@@ -397,7 +404,9 @@ async function main() {
   // 3. Warmup
   console.log(`\n[3/5] Warmup (${WARMUP}회)...`);
   for (let i = 0; i < WARMUP; i++) {
-    const warmupResult = await measureSingleVote(electionID, pubKey, i % CANDIDATES.length, authHeaders, `warmup-${i}`);
+    const wc = voteCredentials[i];
+    authHeaders = wc ? { 'x-idemix-credential': wc.credential } : {};
+    const warmupResult = await measureSingleVote(electionID, pubKey, i % CANDIDATES.length, authHeaders, `warmup-${i}`, wc?.nullifierMaterial, blindingFactor);
     if (!warmupResult.success) throw new Error(`warmup vote ${i} failed: HTTP ${warmupResult.status} ${warmupResult.error}`);
     process.stdout.write(`\r  warmup: ${i + 1}/${WARMUP}`);
   }
@@ -410,19 +419,11 @@ async function main() {
   const errors = {};
 
   for (let i = 0; i < N; i++) {
-    // 자격증명 갱신 (매 20회)
-    if (idemix.enabled && i > 0 && i % 20 === 0) {
-      try {
-        const cred = await issueCredential(electionID);
-        authHeaders = { 'x-idemix-credential': cred.credential };
-        credentialSamples.push(cred);
-      } catch (e) {
-        console.warn(`\n  [WARN] credential renewal failed at i=${i}: ${e.message}`);
-      }
-    }
+    const vc = voteCredentials[WARMUP + i];
+    authHeaders = vc ? { 'x-idemix-credential': vc.credential } : {};
 
     try {
-      const r = await measureSingleVote(electionID, pubKey, i % CANDIDATES.length, authHeaders, i);
+      const r = await measureSingleVote(electionID, pubKey, i % CANDIDATES.length, authHeaders, i, vc?.nullifierMaterial, blindingFactor);
       results.push(r);
       if (r.success) successCount++;
       else {

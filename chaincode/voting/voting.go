@@ -216,6 +216,91 @@ type PSCredentialToken struct {
 	ExpMs float64  `json:"expMs"`
 }
 
+// credentialNullifierMaterial returns a value that is covered by the
+// credential signature/proof. It never trusts an API-supplied standalone
+// value, so a compromised API cannot mint arbitrary nullifiers.
+func credentialNullifierMaterial(ctx contractapi.TransactionContextInterface, cv CredentialVerification) (string, error) {
+	transient, err := ctx.GetStub().GetTransient()
+	if err != nil {
+		return "", fmt.Errorf("transient 읽기 실패: %w", err)
+	}
+	switch cv.CredType {
+	case "ed25519":
+		token := string(transient["credentialToken"])
+		parts := strings.Split(token, ".")
+		if len(parts) != 3 {
+			return "", fmt.Errorf("Ed25519 credential 형식 오류")
+		}
+		payloadBytes, err := decodeBase64Flexible(parts[1])
+		if err != nil {
+			return "", fmt.Errorf("Ed25519 payload 디코딩 실패: %w", err)
+		}
+		var payload Ed25519CredentialPayload
+		if err := json.Unmarshal(payloadBytes, &payload); err != nil {
+			return "", fmt.Errorf("Ed25519 payload 파싱 실패: %w", err)
+		}
+		if payload.Nonce == "" {
+			return "", fmt.Errorf("서명된 nullifier material 누락")
+		}
+		return payload.Nonce, nil
+	case "hmac":
+		token := string(transient["credentialToken"])
+		dot := strings.LastIndex(token, ".")
+		if dot < 1 {
+			return "", fmt.Errorf("HMAC credential 형식 오류")
+		}
+		payloadBytes, err := decodeBase64Flexible(token[:dot])
+		if err != nil {
+			return "", fmt.Errorf("HMAC payload 디코딩 실패: %w", err)
+		}
+		var payload struct {
+			Nonce string `json:"nonce"`
+		}
+		if err := json.Unmarshal(payloadBytes, &payload); err != nil {
+			return "", fmt.Errorf("HMAC payload 파싱 실패: %w", err)
+		}
+		if payload.Nonce == "" {
+			return "", fmt.Errorf("서명된 nullifier material 누락")
+		}
+		return payload.Nonce, nil
+	case "ps":
+		token := strings.TrimPrefix(string(transient["credentialToken"]), "ps.")
+		credJSON, err := decodeBase64Flexible(token)
+		if err != nil {
+			return "", fmt.Errorf("PS credential 디코딩 실패: %w", err)
+		}
+		var cred PSCredentialToken
+		if err := json.Unmarshal(credJSON, &cred); err != nil {
+			return "", fmt.Errorf("PS credential 파싱 실패: %w", err)
+		}
+		if len(cred.Attrs) != 4 || cred.Attrs[3] == "" {
+			return "", fmt.Errorf("PS 서명 nullifier material 누락")
+		}
+		return cred.Attrs[3], nil
+	case "bbs":
+		var proof BBSProofPresentation
+		if err := json.Unmarshal(transient["bbsProof"], &proof); err != nil {
+			return "", fmt.Errorf("BBS proof 파싱 실패: %w", err)
+		}
+		if len(proof.RevealedAttrs) != 4 || len(proof.RevealedIndices) != 4 || proof.RevealedIndices[3] != 3 || proof.RevealedAttrs[3] == "" {
+			return "", fmt.Errorf("BBS 증명 nullifier material 누락")
+		}
+		return proof.RevealedAttrs[3], nil
+	case "bypass":
+		return "", nil
+	default:
+		return "", fmt.Errorf("알 수 없는 credential 유형")
+	}
+}
+
+func computeCredentialBoundNullifier(material, electionID, blindingFactor string) (string, error) {
+	if material == "" || electionID == "" || blindingFactor == "" {
+		return "", fmt.Errorf("nullifier 바인딩 입력 누락")
+	}
+	digest := sha256.Sum256([]byte(material + electionID + blindingFactor))
+	return hex.EncodeToString(digest[:]), nil
+}
+
 type BBSProofPresentation struct {
 	Type            string   `json:"type"`
 	Proof           string   `json:"proof"`
@@ -522,7 +607,7 @@ func verifyPSCredentialToken(ctx contractapi.TransactionContextInterface, cv Cre
 	if err := json.Unmarshal(pubKeyJSON, &pk); err != nil {
 		return fmt.Errorf("PS 공개키 JSON 파싱 실패: %w", err)
 	}
-	if pk.Curve != "bn254" || pk.Scheme != "ps" || pk.AttrCount != 3 || len(pk.Ys) != 3 {
+	if pk.Curve != "bn254" || pk.Scheme != "ps" || pk.AttrCount != 4 || len(pk.Ys) != 4 {
 		return fmt.Errorf("PS 공개키 메타데이터 불일치")
 	}
 	X, err := decodePSG2(pk.X)
@@ -557,7 +642,7 @@ func verifyPSCredentialToken(ctx contractapi.TransactionContextInterface, cv Cre
 	if err := json.Unmarshal(credJSON, &cred); err != nil {
 		return fmt.Errorf("PS credential JSON 파싱 실패: %w", err)
 	}
-	if cred.Type != "ps" || len(cred.Attrs) != 3 {
+	if cred.Type != "ps" || len(cred.Attrs) != 4 || cred.Attrs[3] == "" {
 		return fmt.Errorf("PS credential 속성 형식 오류")
 	}
 	if cred.Attrs[0] != "1" {
@@ -625,13 +710,14 @@ func verifyBBSCredentialToken(ctx contractapi.TransactionContextInterface, cv Cr
 	if err := json.Unmarshal(proofBytes, &presentation); err != nil {
 		return fmt.Errorf("BBS proof presentation JSON 파싱 실패: %w", err)
 	}
-	if presentation.Type != "bbs-proof" || len(presentation.RevealedAttrs) != 3 {
+	if presentation.Type != "bbs-proof" || len(presentation.RevealedAttrs) != 4 {
 		return fmt.Errorf("BBS proof presentation 형식 오류")
 	}
-	if len(presentation.RevealedIndices) != 3 ||
+	if len(presentation.RevealedIndices) != 4 ||
 		presentation.RevealedIndices[0] != 0 ||
 		presentation.RevealedIndices[1] != 1 ||
-		presentation.RevealedIndices[2] != 2 {
+		presentation.RevealedIndices[2] != 2 ||
+		presentation.RevealedIndices[3] != 3 || presentation.RevealedAttrs[3] == "" {
 		return fmt.Errorf("BBS proof revealed index 불일치")
 	}
 	if presentation.RevealedAttrs[0] != "1" {
@@ -660,8 +746,8 @@ func verifyBBSCredentialToken(ctx contractapi.TransactionContextInterface, cv Cr
 	if err != nil {
 		return fmt.Errorf("BBS proof payload 파싱 실패: %w", err)
 	}
-	if payload.MessagesCount != 3 || len(payload.Revealed) != 3 ||
-		payload.Revealed[0] != 0 || payload.Revealed[1] != 1 || payload.Revealed[2] != 2 {
+	if payload.MessagesCount != 4 || len(payload.Revealed) != 4 ||
+		payload.Revealed[0] != 0 || payload.Revealed[1] != 1 || payload.Revealed[2] != 2 || payload.Revealed[3] != 3 {
 		return fmt.Errorf("BBS proof payload revealed 속성 불일치")
 	}
 	messages := make([][]byte, len(presentation.RevealedAttrs))
@@ -1352,6 +1438,35 @@ func (c *VotingContract) CastVote(
 		return fmt.Errorf("자격증명 거부: %w", err)
 	}
 
+	// 서명/증명이 보호하는 선거별 결합값으로 nullifier를 독립 재계산한다.
+	// 이 검증으로 유효한 credential 하나로 임의 nullifier를 만들어 여러 표를
+	// 새로 생성하는 우회를 차단한다. bypass는 명시적 비보안 기준선이다.
+	transient, terr := ctx.GetStub().GetTransient()
+	if terr != nil {
+		return fmt.Errorf("transient 읽기 실패: %w", terr)
+	}
+	var cv CredentialVerification
+	if err := json.Unmarshal(transient["credentialVerification"], &cv); err != nil {
+		return fmt.Errorf("CredentialVerification 파싱 실패: %w", err)
+	}
+	if cv.CredType != "bypass" {
+		material, err := credentialNullifierMaterial(ctx, cv)
+		if err != nil {
+			return fmt.Errorf("nullifier 바인딩 거부: %w", err)
+		}
+		expected, err := computeCredentialBoundNullifier(material, electionID, election.BlindingFactor)
+		if err != nil {
+			return fmt.Errorf("nullifier 바인딩 거부: %w", err)
+		}
+		decoded, decErr := hex.DecodeString(nullifierHash)
+		if decErr != nil || len(decoded) != sha256.Size || nullifierHash != strings.ToLower(nullifierHash) {
+			return fmt.Errorf("nullifierHash는 64자 소문자 SHA-256 hex여야 합니다")
+		}
+		if subtle.ConstantTimeCompare([]byte(nullifierHash), []byte(expected)) != 1 {
+			return fmt.Errorf("nullifierHash가 서명된 자격증명과 일치하지 않습니다")
+		}
+	}
+
 	// ── Step 2: 재투표 확인 / Eviction 처리 (최종 1표만 유효) ──
 	existing, err := ctx.GetStub().GetState(nullifierHash)
 	if err != nil {
@@ -1370,7 +1485,7 @@ func (c *VotingContract) CastVote(
 
 	// ── Step 3: Transient Map에서 비공개 투표 데이터 읽기 ────
 	// 클라이언트는 SDK의 transient 옵션으로 {"votePrivate": <JSON bytes>} 전달
-	transient, err := ctx.GetStub().GetTransient()
+	transient, err = ctx.GetStub().GetTransient()
 	if err != nil {
 		return fmt.Errorf("Transient 데이터 읽기 실패: %w", err)
 	}
