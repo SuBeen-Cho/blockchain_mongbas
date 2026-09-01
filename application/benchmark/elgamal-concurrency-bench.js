@@ -417,7 +417,24 @@ async function main() {
   }
 }
 
-main().catch(err => {
-  console.error('[FATAL]', err);
-  process.exit(1);
-});
+if (require.main === module) {
+  main().catch(err => {
+    console.error('[FATAL]', err);
+    process.exit(1);
+  });
+}
+
+// The fixed-rate benchmark reuses the exact same live-election preparation and
+// strict tally oracle. Keeping one implementation avoids a faster but invalid
+// benchmark path that bypasses vector-v3 proofs or credential binding.
+module.exports = {
+  CANDIDATES,
+  get,
+  createElection,
+  issueCredential,
+  prepareVote,
+  castPreparedVote,
+  measureExactTally,
+  stats,
+  systemSnapshot,
+};
