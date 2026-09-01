@@ -88,6 +88,9 @@ async function main() {
     CANDIDATES.every(candidate => tally.results?.[candidate] === expectedResults[candidate]) &&
     Array.isArray(tally.vectorPartialDecryptions) && tally.vectorPartialDecryptions.length >= 2;
   if (!exact) throw new Error(`exact threshold tally mismatch: ${JSON.stringify(tally)}`);
+  if (process.env.MONGBAS_PROBE_PUBLISH_AUDIT === 'true') {
+    requireStatus(await post(`/api/elections/${electionID}/publish-audit`, {}, {}, 120000), 'publish audit');
+  }
   process.stdout.write(`${JSON.stringify({ success: true, electionID, closeMs: +close.ms.toFixed(1),
     tallyReadMs: +tallyResult.ms.toFixed(1), partialAttempts: [partial1.attempts, partial2.attempts],
     totalVotes: tally.totalVotes, expectedResults, results: tally.results, vectorPartialDecryptionProofs: tally.vectorPartialDecryptions.length })}\n`);

@@ -438,6 +438,7 @@ router.post('/:id/activate', async (req, res) => {
     await contract.submitTransaction('ActivateElection', id);
     res.json({ message: `선거 ${id}가 활성화되었습니다.` });
   } catch (err) {
+    console.error('[elections] ActivateElection error:', err.message, err.details || '');
     res.status(500).json({ error: sanitizeError(err) });
   } finally {
     gateway.close();
@@ -752,6 +753,7 @@ router.get('/:id/election-bundle-source', requireValidElectionID, async (req, re
       publishedAt: board.publishedAt,
     });
   } catch (err) {
+    console.error('[elections] election-bundle-source error:', err.message, err.details || '');
     res.status(500).json({ error: sanitizeError(err) });
   } finally {
     gateway.close();
