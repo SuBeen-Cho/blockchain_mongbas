@@ -18,6 +18,32 @@ func encryptExponentialForTest(x *big.Int, candidateIndex int, nonce int64) (str
 	return c1.Text(16), c2.Text(16)
 }
 
+func TestVectorAuditArtifactHashMatchesNodeVector(t *testing.T) {
+	vector := []ElGamalCiphertext{{C1: "2", C2: "3"}, {C1: "4", C2: "5"}}
+	proof := &VectorBallotValidityProof{
+		BitProofs: []*BallotValidityProof{
+			{A1s: []string{"6", "7"}, A2s: []string{"8", "9"}, Es: []string{"a", "b"}, Zs: []string{"c", "d"}},
+			{A1s: []string{"e", "f"}, A2s: []string{"10", "11"}, Es: []string{"12", "13"}, Zs: []string{"14", "15"}},
+		},
+		SumProof: &EqualityOfDiscreteLogsProof{A1: "16", A2: "17", E: "18", Z: "19"},
+	}
+	got, err := computeVectorAuditArtifactHash("election-a", []string{"A", "B"}, vector, proof)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const want = "8acdff8ddc9153e0139509e77abb7f0ae909006380fdceacf39a8d6178de7246"
+	if got != want {
+		t.Fatalf("cross-language artifact hash mismatch: got %s want %s", got, want)
+	}
+	changed, err := computeVectorAuditArtifactHash("election-a", []string{"B", "A"}, vector, proof)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if changed == got {
+		t.Fatal("candidate order was not bound into artifact hash")
+	}
+}
+
 func proveDisjunctionForTest(pub *ElGamalPublicKey, ciphertext ElGamalCiphertext,
 	messages []*big.Int, actual int, nonce, witness *big.Int, domain string) *BallotValidityProof {
 	y, _ := new(big.Int).SetString(pub.Y, 16)

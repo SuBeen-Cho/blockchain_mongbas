@@ -600,6 +600,45 @@ func computeCandidateCommitment(electionID, nullifierHash, encryptedCandidateID 
 	return hex.EncodeToString(raw[:])
 }
 
+// computeVectorAuditArtifactHash mirrors application/src/lib/vectorElgamal.js.
+// The marshal/unmarshal/marshal sequence converts nested structs to JSON maps;
+// encoding/json then sorts every object key, so browser and chaincode bind the
+// same artifact regardless of input object property order.
+func computeVectorAuditArtifactHash(electionID string, candidates []string, vector []ElGamalCiphertext, proof *VectorBallotValidityProof) (string, error) {
+	if err := validateElectionID(electionID); err != nil {
+		return "", err
+	}
+	if len(candidates) < 2 || len(vector) != len(candidates) || proof == nil {
+		return "", fmt.Errorf("invalid vector-v3 audit artifact")
+	}
+	for _, candidate := range candidates {
+		if candidate == "" {
+			return "", fmt.Errorf("invalid vector-v3 audit artifact candidate")
+		}
+	}
+	artifact := map[string]interface{}{
+		"schema":                    "mongbas-vector-audit-artifact/v1",
+		"electionID":                electionID,
+		"candidates":                candidates,
+		"encryptedCandidateVector":  vector,
+		"vectorBallotValidityProof": proof,
+	}
+	raw, err := json.Marshal(artifact)
+	if err != nil {
+		return "", fmt.Errorf("vector audit artifact marshal failed: %w", err)
+	}
+	var normalized interface{}
+	if err := json.Unmarshal(raw, &normalized); err != nil {
+		return "", fmt.Errorf("vector audit artifact normalization failed: %w", err)
+	}
+	canonical, err := json.Marshal(normalized)
+	if err != nil {
+		return "", fmt.Errorf("vector audit artifact canonicalization failed: %w", err)
+	}
+	digest := sha256.Sum256(canonical)
+	return hex.EncodeToString(digest[:]), nil
+}
+
 func decodeBase64Flexible(s string) ([]byte, error) {
 	if b, err := base64.StdEncoding.DecodeString(s); err == nil {
 		return b, nil
