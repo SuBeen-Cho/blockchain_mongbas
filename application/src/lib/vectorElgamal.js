@@ -129,4 +129,32 @@ function verifyVectorAuditWitness(pubKey, encryptedCandidateVector, witness) {
   }
 }
 
-module.exports = { generateVectorBallot, verifyVectorAuditWitness };
+function canonicalJson(value) {
+  if (value === null || typeof value === 'boolean' || typeof value === 'string') return JSON.stringify(value);
+  if (Number.isSafeInteger(value)) return String(value);
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`;
+  if (value && Object.getPrototypeOf(value) === Object.prototype) {
+    const keys = Object.keys(value).sort();
+    return `{${keys.map(key => `${JSON.stringify(key)}:${canonicalJson(value[key])}`).join(',')}}`;
+  }
+  throw new Error('artifact contains a non-canonical JSON value');
+}
+
+function vectorArtifactHash({ electionID, candidates, encryptedCandidateVector, vectorBallotValidityProof }) {
+  if (typeof electionID !== 'string' || electionID.length === 0 || !Array.isArray(candidates) || candidates.length < 2 ||
+      candidates.some(candidate => typeof candidate !== 'string' || candidate.length === 0) ||
+      !Array.isArray(encryptedCandidateVector) || encryptedCandidateVector.length !== candidates.length ||
+      !vectorBallotValidityProof) {
+    throw new Error('invalid vector-v3 audit artifact');
+  }
+  const artifact = {
+    schema: 'mongbas-vector-audit-artifact/v1',
+    electionID,
+    candidates,
+    encryptedCandidateVector,
+    vectorBallotValidityProof,
+  };
+  return crypto.createHash('sha256').update(canonicalJson(artifact), 'utf8').digest('hex');
+}
+
+module.exports = { generateVectorBallot, verifyVectorAuditWitness, vectorArtifactHash };
