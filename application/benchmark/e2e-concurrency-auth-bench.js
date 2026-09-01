@@ -170,6 +170,12 @@ async function runConcurrency(label, concurrency, idemixEnabled) {
 }
 
 async function main() {
+  if (process.env.ALLOW_LEGACY_AUTH_BENCHMARK !== 'true') {
+    throw new Error(
+      'legacy auth saturation benchmark is disabled because it does not use the vector-v3 ' +
+      'credential-bound workload; use deploy/linux/rate-evaluation.sh',
+    );
+  }
   const health = await get('/health');
   if (health.status !== 200) throw new Error('API server is not ready');
   const idemix = health.body.idemix || {};
@@ -198,6 +204,7 @@ async function main() {
   }
 
   const result = {
+    evidenceClass: 'legacy-non-authoritative',
     label,
     timestamp: new Date().toISOString(),
     health: { idemix, memory: health.body.memory },
@@ -208,6 +215,9 @@ async function main() {
   fs.mkdirSync(path.dirname(OUT), { recursive: true });
   fs.writeFileSync(OUT, JSON.stringify(result, null, 2));
   console.log(`result saved: ${OUT}`);
+  if (rounds.length === 0 || rounds[0].success !== rounds[0].concurrency) {
+    throw new Error('legacy saturation baseline round was not zero-failure; result retained but rejected');
+  }
 }
 
 main().catch(err => {
