@@ -21,7 +21,6 @@ class ConcurrencyGate {
         if (index >= 0) this.queue.splice(index, 1);
         reject(Object.assign(new Error('Fabric 요청 대기 시간을 초과했습니다.'), { code: 'FABRIC_QUEUE_TIMEOUT' }));
       }, this.waitTimeoutMs);
-      waiter.timer.unref?.();
       this.queue.push(waiter);
     });
   }
