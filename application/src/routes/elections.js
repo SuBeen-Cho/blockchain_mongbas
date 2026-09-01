@@ -192,8 +192,8 @@ router.post('/', async (req, res) => {
 
   // [PAPER-11] 암호화 모드 검증
   const mode = encryptionMode || 'aes';
-  if (!['aes', 'elgamal'].includes(mode)) {
-    return res.status(400).json({ error: 'encryptionMode는 "aes" 또는 "elgamal"이어야 합니다.' });
+  if (!['aes', 'elgamal', 'elgamal-vector-v3'].includes(mode)) {
+    return res.status(400).json({ error: 'encryptionMode는 "aes", "elgamal", "elgamal-vector-v3" 중 하나여야 합니다.' });
   }
 
   const actualStartTime = startTime || Math.floor(Date.now() / 1000);
@@ -203,12 +203,12 @@ router.post('/', async (req, res) => {
     // [PAPER-11] encryptionMode를 transient data로 전달
     const args = [electionID, title, description || '', JSON.stringify(candidates), String(actualStartTime), String(endTime)];
     const proposalOpts = { arguments: args };
-    if (mode === 'elgamal') {
+    if (mode === 'elgamal' || mode === 'elgamal-vector-v3') {
       // [P2 보안] ElGamal 키를 공개 txID가 아닌 "비밀 seed"로 유도하도록 masterSeed를 transient로 전달.
       //   transient는 오더러/원장에 기록되지 않으므로 키가 공개 데이터로 재계산되지 않는다.
       //   서버는 seed를 저장/로깅하지 않고 즉시 폐기한다(trusted dealer 가정).
       proposalOpts.transientData = {
-        encryptionMode: Buffer.from('elgamal'),
+        encryptionMode: Buffer.from(mode),
         masterSeed: crypto.randomBytes(32),
       };
     }

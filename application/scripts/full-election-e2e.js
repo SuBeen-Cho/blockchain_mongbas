@@ -3,6 +3,7 @@
 'use strict';
 
 const crypto = require('crypto');
+const { generateVectorBallot } = require('../src/lib/vectorElgamal');
 
 const BASE_URL = (process.env.E2E_BASE_URL || 'http://localhost:3000').replace(/\/$/, '');
 const ELECTION_ID = process.env.E2E_ELECTION_ID || `full-e2e-${Date.now()}`;
@@ -472,7 +473,7 @@ async function main() {
         candidates: EG_CANDIDATES,
         startTime: egStartTime,
         endTime: egEndTime,
-        encryptionMode: 'elgamal',
+        encryptionMode: 'elgamal-vector-v3',
       }),
     })
   );
@@ -487,7 +488,7 @@ async function main() {
     requestJson(`/api/elections/${EG_ELECTION_ID}`)
   );
   console.log(`[INFO] ElGamal election mode: ${egElection.encryptionMode}`);
-  if (egElection.encryptionMode !== 'elgamal') throw new Error('Election mode is not elgamal');
+  if (egElection.encryptionMode !== 'elgamal-vector-v3') throw new Error('Election mode is not elgamal-vector-v3');
 
   // 14d. ElGamal 공개키 조회
   const egPubKey = await assertOk('get ElGamal public key',
@@ -604,7 +605,7 @@ async function main() {
   // 투표 1: ALICE (index=0)
   const egVoterSecret1 = crypto.randomBytes(32).toString('hex');
   const egNullifier1 = sha256Hex(egVoterSecret1 + EG_ELECTION_ID + egBf.blindingFactor);
-  const vote1 = expElGamalEncryptWithZKP(0, EG_CANDIDATES.length);
+  const vote1 = generateVectorBallot(egPubKey.pubKey, 0, EG_CANDIDATES.length);
 
   await assertOk('cast ElGamal vote (ALICE)',
     requestJson('/api/vote', {
@@ -612,9 +613,9 @@ async function main() {
       headers: { 'x-idemix-credential': egCredentials[0] },
       body: JSON.stringify({
         electionID: EG_ELECTION_ID,
-        encryptedCandidateID: vote1.encrypted,
+        encryptedCandidateVector: vote1.encryptedCandidateVector,
         nullifierHash: egNullifier1,
-        ballotValidityProof: JSON.stringify(vote1.proof),
+        vectorBallotValidityProof: vote1.vectorBallotValidityProof,
       }),
     })
   );
@@ -623,7 +624,7 @@ async function main() {
   // 투표 2: BOB (index=1)
   const egVoterSecret2 = crypto.randomBytes(32).toString('hex');
   const egNullifier2 = sha256Hex(egVoterSecret2 + EG_ELECTION_ID + egBf.blindingFactor);
-  const vote2 = expElGamalEncryptWithZKP(1, EG_CANDIDATES.length);
+  const vote2 = generateVectorBallot(egPubKey.pubKey, 1, EG_CANDIDATES.length);
 
   await assertOk('cast ElGamal vote (BOB)',
     requestJson('/api/vote', {
@@ -631,9 +632,9 @@ async function main() {
       headers: { 'x-idemix-credential': egCredentials[1] },
       body: JSON.stringify({
         electionID: EG_ELECTION_ID,
-        encryptedCandidateID: vote2.encrypted,
+        encryptedCandidateVector: vote2.encryptedCandidateVector,
         nullifierHash: egNullifier2,
-        ballotValidityProof: JSON.stringify(vote2.proof),
+        vectorBallotValidityProof: vote2.vectorBallotValidityProof,
       }),
     })
   );
@@ -650,8 +651,8 @@ async function main() {
   if (encryptedEgTally.decrypted !== false) {
     throw new Error(`ElGamal tally must remain encrypted before threshold reconstruction: ${JSON.stringify(encryptedEgTally)}`);
   }
-  if (!encryptedEgTally.encAggC1 || !encryptedEgTally.encAggC2) {
-    throw new Error('encrypted ElGamal tally is missing aggregate ciphertext');
+  if (encryptedEgTally.encAggVector?.length !== EG_CANDIDATES.length) {
+    throw new Error('encrypted vector-v3 tally is missing candidate aggregate ciphertexts');
   }
   if (encryptedEgTally.decryptionProofs?.length) {
     throw new Error('decryption proofs must not exist before threshold reconstruction');
@@ -693,8 +694,8 @@ async function main() {
   if (egTally.decrypted !== true) {
     throw new Error(`ElGamal tally must be marked decrypted after threshold reconstruction: ${JSON.stringify(egTally)}`);
   }
-  if (egTally.partialDecryptions?.length !== 2 || egTally.partialDecryptions.some((p) => !p.value || !p.proof || p.shareHex)) {
-    throw new Error(`expected exactly two proof-carrying partial decryptions and no raw shares: ${JSON.stringify(egTally.partialDecryptions)}`);
+  if (egTally.vectorPartialDecryptions?.length !== 2 || egTally.vectorPartialDecryptions.some((p) => p.values?.length !== EG_CANDIDATES.length || p.proofs?.length !== EG_CANDIDATES.length || p.shareHex)) {
+    throw new Error(`expected exactly two proof-carrying vector partial decryptions and no raw shares: ${JSON.stringify(egTally.vectorPartialDecryptions)}`);
   }
 
   // 14i. ZKP 검증 (동형 집계 증명)

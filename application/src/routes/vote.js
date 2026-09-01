@@ -51,9 +51,11 @@ const router = express.Router();
 router.post('/', async (req, res) => {
   const { electionID, candidateID, nullifierHash,
           encryptedCandidateID,
+          encryptedCandidateVector,
           normalPWHash, panicPWHash, panicCandidateID,
           credentialType,
-          ballotValidityProof } = req.body; // [PAPER-12] credentialType, [PAPER-13] ballotValidityProof
+          ballotValidityProof,
+          vectorBallotValidityProof } = req.body;
 
   // ── 필수 필드 검증 ─────────────────────────────────────────
   // [PAPER-1] blind mode: candidateID 없이 encryptedCandidateID만 제공 가능
@@ -62,9 +64,9 @@ router.post('/', async (req, res) => {
       error: 'electionID, nullifierHash 필드가 필요합니다.',
     });
   }
-  if (!candidateID && !encryptedCandidateID) {
+  if (!candidateID && !encryptedCandidateID && !encryptedCandidateVector) {
     return res.status(400).json({
-      error: 'candidateID 또는 encryptedCandidateID 중 하나가 필요합니다.',
+      error: 'candidateID, encryptedCandidateID, encryptedCandidateVector 중 하나가 필요합니다.',
     });
   }
 
@@ -83,7 +85,7 @@ router.post('/', async (req, res) => {
   const { gateway, contract } = await connectGateway();
   try {
     // [PAPER-1] blind mode 판별: encryptedCandidateID가 있으면 blind mode
-    const isBlindMode = !candidateID && !!encryptedCandidateID;
+    const isBlindMode = !candidateID && (!!encryptedCandidateID || !!encryptedCandidateVector);
 
     // PDC에 저장될 비공개 데이터 (오더러 미전달)
     const votePrivateData = {
@@ -97,7 +99,8 @@ router.post('/', async (req, res) => {
     };
     // blind mode: 클라이언트가 암호화한 candidateID를 transient에 포함
     if (isBlindMode) {
-      votePrivateData.encryptedCandidateID = encryptedCandidateID;
+      if (encryptedCandidateID) votePrivateData.encryptedCandidateID = encryptedCandidateID;
+      if (encryptedCandidateVector) votePrivateData.encryptedCandidateVector = encryptedCandidateVector;
     }
 
     // ※ transientData로 전달 — PDC 경로로만 피어에 전달됨
@@ -140,6 +143,10 @@ router.post('/', async (req, res) => {
     // [PAPER-13] Ballot Validity Proof — ElGamal Exponential mode용 ZKP
     if (ballotValidityProof) {
       transientData.ballotValidityProof = Buffer.from(ballotValidityProof);
+    }
+    if (vectorBallotValidityProof) {
+      transientData.vectorBallotValidityProof = Buffer.from(
+        typeof vectorBallotValidityProof === 'string' ? vectorBallotValidityProof : JSON.stringify(vectorBallotValidityProof));
     }
 
     // Panic Mode 비밀번호 해시가 제공된 경우 PDC에 함께 저장

@@ -383,6 +383,92 @@ export function generateBallotValidityProof(pubKey, c1Hex, c2Hex, r, actualIndex
   return { a1s, a2s, es, zs };
 }
 
+function randomScalar(q) {
+  const bytes = new Uint8Array(32);
+  crypto.getRandomValues(bytes);
+  const value = bytesToBigInt(bytes) % q;
+  return value === 0n ? 1n : value;
+}
+
+function generateExplicitMessageOrProof(pubKey, ciphertext, witness, actualIndex, messages, domain) {
+  const p = BigInt('0x' + pubKey.p);
+  const g = BigInt('0x' + pubKey.g);
+  const y = BigInt('0x' + pubKey.y);
+  const q = (p - 1n) / 2n;
+  const c1 = BigInt('0x' + ciphertext.c1);
+  const c2 = BigInt('0x' + ciphertext.c2);
+  const a1s = new Array(messages.length);
+  const a2s = new Array(messages.length);
+  const es = new Array(messages.length);
+  const zs = new Array(messages.length);
+  const k = randomScalar(q);
+  let simulatedSum = 0n;
+  for (let i = 0; i < messages.length; i++) {
+    if (i === actualIndex) continue;
+    const e = randomScalar(q);
+    const z = randomScalar(q);
+    const adjusted = (c2 * modInverse(messages[i], p)) % p;
+    a1s[i] = ((modPow(g, z, p) * modPow(modInverse(c1, p), e, p)) % p).toString(16);
+    a2s[i] = ((modPow(y, z, p) * modPow(modInverse(adjusted, p), e, p)) % p).toString(16);
+    es[i] = e.toString(16);
+    zs[i] = z.toString(16);
+    simulatedSum = (simulatedSum + e) % q;
+  }
+  a1s[actualIndex] = modPow(g, k, p).toString(16);
+  a2s[actualIndex] = modPow(y, k, p).toString(16);
+  let transcript = `${domain}|${g.toString(16)}|${y.toString(16)}|${c1.toString(16)}|${c2.toString(16)}`;
+  for (let i = 0; i < messages.length; i++) {
+    transcript += `|${messages[i].toString(16)}|${a1s[i]}|${a2s[i]}`;
+  }
+  const challenge = syncSha256ToBigInt(transcript) % q;
+  const realChallenge = ((challenge - simulatedSum) % q + q) % q;
+  es[actualIndex] = realChallenge.toString(16);
+  zs[actualIndex] = ((k + realChallenge * witness) % q).toString(16);
+  return { a1s, a2s, es, zs };
+}
+
+/** Generate a vector-v3 one-hot ballot and its public validity proof. */
+export function generateVectorBallotV3(pubKey, selectedIndex, candidateCount) {
+  if (!Number.isInteger(selectedIndex) || !Number.isInteger(candidateCount) ||
+      selectedIndex < 0 || selectedIndex >= candidateCount || candidateCount < 2) {
+    throw new Error('vector-v3 candidate index/count invalid');
+  }
+  const p = BigInt('0x' + pubKey.p);
+  const g = BigInt('0x' + pubKey.g);
+  const y = BigInt('0x' + pubKey.y);
+  const q = (p - 1n) / 2n;
+  const messages = [1n, g];
+  const encryptedCandidateVector = [];
+  const bitProofs = [];
+  let randomnessSum = 0n;
+  let productC1 = 1n;
+  let productC2 = 1n;
+  for (let i = 0; i < candidateCount; i++) {
+    const bit = i === selectedIndex ? 1 : 0;
+    const r = randomScalar(q);
+    const c1 = modPow(g, r, p);
+    const c2 = (modPow(y, r, p) * (bit === 1 ? g : 1n)) % p;
+    const ciphertext = { c1: c1.toString(16), c2: c2.toString(16) };
+    encryptedCandidateVector.push(ciphertext);
+    bitProofs.push(generateExplicitMessageOrProof(pubKey, ciphertext, r, bit, messages, `mongbas/vector-v3/bit/${i}`));
+    randomnessSum = (randomnessSum + r) % q;
+    productC1 = (productC1 * c1) % p;
+    productC2 = (productC2 * c2) % p;
+  }
+  const result2 = (productC2 * modInverse(g, p)) % p;
+  const k = randomScalar(q);
+  const a1 = modPow(g, k, p);
+  const a2 = modPow(y, k, p);
+  const domain = 'mongbas/vector-v3/sum';
+  const transcript = `${domain}|${g.toString(16)}|${y.toString(16)}|${productC1.toString(16)}|${result2.toString(16)}|${a1.toString(16)}|${a2.toString(16)}`;
+  const e = syncSha256ToBigInt(transcript) % q;
+  const z = (k + e * randomnessSum) % q;
+  return {
+    encryptedCandidateVector,
+    vectorBallotValidityProof: { bitProofs, sumProof: { a1: a1.toString(16), a2: a2.toString(16), e: e.toString(16), z: z.toString(16) } },
+  };
+}
+
 /**
  * [PAPER-11] Chaum-Pedersen ZKP 검증 (브라우저 독립 검증)
  *

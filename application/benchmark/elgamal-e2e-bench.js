@@ -28,6 +28,7 @@ const crypto = require('crypto');
 const fs = require('fs');
 const http = require('http');
 const path = require('path');
+const { generateVectorBallot } = require('../src/lib/vectorElgamal');
 
 // ── CLI 인자 ────────────────────────────────────────────────────
 const args = {};
@@ -247,7 +248,7 @@ async function createElGamalElection(label) {
     candidates: CANDIDATES,
     startTime: now,
     endTime: now + 7200,
-    encryptionMode: 'elgamal',
+    encryptionMode: 'elgamal-vector-v3',
   });
   if (create.status >= 400) throw new Error(`create failed: ${create.status} ${JSON.stringify(create.body)}`);
 
@@ -271,24 +272,21 @@ async function measureSingleVote(electionID, pubKey, candidateIdx, authHeaders, 
 
   // 2. ElGamal 암호화
   const t_enc_start = process.hrtime.bigint();
-  const encrypted = elgamalEncrypt(pubKey, candidateIdx);
+  const encrypted = generateVectorBallot(pubKey, candidateIdx, CANDIDATES.length);
   timings.clientEncryptMs = Number(process.hrtime.bigint() - t_enc_start) / 1e6;
 
   // 3. ZKP 생성
   const t_zkp_start = process.hrtime.bigint();
-  const proof = generateBallotValidityProof(
-    pubKey, encrypted.c1, encrypted.c2, encrypted._r,
-    candidateIdx, CANDIDATES.length
-  );
+  const proof = encrypted.vectorBallotValidityProof;
   timings.clientZkpMs = Number(process.hrtime.bigint() - t_zkp_start) / 1e6;
 
   // 4. 페이로드 구성
   const voteBody = {
     electionID,
     nullifierHash,
-    encryptedCandidateID: encrypted.c1 + ':' + encrypted.c2,
+    encryptedCandidateVector: encrypted.encryptedCandidateVector,
     voterID: `bench-voter-${voteIndex}`,
-    ballotValidityProof: JSON.stringify(proof),
+    vectorBallotValidityProof: proof,
   };
   const payloadBytes = Buffer.byteLength(JSON.stringify(voteBody), 'utf8');
 
@@ -348,11 +346,6 @@ async function measureTally(electionID, expectedResults) {
 async function main() {
   console.log('═══════════════════════════════════════════════════');
 
-  let capacityBound = BigInt(N + WARMUP + 1);
-  for (let i = 0; i < CANDIDATES.length - 1; i++) capacityBound *= HOMOMORPHIC_BASE;
-  if (capacityBound > MAX_BSGS_SEARCH) {
-    throw new Error(`scalar-v1 capacity exceeded before run: (N+warmup+1)*base^(candidates-1)=${capacityBound} > ${MAX_BSGS_SEARCH}; implement vector tally for this workload`);
-  }
   console.log(' ElGamal E2E Benchmark');
   console.log('═══════════════════════════════════════════════════');
 
@@ -460,7 +453,7 @@ async function main() {
     timestamp: new Date().toISOString(),
     config: {
       N, WARMUP, candidates: CANDIDATES.length,
-      encryptionMode: 'elgamal',
+      encryptionMode: 'elgamal-vector-v3',
       idemix,
       url: BASE,
     },

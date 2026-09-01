@@ -17,6 +17,159 @@ func encryptExponentialForTest(x *big.Int, candidateIndex int, nonce int64) (str
 	return c1.Text(16), c2.Text(16)
 }
 
+func proveDisjunctionForTest(pub *ElGamalPublicKey, ciphertext ElGamalCiphertext,
+	messages []*big.Int, actual int, nonce, witness *big.Int, domain string) *BallotValidityProof {
+	y, _ := new(big.Int).SetString(pub.Y, 16)
+	c1, _ := new(big.Int).SetString(ciphertext.C1, 16)
+	c2, _ := new(big.Int).SetString(ciphertext.C2, 16)
+	proof := &BallotValidityProof{A1s: make([]string, len(messages)), A2s: make([]string, len(messages)), Es: make([]string, len(messages)), Zs: make([]string, len(messages))}
+	sumSimulated := big.NewInt(0)
+	for i, message := range messages {
+		if i == actual {
+			proof.A1s[i] = new(big.Int).Exp(elgamalG, nonce, elgamalP).Text(16)
+			proof.A2s[i] = new(big.Int).Exp(y, nonce, elgamalP).Text(16)
+			continue
+		}
+		e := big.NewInt(int64(11 + i))
+		z := big.NewInt(int64(23 + i))
+		adjusted := new(big.Int).Mul(c2, new(big.Int).ModInverse(message, elgamalP))
+		adjusted.Mod(adjusted, elgamalP)
+		a1 := new(big.Int).Mul(new(big.Int).Exp(elgamalG, z, elgamalP),
+			new(big.Int).ModInverse(new(big.Int).Exp(c1, e, elgamalP), elgamalP))
+		a1.Mod(a1, elgamalP)
+		a2 := new(big.Int).Mul(new(big.Int).Exp(y, z, elgamalP),
+			new(big.Int).ModInverse(new(big.Int).Exp(adjusted, e, elgamalP), elgamalP))
+		a2.Mod(a2, elgamalP)
+		proof.A1s[i], proof.A2s[i], proof.Es[i], proof.Zs[i] = a1.Text(16), a2.Text(16), e.Text(16), z.Text(16)
+		sumSimulated.Add(sumSimulated, e)
+	}
+	transcript := domain + "|" + elgamalG.Text(16) + "|" + y.Text(16) + "|" + c1.Text(16) + "|" + c2.Text(16)
+	for i, message := range messages {
+		transcript += "|" + message.Text(16) + "|" + proof.A1s[i] + "|" + proof.A2s[i]
+	}
+	digest := sha256.Sum256([]byte(transcript))
+	challenge := new(big.Int).SetBytes(digest[:])
+	challenge.Mod(challenge, elgamalQ)
+	eActual := new(big.Int).Sub(challenge, sumSimulated)
+	eActual.Mod(eActual, elgamalQ)
+	zActual := new(big.Int).Mul(eActual, witness)
+	zActual.Add(zActual, nonce).Mod(zActual, elgamalQ)
+	proof.Es[actual], proof.Zs[actual] = eActual.Text(16), zActual.Text(16)
+	return proof
+}
+
+func proveEqualityForTest(base1, base2, result1, result2, witness, nonce *big.Int, domain string) *EqualityOfDiscreteLogsProof {
+	a1 := new(big.Int).Exp(base1, nonce, elgamalP)
+	a2 := new(big.Int).Exp(base2, nonce, elgamalP)
+	transcript := domain + "|" + base1.Text(16) + "|" + base2.Text(16) + "|" + result1.Text(16) + "|" + result2.Text(16) + "|" + a1.Text(16) + "|" + a2.Text(16)
+	digest := sha256.Sum256([]byte(transcript))
+	e := new(big.Int).SetBytes(digest[:])
+	e.Mod(e, elgamalQ)
+	z := new(big.Int).Mul(e, witness)
+	z.Add(z, nonce).Mod(z, elgamalQ)
+	return &EqualityOfDiscreteLogsProof{A1: a1.Text(16), A2: a2.Text(16), E: e.Text(16), Z: z.Text(16)}
+}
+
+func vectorBallotForTest(pub *ElGamalPublicKey, selected, size int) ([]ElGamalCiphertext, *VectorBallotValidityProof) {
+	y, _ := new(big.Int).SetString(pub.Y, 16)
+	messages := []*big.Int{big.NewInt(1), new(big.Int).Set(elgamalG)}
+	ciphertexts := make([]ElGamalCiphertext, size)
+	proof := &VectorBallotValidityProof{BitProofs: make([]*BallotValidityProof, size)}
+	rSum, productC1, productC2 := big.NewInt(0), big.NewInt(1), big.NewInt(1)
+	for i := 0; i < size; i++ {
+		bit := 0
+		if i == selected {
+			bit = 1
+		}
+		r := big.NewInt(int64(31 + i))
+		c1 := new(big.Int).Exp(elgamalG, r, elgamalP)
+		c2 := new(big.Int).Exp(y, r, elgamalP)
+		if bit == 1 {
+			c2.Mul(c2, elgamalG).Mod(c2, elgamalP)
+		}
+		ciphertexts[i] = ElGamalCiphertext{C1: c1.Text(16), C2: c2.Text(16)}
+		proof.BitProofs[i] = proveDisjunctionForTest(pub, ciphertexts[i], messages, bit, big.NewInt(int64(71+i)), r, "mongbas/vector-v3/bit/"+big.NewInt(int64(i)).String())
+		rSum.Add(rSum, r).Mod(rSum, elgamalQ)
+		productC1.Mul(productC1, c1).Mod(productC1, elgamalP)
+		productC2.Mul(productC2, c2).Mod(productC2, elgamalP)
+	}
+	productC2DivG := new(big.Int).Mul(productC2, new(big.Int).ModInverse(elgamalG, elgamalP))
+	productC2DivG.Mod(productC2DivG, elgamalP)
+	proof.SumProof = proveEqualityForTest(elgamalG, y, productC1, productC2DivG, rSum, big.NewInt(101), "mongbas/vector-v3/sum")
+	return ciphertexts, proof
+}
+
+func TestVectorBallotOneHotProofAndTampering(t *testing.T) {
+	_, pub := elgamalGenerateKeyPair([]byte("vector-v3-known-answer"))
+	ciphertexts, proof := vectorBallotForTest(pub, 1, 3)
+	if !verifyVectorBallotValidityZKP(pub, ciphertexts, proof) {
+		t.Fatal("valid one-hot vector ballot was rejected")
+	}
+	tampered := append([]ElGamalCiphertext(nil), ciphertexts...)
+	tampered[0].C2 = new(big.Int).Mul(elgamalG, elgamalG).Text(16)
+	if verifyVectorBallotValidityZKP(pub, tampered, proof) {
+		t.Fatal("tampered vector ciphertext was accepted")
+	}
+	tamperedProof := *proof
+	tamperedSum := *proof.SumProof
+	tamperedSum.Z = "0"
+	tamperedProof.SumProof = &tamperedSum
+	if verifyVectorBallotValidityZKP(pub, ciphertexts, &tamperedProof) {
+		t.Fatal("tampered one-hot sum proof was accepted")
+	}
+}
+
+func TestVectorAggregateThresholdDecryptionScalesByVotesNotCandidates(t *testing.T) {
+	secret, pub := elgamalGenerateKeyPair([]byte("vector-v3-threshold"))
+	coefficient := new(big.Int).SetBytes([]byte("vector-v3-coefficient"))
+	coefficient.Mod(coefficient, elgamalQ)
+	shares, err := deriveThresholdShares(secret, coefficient, 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []int{37, 41, 22}
+	for candidateIndex, expected := range want {
+		accC1, accC2 := big.NewInt(1), big.NewInt(1)
+		for vote := 0; vote < 100; vote++ {
+			bit := 0
+			if vote >= prefixSum(want, candidateIndex) && vote < prefixSum(want, candidateIndex+1) {
+				bit = 1
+			}
+			r := big.NewInt(int64(1000 + candidateIndex*100 + vote))
+			y, _ := new(big.Int).SetString(pub.Y, 16)
+			c1 := new(big.Int).Exp(elgamalG, r, elgamalP)
+			c2 := new(big.Int).Exp(y, r, elgamalP)
+			if bit == 1 {
+				c2.Mul(c2, elgamalG).Mod(c2, elgamalP)
+			}
+			accC1.Mul(accC1, c1).Mod(accC1, elgamalP)
+			accC2.Mul(accC2, c2).Mod(accC2, elgamalP)
+		}
+		partials := map[int]*big.Int{
+			1: new(big.Int).Exp(accC1, shares[0], elgamalP),
+			3: new(big.Int).Exp(accC1, shares[2], elgamalP),
+		}
+		combined, combineErr := combinePartialDecryptionValues(partials)
+		if combineErr != nil {
+			t.Fatal(combineErr)
+		}
+		gm := new(big.Int).Mul(accC2, new(big.Int).ModInverse(combined, elgamalP))
+		gm.Mod(gm, elgamalP)
+		got, bsgsErr := babyStepGiantStep(gm, elgamalG, elgamalP, 101)
+		if bsgsErr != nil || int(got) != expected {
+			t.Fatalf("candidate %d: want %d got %d err=%v", candidateIndex, expected, got, bsgsErr)
+		}
+	}
+}
+
+func prefixSum(values []int, end int) int {
+	total := 0
+	for i := 0; i < end && i < len(values); i++ {
+		total += values[i]
+	}
+	return total
+}
+
 func TestExponentialElGamalAggregateOneToOne(t *testing.T) {
 	x, _ := elgamalGenerateKeyPair([]byte("aggregate-1-to-1-known-answer"))
 	a1, a2 := encryptExponentialForTest(x, 0, 17)

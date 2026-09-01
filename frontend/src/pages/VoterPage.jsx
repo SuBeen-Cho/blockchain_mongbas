@@ -18,6 +18,7 @@ import {
   verifyBenalohAudit,
   elgamalEncrypt,
   generateBallotValidityProof,
+  generateVectorBallotV3,
 } from '../utils/crypto.js';
 import Stepper from '../components/Stepper.jsx';
 import HashDisplay from '../components/HashDisplay.jsx';
@@ -71,7 +72,8 @@ export default function VoterPage() {
 
   // ── ElGamal ────────────────────────────────────────
   const [elgamalPubKey, setElgamalPubKey] = useState(null);
-  const isElGamal = election?.encryptionMode === 'elgamal';
+  const isElGamal = election?.encryptionMode === 'elgamal' || election?.encryptionMode === 'elgamal-vector-v3';
+	const isVectorV3 = election?.encryptionMode === 'elgamal-vector-v3';
 
   useEffect(() => {
     fetch('/health').then(r => r.json())
@@ -154,13 +156,17 @@ export default function VoterPage() {
         if (isElGamal && elgamalPubKey) {
           const candidateIndex = (election?.candidates || []).indexOf(candidateID);
           if (candidateIndex < 0) throw new Error('후보자를 선택해주세요');
-          const { c1, c2, _r } = elgamalEncrypt(elgamalPubKey, candidateID, candidateIndex);
-          body.encryptedCandidateID = `${c1}:${c2}`;
           setEncProgress(p => [...p, 'encrypt_done', 'zkp']);
-          const bvp = generateBallotValidityProof(
-            elgamalPubKey, c1, c2, _r, candidateIndex, election.candidates.length
-          );
-          body.ballotValidityProof = JSON.stringify(bvp);
+		  if (isVectorV3) {
+			const vectorBallot = generateVectorBallotV3(elgamalPubKey, candidateIndex, election.candidates.length);
+			body.encryptedCandidateVector = vectorBallot.encryptedCandidateVector;
+			body.vectorBallotValidityProof = vectorBallot.vectorBallotValidityProof;
+		  } else {
+			const { c1, c2, _r } = elgamalEncrypt(elgamalPubKey, candidateID, candidateIndex);
+			body.encryptedCandidateID = `${c1}:${c2}`;
+			body.ballotValidityProof = JSON.stringify(generateBallotValidityProof(
+			  elgamalPubKey, c1, c2, _r, candidateIndex, election.candidates.length));
+		  }
           setEncProgress(p => [...p, 'zkp_done']);
         } else {
           body.encryptedCandidateID = await encryptCandidateID(encryptionKey, candidateID);

@@ -142,7 +142,7 @@ type Election struct {
 	// 비밀키는 PDC에만 저장 → Shamir으로 분산 → threshold 복호화로 집계.
 	EncryptionPubKey string `json:"encryptionPubKey,omitempty" metadata:",optional"` // AES-256 키를 감싼 공개키 (hex)
 	// [PAPER-11] 암호화 모드: "aes" (기본) 또는 "elgamal"
-	EncryptionMode string `json:"encryptionMode,omitempty" metadata:",optional"` // "aes" | "elgamal"
+	EncryptionMode string `json:"encryptionMode,omitempty" metadata:",optional"` // "aes" | "elgamal" | "elgamal-vector-v3"
 	// [PAPER-11] ElGamal 공개키 (elgamal 모드일 때만 사용)
 	ElGamalPubKey *ElGamalPublicKey `json:"elgamalPubKey,omitempty" metadata:",optional"`
 	// ThresholdPublicShares are trustee verification keys y_i=g^x_i. They are
@@ -154,16 +154,18 @@ type Election struct {
 // 유권자가 투표했다는 사실만 증명하고 누가 투표했는지는 알 수 없음.
 // nullifierHash = SHA256(voterSecret + electionID + blindingFactor) — 클라이언트가 계산
 type Nullifier struct {
-	ObjectType           string               `json:"docType"`       // "nullifier"
-	NullifierHash        string               `json:"nullifierHash"` // 최종 1표만 유효 키 (재투표 시 덮어쓰기, 원장 Key로도 사용)
-	ElectionID           string               `json:"electionID"`
-	CandidateID          string               `json:"candidateID" metadata:",optional"`                   // 레거시 호환 전용. 신규 투표에서는 평문 후보자를 저장하지 않음.
-	CandidateCommitment  string               `json:"candidateCommitment"`                                // SHA256(electionID|nullifierHash|encryptedCandidateID)
-	EncryptedCandidateID string               `json:"encryptedCandidateID"`                               // [C-4] AES-GCM 암호화된 후보자 ID
-	BallotValidityProof  *BallotValidityProof `json:"ballotValidityProof,omitempty" metadata:",optional"` // ElGamal 투표 유효성 공개 증거
-	Timestamp            int64                `json:"timestamp"`
-	EvictCount           int                  `json:"evictCount"`    // 재투표 횟수 (0 = 최초 투표)
-	LastEvictedAt        int64                `json:"lastEvictedAt"` // 마지막 재투표 시각
+	ObjectType                string                     `json:"docType"`       // "nullifier"
+	NullifierHash             string                     `json:"nullifierHash"` // 최종 1표만 유효 키 (재투표 시 덮어쓰기, 원장 Key로도 사용)
+	ElectionID                string                     `json:"electionID"`
+	CandidateID               string                     `json:"candidateID" metadata:",optional"`                   // 레거시 호환 전용. 신규 투표에서는 평문 후보자를 저장하지 않음.
+	CandidateCommitment       string                     `json:"candidateCommitment"`                                // SHA256(electionID|nullifierHash|encryptedCandidateID)
+	EncryptedCandidateID      string                     `json:"encryptedCandidateID"`                               // [C-4] AES-GCM 암호화된 후보자 ID
+	BallotValidityProof       *BallotValidityProof       `json:"ballotValidityProof,omitempty" metadata:",optional"` // ElGamal 투표 유효성 공개 증거
+	EncryptedCandidateVector  []ElGamalCiphertext        `json:"encryptedCandidateVector,omitempty" metadata:",optional"`
+	VectorBallotValidityProof *VectorBallotValidityProof `json:"vectorBallotValidityProof,omitempty" metadata:",optional"`
+	Timestamp                 int64                      `json:"timestamp"`
+	EvictCount                int                        `json:"evictCount"`    // 재투표 횟수 (0 = 최초 투표)
+	LastEvictedAt             int64                      `json:"lastEvictedAt"` // 마지막 재투표 시각
 	// [CRIT-01/02 FIX] 자격증명 감사 해시
 	CredentialHash string `json:"credentialHash"` // SHA256(credential token)
 	// [PAPER-4] 자격증명 검증 수준
@@ -226,13 +228,14 @@ type BBSProofPresentation struct {
 // 오더러에게 전달되지 않고 피어의 사이드 DB에만 저장됨.
 // 클라이언트는 이 구조체를 JSON으로 직렬화하여 트랜잭션 Transient Map에 넣어서 전달.
 type VotePrivate struct {
-	ObjectType           string `json:"docType"`              // "votePrivate"
-	ElectionID           string `json:"electionID"`           // 선거 ID
-	NullifierHash        string `json:"nullifierHash"`        // 공개 Nullifier와 연결 고리
-	EncryptedCandidateID string `json:"encryptedCandidateID"` // 후보자 암호문
-	CandidateCommitment  string `json:"candidateCommitment"`  // 공개 원장 commitment와 일치해야 함
-	VoteHash             string `json:"voteHash"`             // 암호화 투표 레코드 무결성 확인용
-	Timestamp            int64  `json:"timestamp"`
+	ObjectType               string              `json:"docType"`              // "votePrivate"
+	ElectionID               string              `json:"electionID"`           // 선거 ID
+	NullifierHash            string              `json:"nullifierHash"`        // 공개 Nullifier와 연결 고리
+	EncryptedCandidateID     string              `json:"encryptedCandidateID"` // 후보자 암호문
+	EncryptedCandidateVector []ElGamalCiphertext `json:"encryptedCandidateVector,omitempty" metadata:",optional"`
+	CandidateCommitment      string              `json:"candidateCommitment"` // 공개 원장 commitment와 일치해야 함
+	VoteHash                 string              `json:"voteHash"`            // 암호화 투표 레코드 무결성 확인용
+	Timestamp                int64               `json:"timestamp"`
 	// [PAPER-12] Deniable Credential Duality — PDC-based coercion resistance
 	// "real" (기본): 유효 투표, 집계에 포함
 	// "panic": 강압 하 제출된 투표, 집계에서 제외 (Cleansing-Hiding)
@@ -252,10 +255,12 @@ type VoteTally struct {
 	DecryptionProofs []DecryptionProof `json:"decryptionProofs,omitempty" metadata:",optional"` // 개별 투표 복호화 증명
 	// [P2] ElGamal threshold: 키 분산 후에는 종료 시 복호화하지 않고 암호문 집계만 저장.
 	//   2-of-3 조각 복원 후에 복호화되어 Results가 채워지고 Decrypted=true가 된다.
-	Decrypted          bool                `json:"decrypted" metadata:",optional"`          // 결과 복호화 완료 여부
-	EncAggC1           string              `json:"encAggC1,omitempty" metadata:",optional"` // 동형 집계 암호문 c1 (복호화 대기 시)
-	EncAggC2           string              `json:"encAggC2,omitempty" metadata:",optional"` // 동형 집계 암호문 c2 (복호화 대기 시)
-	PartialDecryptions []PartialDecryption `json:"partialDecryptions,omitempty" metadata:",optional"`
+	Decrypted                bool                      `json:"decrypted" metadata:",optional"`          // 결과 복호화 완료 여부
+	EncAggC1                 string                    `json:"encAggC1,omitempty" metadata:",optional"` // 동형 집계 암호문 c1 (복호화 대기 시)
+	EncAggC2                 string                    `json:"encAggC2,omitempty" metadata:",optional"` // 동형 집계 암호문 c2 (복호화 대기 시)
+	PartialDecryptions       []PartialDecryption       `json:"partialDecryptions,omitempty" metadata:",optional"`
+	EncAggVector             []ElGamalCiphertext       `json:"encAggVector,omitempty" metadata:",optional"`
+	VectorPartialDecryptions []VectorPartialDecryption `json:"vectorPartialDecryptions,omitempty" metadata:",optional"`
 }
 
 // ThresholdPublicShare binds a Shamir evaluation index to its public
@@ -274,6 +279,16 @@ type PartialDecryption struct {
 	PublicKeyY string              `json:"publicKeyY"`
 	Value      string              `json:"value"`
 	Proof      *ChaumPedersenProof `json:"proof"`
+}
+
+// VectorPartialDecryption contains one verified trustee contribution for each
+// candidate aggregate. Index and MSP identity bind the whole vector atomically.
+type VectorPartialDecryption struct {
+	Index      int                   `json:"index"`
+	MSPID      string                `json:"mspID"`
+	PublicKeyY string                `json:"publicKeyY"`
+	Values     []string              `json:"values"`
+	Proofs     []*ChaumPedersenProof `json:"proofs"`
 }
 
 // DecryptionProof [PAPER-2] 개별 투표의 복호화 정확성 증명
@@ -309,6 +324,22 @@ type BallotValidityProof struct {
 	A2s []string `json:"a2s"` // c1^k_j mod p (각 후보)
 	Es  []string `json:"es"`  // challenge e_j (hex)
 	Zs  []string `json:"zs"`  // response z_j (hex)
+}
+
+// EqualityOfDiscreteLogsProof proves log_Base1(Result1) =
+// log_Base2(Result2), without revealing that logarithm.
+type EqualityOfDiscreteLogsProof struct {
+	A1 string `json:"a1"`
+	A2 string `json:"a2"`
+	E  string `json:"e"`
+	Z  string `json:"z"`
+}
+
+// VectorBallotValidityProof proves that every component is a bit and that the
+// component plaintexts sum to exactly one.
+type VectorBallotValidityProof struct {
+	BitProofs []*BallotValidityProof       `json:"bitProofs"`
+	SumProof  *EqualityOfDiscreteLogsProof `json:"sumProof"`
 }
 
 // HomomorphicTallyProof [PAPER-13] 동형 집계 정확성 증명
@@ -971,8 +1002,8 @@ func (c *VotingContract) CreateElection(
 	if transient, tErr := ctx.GetStub().GetTransient(); tErr == nil {
 		if modeBytes, ok := transient["encryptionMode"]; ok {
 			mode := strings.TrimSpace(string(modeBytes))
-			if mode == "elgamal" {
-				encryptionMode = "elgamal"
+			if mode == "elgamal" || mode == "elgamal-vector-v3" {
+				encryptionMode = mode
 			}
 		}
 	}
@@ -1003,7 +1034,7 @@ func (c *VotingContract) CreateElection(
 		return fmt.Errorf("암호화 키 PDC 저장 실패: %w", pdcErr)
 	}
 
-	if encryptionMode == "elgamal" {
+	if encryptionMode == "elgamal" || encryptionMode == "elgamal-vector-v3" {
 		if len(masterSeed) < 16 {
 			return fmt.Errorf("ElGamal 선거는 transient masterSeed(16바이트 이상)가 필수입니다")
 		}
@@ -1229,7 +1260,7 @@ func (c *VotingContract) CloseElection(
 		return nil, fmt.Errorf("선거 상태 업데이트 실패: %w", err)
 	}
 
-	if election.EncryptionMode == "elgamal" {
+	if election.EncryptionMode == "elgamal" || election.EncryptionMode == "elgamal-vector-v3" {
 		// [P2 보안] ElGamal: 종료 시 결과를 복호화하지 않는다.
 		//   1) InitKeySharing — AES 마스터키를 Shamir 2-of-3 분할하고 AES/ElGamal 키를 PDC에서 삭제.
 		//   2) TallyVotes — 키가 없으므로 암호문 집계만 저장(복호화 대기, Decrypted=false).
@@ -1385,15 +1416,40 @@ func (c *VotingContract) CastVote(
 	//   B) candidateID가 있으면 → 체인코드가 암호화 (레거시 호환)
 	// A 방식에서 체인코드는 평문 후보자를 절대 보지 않음 → ballot secrecy 강화
 	var encryptedCandID string
+	var encryptedCandVector []ElGamalCiphertext
 	var candidateCommitment string
 	var publicBallotValidityProof *BallotValidityProof
+	var publicVectorBallotValidityProof *VectorBallotValidityProof
 
 	encKey, ekErr := getEncryptionKey(ctx, electionID)
 
-	if candidateID == "" && vp.EncryptedCandidateID != "" {
+	if candidateID == "" && (vp.EncryptedCandidateID != "" || len(vp.EncryptedCandidateVector) > 0) {
 		// [PAPER-1] 클라이언트-사이드 암호화 모드 (blind mode)
 
-		if election.EncryptionMode == "elgamal" {
+		if election.EncryptionMode == "elgamal-vector-v3" {
+			if vp.EncryptedCandidateID != "" || len(vp.EncryptedCandidateVector) != len(election.Candidates) {
+				return fmt.Errorf("vector-v3 암호문은 후보자 수와 같은 벡터여야 합니다")
+			}
+			proofBytes, ok := transient["vectorBallotValidityProof"]
+			if !ok || len(proofBytes) == 0 {
+				return fmt.Errorf("vector-v3에서 vectorBallotValidityProof가 필요합니다")
+			}
+			var vectorProof VectorBallotValidityProof
+			if err := json.Unmarshal(proofBytes, &vectorProof); err != nil {
+				return fmt.Errorf("VectorBallotValidityProof 파싱 실패: %w", err)
+			}
+			if !verifyVectorBallotValidityZKP(election.ElGamalPubKey, vp.EncryptedCandidateVector, &vectorProof) {
+				return fmt.Errorf("vector-v3 one-hot 투표 증명 검증 실패")
+			}
+			canonical, err := json.Marshal(vp.EncryptedCandidateVector)
+			if err != nil {
+				return fmt.Errorf("vector-v3 암호문 직렬화 실패: %w", err)
+			}
+			encryptedCandVector = append([]ElGamalCiphertext(nil), vp.EncryptedCandidateVector...)
+			candidateCommitment = computeCandidateCommitment(electionID, nullifierHash, string(canonical))
+			publicVectorBallotValidityProof = &vectorProof
+			log.Printf("[CastVote] ElGamal vector-v3 blind mode + one-hot ZKP — election: %s", electionID)
+		} else if election.EncryptionMode == "elgamal" {
 			// [PAPER-13] Exponential ElGamal: ZKP로 후보 유효성 검증 (복호화 없음!)
 			// 클라이언트가 disjunctive Chaum-Pedersen ZKP를 제출
 			// → 체인코드는 암호문이 유효 후보 인코딩 중 하나임을 검증
@@ -1457,6 +1513,7 @@ func (c *VotingContract) CastVote(
 	}
 
 	vp.EncryptedCandidateID = encryptedCandID
+	vp.EncryptedCandidateVector = encryptedCandVector
 	vp.CandidateCommitment = candidateCommitment
 
 	vpBytes, err := json.Marshal(vp)
@@ -1496,14 +1553,16 @@ func (c *VotingContract) CastVote(
 	// [C-4] candidateID를 AES-GCM으로 암호화하여 공개 원장에 저장
 
 	nullifier := Nullifier{
-		ObjectType:           "nullifier",
-		NullifierHash:        nullifierHash,
-		ElectionID:           electionID,
-		CandidateCommitment:  candidateCommitment,
-		EncryptedCandidateID: encryptedCandID,
-		BallotValidityProof:  publicBallotValidityProof,
-		Timestamp:            now,
-		EvictCount:           evictCount,
+		ObjectType:                "nullifier",
+		NullifierHash:             nullifierHash,
+		ElectionID:                electionID,
+		CandidateCommitment:       candidateCommitment,
+		EncryptedCandidateID:      encryptedCandID,
+		BallotValidityProof:       publicBallotValidityProof,
+		EncryptedCandidateVector:  encryptedCandVector,
+		VectorBallotValidityProof: publicVectorBallotValidityProof,
+		Timestamp:                 now,
+		EvictCount:                evictCount,
 		LastEvictedAt: func() int64 {
 			if isEviction {
 				return now
@@ -1724,7 +1783,8 @@ func (c *VotingContract) tallyVotesInternal(
 	useAES := ekErr == nil && encKey != nil
 	var elgamalPrivKey *big.Int
 	// [P2] 동형 집계(암호문 곱)는 키 불필요, 최종 복호화에만 키 필요.
-	aggregateElGamal := election.EncryptionMode == "elgamal"
+	vectorElGamal := election.EncryptionMode == "elgamal-vector-v3"
+	aggregateElGamal := election.EncryptionMode == "elgamal" || vectorElGamal
 	canDecryptElGamal := false
 	if aggregateElGamal && !aggregateOnly {
 		if providedKey != nil {
@@ -1753,7 +1813,12 @@ func (c *VotingContract) tallyVotesInternal(
 	// [PAPER-13] 동형 집계를 위한 암호문 누적기 (ElGamal 모드)
 	accC1 := big.NewInt(1) // Π c1_i mod p
 	accC2 := big.NewInt(1) // Π c2_i mod p
-	homomorphicCount := 0  // 동형 누적에 포함된 투표 수
+	vectorAccC1 := make([]*big.Int, len(election.Candidates))
+	vectorAccC2 := make([]*big.Int, len(election.Candidates))
+	for i := range vectorAccC1 {
+		vectorAccC1[i], vectorAccC2[i] = big.NewInt(1), big.NewInt(1)
+	}
+	homomorphicCount := 0 // 동형 누적에 포함된 투표 수
 
 	for resultsIterator.HasNext() {
 		queryResult, err := resultsIterator.Next()
@@ -1788,7 +1853,7 @@ func (c *VotingContract) tallyVotesInternal(
 
 		// 레거시 평문 레코드만 호환한다. 신규 레코드의 빈 암호문은 아래
 		// ElGamal 형식 검증에서 실패하도록 암묵적인 dummy 판정을 하지 않는다.
-		if nullifier.EncryptedCandidateID == "" {
+		if nullifier.EncryptedCandidateID == "" && len(nullifier.EncryptedCandidateVector) == 0 {
 			// 레거시 평문 또는 더미 nullifier
 			candID := nullifier.CandidateID
 			if candID != "" {
@@ -1798,7 +1863,24 @@ func (c *VotingContract) tallyVotesInternal(
 			continue
 		}
 
-		if aggregateElGamal {
+		if vectorElGamal {
+			if len(nullifier.EncryptedCandidateVector) != len(election.Candidates) ||
+				nullifier.VectorBallotValidityProof == nil ||
+				!verifyVectorBallotValidityZKP(election.ElGamalPubKey, nullifier.EncryptedCandidateVector, nullifier.VectorBallotValidityProof) {
+				return nil, fmt.Errorf("vector-v3 원장 투표 검증 실패 (nullifier=%s)", nullifier.NullifierHash)
+			}
+			for i, ciphertext := range nullifier.EncryptedCandidateVector {
+				c1i, ok1 := parseSubgroupElement(ciphertext.C1)
+				c2i, ok2 := parseSubgroupElement(ciphertext.C2)
+				if !ok1 || !ok2 {
+					return nil, fmt.Errorf("vector-v3 암호문 군 원소 검증 실패 (nullifier=%s, index=%d)", nullifier.NullifierHash, i)
+				}
+				vectorAccC1[i].Mul(vectorAccC1[i], c1i).Mod(vectorAccC1[i], elgamalP)
+				vectorAccC2[i].Mul(vectorAccC2[i], c2i).Mod(vectorAccC2[i], elgamalP)
+			}
+			homomorphicCount++
+			totalVotes++
+		} else if aggregateElGamal {
 			// [PAPER-13] Exponential ElGamal 동형 집계
 			// 개별 복호화 없이 암호문을 곱셈으로 누적
 			// Π E(g^m_i) = E(g^(Σm_i)) → 한 번만 복호화
@@ -1841,7 +1923,20 @@ func (c *VotingContract) tallyVotesInternal(
 	// [P2] ElGamal 동형 집계 완료. 키가 있으면 복호화, 없으면(분산 후) 암호문 집계만 저장.
 	tallyDecrypted := true
 	encAggC1, encAggC2 := "", ""
-	if aggregateElGamal && homomorphicCount > 0 && canDecryptElGamal {
+	var encAggVector []ElGamalCiphertext
+	if vectorElGamal && homomorphicCount > 0 && canDecryptElGamal {
+		for i, candidate := range election.Candidates {
+			gm, decErr := expElGamalDecryptToGm(elgamalPrivKey, vectorAccC1[i].Text(16), vectorAccC2[i].Text(16))
+			if decErr != nil {
+				return nil, fmt.Errorf("vector-v3 집계 복호화 실패 (index=%d): %w", i, decErr)
+			}
+			count, bsgsErr := babyStepGiantStep(gm, elgamalG, elgamalP, int64(totalVotes)+1)
+			if bsgsErr != nil {
+				return nil, fmt.Errorf("vector-v3 BSGS 복원 실패 (index=%d): %w", i, bsgsErr)
+			}
+			results[candidate] = int(count)
+		}
+	} else if aggregateElGamal && homomorphicCount > 0 && canDecryptElGamal {
 		if err := validateHomomorphicTallyCapacity(homomorphicCount, len(election.Candidates)); err != nil {
 			return nil, err
 		}
@@ -1895,6 +1990,13 @@ func (c *VotingContract) tallyVotesInternal(
 
 		log.Printf("[TallyVotes] 동형 집계 완료 — sum=%d, counts=%v, 투표수=%d",
 			sum, counts, homomorphicCount)
+	} else if vectorElGamal && homomorphicCount > 0 {
+		tallyDecrypted = false
+		encAggVector = make([]ElGamalCiphertext, len(election.Candidates))
+		for i := range election.Candidates {
+			encAggVector[i] = ElGamalCiphertext{C1: vectorAccC1[i].Text(16), C2: vectorAccC2[i].Text(16)}
+		}
+		log.Printf("[TallyVotes] vector-v3 암호문 집계 저장(복호화 대기) — election: %s, count=%d", electionID, homomorphicCount)
 	} else if aggregateElGamal && homomorphicCount > 0 {
 		// [P2] 복호화 보류 — 키 분산 후이므로 암호문 집계만 저장(Results는 0 유지).
 		//   2-of-3 조각 복원 시 verifyKeyReconstruction이 키를 복구하고 재집계하여 복호화한다.
@@ -1919,6 +2021,7 @@ func (c *VotingContract) tallyVotesInternal(
 		Decrypted:        tallyDecrypted,
 		EncAggC1:         encAggC1,
 		EncAggC2:         encAggC2,
+		EncAggVector:     encAggVector,
 	}
 
 	// 집계 결과를 원장에 영구 기록 (키: "TALLY_<electionID>")
@@ -2586,7 +2689,7 @@ func (c *VotingContract) doInitKeySharing(
 	if err != nil {
 		return nil, err
 	}
-	if election.EncryptionMode == "elgamal" && len(election.ThresholdPublicShares) == ShamirTotalShares {
+	if (election.EncryptionMode == "elgamal" || election.EncryptionMode == "elgamal-vector-v3") && len(election.ThresholdPublicShares) == ShamirTotalShares {
 		now, timeErr := getTxTime(ctx)
 		if timeErr != nil {
 			return nil, timeErr
@@ -2823,7 +2926,7 @@ func (c *VotingContract) SubmitPartialDecryption(
 	if err != nil {
 		return nil, err
 	}
-	if election.EncryptionMode != "elgamal" || len(election.ThresholdPublicShares) != ShamirTotalShares {
+	if (election.EncryptionMode != "elgamal" && election.EncryptionMode != "elgamal-vector-v3") || len(election.ThresholdPublicShares) != ShamirTotalShares {
 		return nil, fmt.Errorf("partial decryption-v2 선거가 아닙니다")
 	}
 	statusKey := "KEYSHARING_" + electionID
@@ -2855,6 +2958,9 @@ func (c *VotingContract) SubmitPartialDecryption(
 	var tally VoteTally
 	if err := json.Unmarshal(tallyBytes, &tally); err != nil {
 		return nil, err
+	}
+	if election.EncryptionMode == "elgamal-vector-v3" {
+		return c.submitVectorPartialDecryption(ctx, election, index, shareIndex, statusKey, tallyKey, &status, &tally)
 	}
 	if tally.Decrypted || tally.EncAggC1 == "" || tally.EncAggC2 == "" {
 		return nil, fmt.Errorf("복호화 대기 암호문이 없습니다")
@@ -2969,6 +3075,133 @@ func (c *VotingContract) SubmitPartialDecryption(
 		return nil, err
 	}
 	return &status, nil
+}
+
+func (c *VotingContract) submitVectorPartialDecryption(
+	ctx contractapi.TransactionContextInterface, election *Election, index int, shareIndex, statusKey, tallyKey string,
+	status *KeySharingStatus, tally *VoteTally,
+) (*KeySharingStatus, error) {
+	if tally.Decrypted || len(tally.EncAggVector) != len(election.Candidates) || len(tally.EncAggVector) == 0 {
+		return nil, fmt.Errorf("vector-v3 복호화 대기 암호문이 없습니다")
+	}
+	if index < 1 || index > len(election.ThresholdPublicShares) {
+		return nil, fmt.Errorf("threshold share index 범위 오류: %d", index)
+	}
+	shareBytes, err := ctx.GetStub().GetPrivateData(VotePrivatePDC,
+		fmt.Sprintf("ELGAMAL_THRESHOLD_SHARE_%s_%d", election.ElectionID, index))
+	if err != nil || shareBytes == nil {
+		return nil, fmt.Errorf("threshold share %d 조회 실패", index)
+	}
+	share, ok := parseScalar(string(shareBytes))
+	if !ok || share.Sign() == 0 {
+		return nil, fmt.Errorf("threshold share %d 검증 실패", index)
+	}
+	publicShare := election.ThresholdPublicShares[index-1]
+	if publicShare.Index != index || publicShare.MSPID != shareIndexMSP[shareIndex] ||
+		new(big.Int).Exp(elgamalG, share, elgamalP).Text(16) != publicShare.PublicKeyY {
+		return nil, fmt.Errorf("threshold share %d 공개키 바인딩 검증 실패", index)
+	}
+	partialPub := &ElGamalPublicKey{P: elgamalP.Text(16), G: elgamalG.Text(16), Y: publicShare.PublicKeyY}
+	partial := VectorPartialDecryption{Index: index, MSPID: publicShare.MSPID, PublicKeyY: publicShare.PublicKeyY,
+		Values: make([]string, len(tally.EncAggVector)), Proofs: make([]*ChaumPedersenProof, len(tally.EncAggVector))}
+	for candidateIndex, aggregate := range tally.EncAggVector {
+		c1, valid := parseSubgroupElement(aggregate.C1)
+		if !valid {
+			return nil, fmt.Errorf("vector-v3 집계 c1 검증 실패 (index=%d)", candidateIndex)
+		}
+		value := new(big.Int).Exp(c1, share, elgamalP)
+		proof, proofErr := chaumPedersenProveRaw(share, aggregate.C1, value.Text(16), "1",
+			fmt.Sprintf("vector-threshold-partial:%d:%d", index, candidateIndex), election.ElectionID, "")
+		if proofErr != nil || !chaumPedersenVerifyRaw(partialPub, proof, big.NewInt(1)) {
+			return nil, fmt.Errorf("vector-v3 partial proof 생성/자체검증 실패 (index=%d): %v", candidateIndex, proofErr)
+		}
+		partial.Values[candidateIndex], partial.Proofs[candidateIndex] = value.Text(16), proof
+	}
+	partialBytes, err := json.Marshal(partial)
+	if err != nil {
+		return nil, err
+	}
+	if err := ctx.GetStub().PutState(fmt.Sprintf("PARTIAL_DECRYPTION_%s_%d", election.ElectionID, index), partialBytes); err != nil {
+		return nil, err
+	}
+	status.SubmittedBy = append(status.SubmittedBy, shareIndex)
+	status.SubmittedCount++
+	tally.VectorPartialDecryptions = append(tally.VectorPartialDecryptions, partial)
+
+	if status.SubmittedCount >= status.Threshold {
+		partials := make([]map[int]*big.Int, len(election.Candidates))
+		for i := range partials {
+			partials[i] = make(map[int]*big.Int)
+		}
+		for _, submitted := range status.SubmittedBy {
+			trusteeIndex, convErr := strconv.Atoi(submitted)
+			if convErr != nil {
+				return nil, fmt.Errorf("trustee index 파싱 실패: %w", convErr)
+			}
+			b, getErr := ctx.GetStub().GetState(fmt.Sprintf("PARTIAL_DECRYPTION_%s_%d", election.ElectionID, trusteeIndex))
+			if getErr != nil || b == nil {
+				return nil, fmt.Errorf("vector partial %d 조회 실패", trusteeIndex)
+			}
+			var prior VectorPartialDecryption
+			if json.Unmarshal(b, &prior) != nil || len(prior.Values) != len(partials) || len(prior.Proofs) != len(partials) ||
+				prior.Index != trusteeIndex || trusteeIndex < 1 || trusteeIndex > len(election.ThresholdPublicShares) {
+				return nil, fmt.Errorf("vector partial %d 구조 검증 실패", trusteeIndex)
+			}
+			priorPublic := election.ThresholdPublicShares[trusteeIndex-1]
+			if prior.MSPID != priorPublic.MSPID || prior.PublicKeyY != priorPublic.PublicKeyY {
+				return nil, fmt.Errorf("vector partial %d 신원 바인딩 실패", trusteeIndex)
+			}
+			priorPub := &ElGamalPublicKey{P: elgamalP.Text(16), G: elgamalG.Text(16), Y: prior.PublicKeyY}
+			for candidateIndex, valueHex := range prior.Values {
+				value, valid := parseSubgroupElement(valueHex)
+				if !valid || prior.Proofs[candidateIndex] == nil ||
+					prior.Proofs[candidateIndex].C1 != tally.EncAggVector[candidateIndex].C1 ||
+					prior.Proofs[candidateIndex].C2 != valueHex ||
+					!chaumPedersenVerifyRaw(priorPub, prior.Proofs[candidateIndex], big.NewInt(1)) {
+					return nil, fmt.Errorf("vector partial %d proof %d 검증 실패", trusteeIndex, candidateIndex)
+				}
+				partials[candidateIndex][trusteeIndex] = value
+			}
+			if len(partials[0]) == status.Threshold {
+				break
+			}
+		}
+		countSum := 0
+		for candidateIndex, candidate := range election.Candidates {
+			combined, combineErr := combinePartialDecryptionValues(partials[candidateIndex])
+			if combineErr != nil {
+				return nil, combineErr
+			}
+			c2, valid := parseSubgroupElement(tally.EncAggVector[candidateIndex].C2)
+			if !valid {
+				return nil, fmt.Errorf("vector aggregate c2 %d invalid", candidateIndex)
+			}
+			gm := new(big.Int).Mul(c2, new(big.Int).ModInverse(combined, elgamalP))
+			gm.Mod(gm, elgamalP)
+			count, bsgsErr := babyStepGiantStep(gm, elgamalG, elgamalP, int64(tally.TotalVotes)+1)
+			if bsgsErr != nil {
+				return nil, fmt.Errorf("vector candidate %d BSGS 실패: %w", candidateIndex, bsgsErr)
+			}
+			tally.Results[candidate] = int(count)
+			countSum += int(count)
+		}
+		if countSum != tally.TotalVotes {
+			return nil, fmt.Errorf("vector-v3 one-hot 집계 불변식 실패: counts=%d total=%d", countSum, tally.TotalVotes)
+		}
+		tally.Decrypted, status.IsDecrypted = true, true
+		proofBytes, _ := json.Marshal(tally.VectorPartialDecryptions)
+		hash := sha256.Sum256(proofBytes)
+		tally.TallyProofHash = hex.EncodeToString(hash[:])
+	}
+	tallyBytes, _ := json.Marshal(tally)
+	if err := ctx.GetStub().PutState(tallyKey, tallyBytes); err != nil {
+		return nil, err
+	}
+	statusBytes, _ := json.Marshal(status)
+	if err := ctx.GetStub().PutState(statusKey, statusBytes); err != nil {
+		return nil, err
+	}
+	return status, nil
 }
 
 // verifyKeyReconstruction 제출된 share로 마스터 키를 복원하고 keyHash를 검증합니다.
@@ -3101,7 +3334,7 @@ func (c *VotingContract) GetKeyShare(
 	if err != nil {
 		return "", err
 	}
-	if election.EncryptionMode == "elgamal" && len(election.ThresholdPublicShares) > 0 {
+	if (election.EncryptionMode == "elgamal" || election.EncryptionMode == "elgamal-vector-v3") && len(election.ThresholdPublicShares) > 0 {
 		return "", fmt.Errorf("ElGamal-v2는 비밀 share 조회를 금지합니다")
 	}
 
@@ -3159,7 +3392,7 @@ func (c *VotingContract) GetElGamalPublicKey(
 	if err != nil {
 		return "", err
 	}
-	if election.EncryptionMode != "elgamal" || election.ElGamalPubKey == nil {
+	if (election.EncryptionMode != "elgamal" && election.EncryptionMode != "elgamal-vector-v3") || election.ElGamalPubKey == nil {
 		return "", fmt.Errorf("이 선거는 ElGamal 모드가 아닙니다 (현재 모드: %s)", election.EncryptionMode)
 	}
 	pubKeyJSON, err := json.Marshal(election.ElGamalPubKey)
@@ -3182,7 +3415,7 @@ func (c *VotingContract) VerifyElGamalProofs(
 	if err != nil {
 		return "", err
 	}
-	if election.EncryptionMode != "elgamal" || election.ElGamalPubKey == nil {
+	if (election.EncryptionMode != "elgamal" && election.EncryptionMode != "elgamal-vector-v3") || election.ElGamalPubKey == nil {
 		return "", fmt.Errorf("이 선거는 ElGamal 모드가 아닙니다")
 	}
 
@@ -3195,6 +3428,9 @@ func (c *VotingContract) VerifyElGamalProofs(
 	var tally VoteTally
 	if err := json.Unmarshal(tallyBytes, &tally); err != nil {
 		return "", fmt.Errorf("Tally 파싱 실패: %w", err)
+	}
+	if election.EncryptionMode == "elgamal-vector-v3" {
+		return verifyVectorTallyPublic(election, &tally)
 	}
 	if len(tally.PartialDecryptions) > 0 {
 		values := make(map[int]*big.Int)
@@ -3345,6 +3581,91 @@ func (c *VotingContract) VerifyElGamalProofs(
 	return string(resultJSON), nil
 }
 
+func verifyVectorTallyPublic(election *Election, tally *VoteTally) (string, error) {
+	failed := 0
+	valuesByCandidate := make([]map[int]*big.Int, len(election.Candidates))
+	publicValues := make(map[int]*big.Int)
+	for i := range valuesByCandidate {
+		valuesByCandidate[i] = make(map[int]*big.Int)
+	}
+	seen := make(map[int]bool)
+	for _, partial := range tally.VectorPartialDecryptions {
+		if partial.Index < 1 || partial.Index > len(election.ThresholdPublicShares) || seen[partial.Index] ||
+			len(partial.Values) != len(election.Candidates) || len(partial.Proofs) != len(election.Candidates) {
+			failed++
+			continue
+		}
+		expected := election.ThresholdPublicShares[partial.Index-1]
+		y, yOK := parseSubgroupElement(partial.PublicKeyY)
+		if !yOK || partial.MSPID != expected.MSPID || partial.PublicKeyY != expected.PublicKeyY {
+			failed++
+			continue
+		}
+		pub := &ElGamalPublicKey{P: elgamalP.Text(16), G: elgamalG.Text(16), Y: partial.PublicKeyY}
+		validPartial := true
+		parsed := make([]*big.Int, len(partial.Values))
+		for candidateIndex, valueHex := range partial.Values {
+			value, ok := parseSubgroupElement(valueHex)
+			proof := partial.Proofs[candidateIndex]
+			if !ok || proof == nil || candidateIndex >= len(tally.EncAggVector) ||
+				proof.C1 != tally.EncAggVector[candidateIndex].C1 || proof.C2 != valueHex ||
+				!chaumPedersenVerifyRaw(pub, proof, big.NewInt(1)) {
+				validPartial = false
+				break
+			}
+			parsed[candidateIndex] = value
+		}
+		if !validPartial {
+			failed++
+			continue
+		}
+		seen[partial.Index], publicValues[partial.Index] = true, y
+		for candidateIndex, value := range parsed {
+			valuesByCandidate[candidateIndex][partial.Index] = value
+		}
+	}
+	valid := failed == 0 && len(seen) >= ShamirThreshold && tally.Decrypted && len(tally.EncAggVector) == len(election.Candidates)
+	if valid {
+		combinedPublic, err := combinePartialDecryptionValues(publicValues)
+		electionY, yOK := parseSubgroupElement(election.ElGamalPubKey.Y)
+		if err != nil || !yOK || combinedPublic.Cmp(electionY) != 0 {
+			valid = false
+		}
+	}
+	resultSum := 0
+	if valid {
+		for candidateIndex, candidate := range election.Candidates {
+			combined, err := combinePartialDecryptionValues(valuesByCandidate[candidateIndex])
+			c2, c2OK := parseSubgroupElement(tally.EncAggVector[candidateIndex].C2)
+			if err != nil || !c2OK {
+				valid = false
+				break
+			}
+			actual := new(big.Int).Mul(c2, new(big.Int).ModInverse(combined, elgamalP))
+			actual.Mod(actual, elgamalP)
+			count := tally.Results[candidate]
+			if count < 0 || actual.Cmp(new(big.Int).Exp(elgamalG, big.NewInt(int64(count)), elgamalP)) != 0 {
+				valid = false
+				break
+			}
+			resultSum += count
+		}
+		if resultSum != tally.TotalVotes {
+			valid = false
+		}
+	}
+	result := map[string]interface{}{
+		"electionID": election.ElectionID, "encryptionMode": "elgamal-vector-v3",
+		"totalProofs": len(tally.VectorPartialDecryptions), "verified": len(seen), "failed": failed,
+		"resultsMatch": valid, "originalResults": tally.Results, "isValid": valid,
+	}
+	encoded, err := json.Marshal(result)
+	if err != nil {
+		return "", err
+	}
+	return string(encoded), nil
+}
+
 // ============================================================
 // Bulletin Board — 공개 감사 데이터 (PAPER-6: Universal Verifiability)
 // ============================================================
@@ -3366,20 +3687,24 @@ type BulletinBoard struct {
 	ShuffleProofHash string            `json:"shuffleProofHash,omitempty" metadata:",optional"` // [PAPER-7] 셔플 정확성 증명
 	PublishedAt      int64             `json:"publishedAt"`
 	// [PAPER-11] ElGamal 모드 전용 필드
-	EncryptionMode        string                 `json:"encryptionMode,omitempty" metadata:",optional"` // "aes" | "elgamal"
-	ElGamalPubKey         *ElGamalPublicKey      `json:"elgamalPubKey,omitempty" metadata:",optional"`  // ElGamal 공개키 (ZKP 검증용)
-	ThresholdPublicShares []ThresholdPublicShare `json:"thresholdPublicShares,omitempty" metadata:",optional"`
-	PartialDecryptions    []PartialDecryption    `json:"partialDecryptions,omitempty" metadata:",optional"`
-	EncAggC1              string                 `json:"encAggC1,omitempty" metadata:",optional"`
-	EncAggC2              string                 `json:"encAggC2,omitempty" metadata:",optional"`
+	EncryptionMode           string                    `json:"encryptionMode,omitempty" metadata:",optional"` // "aes" | "elgamal"
+	ElGamalPubKey            *ElGamalPublicKey         `json:"elgamalPubKey,omitempty" metadata:",optional"`  // ElGamal 공개키 (ZKP 검증용)
+	ThresholdPublicShares    []ThresholdPublicShare    `json:"thresholdPublicShares,omitempty" metadata:",optional"`
+	PartialDecryptions       []PartialDecryption       `json:"partialDecryptions,omitempty" metadata:",optional"`
+	VectorPartialDecryptions []VectorPartialDecryption `json:"vectorPartialDecryptions,omitempty" metadata:",optional"`
+	EncAggC1                 string                    `json:"encAggC1,omitempty" metadata:",optional"`
+	EncAggC2                 string                    `json:"encAggC2,omitempty" metadata:",optional"`
+	EncAggVector             []ElGamalCiphertext       `json:"encAggVector,omitempty" metadata:",optional"`
 }
 
 // EncryptedBallot 공개 원장의 개별 암호화 투표
 type EncryptedBallot struct {
-	NullifierHash        string               `json:"nullifierHash"`
-	EncryptedCandidateID string               `json:"encryptedCandidateID"`
-	CandidateCommitment  string               `json:"candidateCommitment"`
-	BallotValidityProof  *BallotValidityProof `json:"ballotValidityProof,omitempty" metadata:",optional"`
+	NullifierHash             string                     `json:"nullifierHash"`
+	EncryptedCandidateID      string                     `json:"encryptedCandidateID"`
+	CandidateCommitment       string                     `json:"candidateCommitment"`
+	BallotValidityProof       *BallotValidityProof       `json:"ballotValidityProof,omitempty" metadata:",optional"`
+	EncryptedCandidateVector  []ElGamalCiphertext        `json:"encryptedCandidateVector,omitempty" metadata:",optional"`
+	VectorBallotValidityProof *VectorBallotValidityProof `json:"vectorBallotValidityProof,omitempty" metadata:",optional"`
 }
 
 // PublicVerificationResult 공개 검증 결과
@@ -3430,12 +3755,16 @@ func (c *VotingContract) PublishAuditData(
 	}
 
 	// 암호화 키 / ElGamal 공개키 조회
-	isElGamal := election.EncryptionMode == "elgamal"
+	isElGamal := election.EncryptionMode == "elgamal" || election.EncryptionMode == "elgamal-vector-v3"
 	if isElGamal {
 		if !tally.Decrypted {
 			return nil, fmt.Errorf("ElGamal 집계는 threshold 복원과 복호화 완료 후에만 게시할 수 있습니다")
 		}
-		if len(election.ThresholdPublicShares) > 0 && len(tally.PartialDecryptions) < ShamirThreshold {
+		proofCount := len(tally.PartialDecryptions)
+		if election.EncryptionMode == "elgamal-vector-v3" {
+			proofCount = len(tally.VectorPartialDecryptions)
+		}
+		if len(election.ThresholdPublicShares) > 0 && proofCount < ShamirThreshold {
 			return nil, fmt.Errorf("ElGamal threshold partial decryption 증명이 부족합니다")
 		}
 		if len(election.ThresholdPublicShares) == 0 && len(tally.DecryptionProofs) == 0 {
@@ -3487,14 +3816,19 @@ func (c *VotingContract) PublishAuditData(
 		if nul.IsPadding {
 			continue
 		}
-		if isElGamal && nul.EncryptedCandidateID != "" && nul.BallotValidityProof == nil {
+		if election.EncryptionMode == "elgamal" && nul.EncryptedCandidateID != "" && nul.BallotValidityProof == nil {
 			return nil, fmt.Errorf("ElGamal ballot validity proof 누락 (nullifier=%s)", nul.NullifierHash)
 		}
+		if election.EncryptionMode == "elgamal-vector-v3" && (len(nul.EncryptedCandidateVector) != len(election.Candidates) || nul.VectorBallotValidityProof == nil) {
+			return nil, fmt.Errorf("vector-v3 ballot/proof 누락 (nullifier=%s)", nul.NullifierHash)
+		}
 		ballots = append(ballots, EncryptedBallot{
-			NullifierHash:        nul.NullifierHash,
-			EncryptedCandidateID: nul.EncryptedCandidateID,
-			CandidateCommitment:  nul.CandidateCommitment,
-			BallotValidityProof:  nul.BallotValidityProof,
+			NullifierHash:             nul.NullifierHash,
+			EncryptedCandidateID:      nul.EncryptedCandidateID,
+			CandidateCommitment:       nul.CandidateCommitment,
+			BallotValidityProof:       nul.BallotValidityProof,
+			EncryptedCandidateVector:  nul.EncryptedCandidateVector,
+			VectorBallotValidityProof: nul.VectorBallotValidityProof,
 		})
 	}
 
@@ -3524,24 +3858,26 @@ func (c *VotingContract) PublishAuditData(
 	}
 
 	bb := BulletinBoard{
-		ObjectType:            "bulletinBoard",
-		ElectionID:            electionID,
-		EncryptionKeyHex:      encKeyHex, // AES 모드에서만 공개, ElGamal 모드에서는 빈 문자열
-		EncryptedBallots:      shuffledBallots,
-		TallyResults:          tally.Results,
-		TotalVotes:            tally.TotalVotes,
-		DecryptionProofs:      shuffledProofs,
-		TallyProofHash:        tally.TallyProofHash,
-		MerkleRoot:            merkleRoot,
-		ShuffleSeed:           hex.EncodeToString(shuffleSeed),
-		ShuffleProofHash:      shuffleProofHash,
-		PublishedAt:           now,
-		EncryptionMode:        election.EncryptionMode,
-		ElGamalPubKey:         election.ElGamalPubKey, // ElGamal 모드에서만 포함
-		ThresholdPublicShares: election.ThresholdPublicShares,
-		PartialDecryptions:    tally.PartialDecryptions,
-		EncAggC1:              tally.EncAggC1,
-		EncAggC2:              tally.EncAggC2,
+		ObjectType:               "bulletinBoard",
+		ElectionID:               electionID,
+		EncryptionKeyHex:         encKeyHex, // AES 모드에서만 공개, ElGamal 모드에서는 빈 문자열
+		EncryptedBallots:         shuffledBallots,
+		TallyResults:             tally.Results,
+		TotalVotes:               tally.TotalVotes,
+		DecryptionProofs:         shuffledProofs,
+		TallyProofHash:           tally.TallyProofHash,
+		MerkleRoot:               merkleRoot,
+		ShuffleSeed:              hex.EncodeToString(shuffleSeed),
+		ShuffleProofHash:         shuffleProofHash,
+		PublishedAt:              now,
+		EncryptionMode:           election.EncryptionMode,
+		ElGamalPubKey:            election.ElGamalPubKey, // ElGamal 모드에서만 포함
+		ThresholdPublicShares:    election.ThresholdPublicShares,
+		PartialDecryptions:       tally.PartialDecryptions,
+		VectorPartialDecryptions: tally.VectorPartialDecryptions,
+		EncAggC1:                 tally.EncAggC1,
+		EncAggC2:                 tally.EncAggC2,
+		EncAggVector:             tally.EncAggVector,
 	}
 	if bb.EncryptionMode == "" {
 		bb.EncryptionMode = "aes"
@@ -4611,6 +4947,125 @@ func verifyBallotValidityZKP(pubKey *ElGamalPublicKey, c1Hex, c2Hex string, numC
 
 	eSum.Mod(eSum, q)
 	return eSum.Cmp(expectedE) == 0
+}
+
+// verifyVectorBallotValidityZKP verifies vector-v3 one-hot ballots. Each
+// ciphertext must encrypt 0 or 1, and the product must encrypt exactly 1.
+func verifyVectorBallotValidityZKP(pubKey *ElGamalPublicKey, ciphertexts []ElGamalCiphertext, proof *VectorBallotValidityProof) bool {
+	if pubKey == nil || len(ciphertexts) == 0 || proof == nil ||
+		len(proof.BitProofs) != len(ciphertexts) || proof.SumProof == nil {
+		return false
+	}
+	messages := []*big.Int{big.NewInt(1), new(big.Int).Set(elgamalG)}
+	productC1, productC2 := big.NewInt(1), big.NewInt(1)
+	for i, ciphertext := range ciphertexts {
+		if !verifyDisjunctiveElGamalProof(pubKey, ciphertext.C1, ciphertext.C2, messages,
+			fmt.Sprintf("mongbas/vector-v3/bit/%d", i), proof.BitProofs[i]) {
+			return false
+		}
+		c1, ok1 := parseSubgroupElement(ciphertext.C1)
+		c2, ok2 := parseSubgroupElement(ciphertext.C2)
+		if !ok1 || !ok2 {
+			return false
+		}
+		productC1.Mul(productC1, c1).Mod(productC1, elgamalP)
+		productC2.Mul(productC2, c2).Mod(productC2, elgamalP)
+	}
+	gInv := new(big.Int).ModInverse(elgamalG, elgamalP)
+	if gInv == nil {
+		return false
+	}
+	productC2DivG := new(big.Int).Mul(productC2, gInv)
+	productC2DivG.Mod(productC2DivG, elgamalP)
+	y, ok := parseSubgroupElement(pubKey.Y)
+	return ok && verifyEqualityOfDiscreteLogs(elgamalG, y, productC1, productC2DivG,
+		"mongbas/vector-v3/sum", proof.SumProof)
+}
+
+// verifyDisjunctiveElGamalProof verifies encryption of one explicit message.
+// The transcript binds its domain, key, ciphertext, messages and commitments.
+func verifyDisjunctiveElGamalProof(pubKey *ElGamalPublicKey, c1Hex, c2Hex string,
+	messages []*big.Int, domain string, proof *BallotValidityProof) bool {
+	if pubKey == nil || pubKey.P != elgamalP.Text(16) || pubKey.G != elgamalG.Text(16) ||
+		domain == "" || len(messages) == 0 || proof == nil || len(proof.A1s) != len(messages) ||
+		len(proof.A2s) != len(messages) || len(proof.Es) != len(messages) || len(proof.Zs) != len(messages) {
+		return false
+	}
+	y, okY := parseSubgroupElement(pubKey.Y)
+	c1, okC1 := parseSubgroupElement(c1Hex)
+	c2, okC2 := parseSubgroupElement(c2Hex)
+	if !okY || !okC1 || !okC2 {
+		return false
+	}
+	transcript := domain + "|" + elgamalG.Text(16) + "|" + y.Text(16) + "|" + c1.Text(16) + "|" + c2.Text(16)
+	eSum := big.NewInt(0)
+	for i, message := range messages {
+		if message == nil || message.Sign() <= 0 || message.Cmp(elgamalP) >= 0 ||
+			new(big.Int).Exp(message, elgamalQ, elgamalP).Cmp(big.NewInt(1)) != 0 {
+			return false
+		}
+		a1, okA1 := parseSubgroupElement(proof.A1s[i])
+		a2, okA2 := parseSubgroupElement(proof.A2s[i])
+		e, okE := parseScalar(proof.Es[i])
+		z, okZ := parseScalar(proof.Zs[i])
+		if !okA1 || !okA2 || !okE || !okZ {
+			return false
+		}
+		messageInv := new(big.Int).ModInverse(message, elgamalP)
+		adjusted := new(big.Int).Mul(c2, messageInv)
+		adjusted.Mod(adjusted, elgamalP)
+		lhs1 := new(big.Int).Exp(elgamalG, z, elgamalP)
+		rhs1 := new(big.Int).Exp(c1, e, elgamalP)
+		rhs1.Mul(rhs1, a1).Mod(rhs1, elgamalP)
+		lhs2 := new(big.Int).Exp(y, z, elgamalP)
+		rhs2 := new(big.Int).Exp(adjusted, e, elgamalP)
+		rhs2.Mul(rhs2, a2).Mod(rhs2, elgamalP)
+		if lhs1.Cmp(rhs1) != 0 || lhs2.Cmp(rhs2) != 0 {
+			return false
+		}
+		eSum.Add(eSum, e)
+		transcript += "|" + message.Text(16) + "|" + a1.Text(16) + "|" + a2.Text(16)
+	}
+	digest := sha256.Sum256([]byte(transcript))
+	expected := new(big.Int).SetBytes(digest[:])
+	expected.Mod(expected, elgamalQ)
+	eSum.Mod(eSum, elgamalQ)
+	return eSum.Cmp(expected) == 0
+}
+
+func verifyEqualityOfDiscreteLogs(base1, base2, result1, result2 *big.Int,
+	domain string, proof *EqualityOfDiscreteLogsProof) bool {
+	if domain == "" || proof == nil {
+		return false
+	}
+	for _, value := range []*big.Int{base1, base2, result1, result2} {
+		if value == nil || value.Sign() <= 0 || value.Cmp(elgamalP) >= 0 ||
+			new(big.Int).Exp(value, elgamalQ, elgamalP).Cmp(big.NewInt(1)) != 0 {
+			return false
+		}
+	}
+	a1, okA1 := parseSubgroupElement(proof.A1)
+	a2, okA2 := parseSubgroupElement(proof.A2)
+	e, okE := parseScalar(proof.E)
+	z, okZ := parseScalar(proof.Z)
+	if !okA1 || !okA2 || !okE || !okZ {
+		return false
+	}
+	transcript := fmt.Sprintf("%s|%s|%s|%s|%s|%s|%s", domain,
+		base1.Text(16), base2.Text(16), result1.Text(16), result2.Text(16), a1.Text(16), a2.Text(16))
+	digest := sha256.Sum256([]byte(transcript))
+	expected := new(big.Int).SetBytes(digest[:])
+	expected.Mod(expected, elgamalQ)
+	if e.Cmp(expected) != 0 {
+		return false
+	}
+	lhs1 := new(big.Int).Exp(base1, z, elgamalP)
+	rhs1 := new(big.Int).Exp(result1, e, elgamalP)
+	rhs1.Mul(rhs1, a1).Mod(rhs1, elgamalP)
+	lhs2 := new(big.Int).Exp(base2, z, elgamalP)
+	rhs2 := new(big.Int).Exp(result2, e, elgamalP)
+	rhs2.Mul(rhs2, a2).Mod(rhs2, elgamalP)
+	return lhs1.Cmp(rhs1) == 0 && lhs2.Cmp(rhs2) == 0
 }
 
 // ============================================================

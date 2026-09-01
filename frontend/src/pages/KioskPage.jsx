@@ -4,6 +4,7 @@ import {
   generateVoterSecret,
   elgamalEncrypt,
   generateBallotValidityProof,
+  generateVectorBallotV3,
 } from '../utils/crypto.js';
 
 /**
@@ -52,7 +53,7 @@ export default function KioskPage({ electionId }) {
         const el = await J(`/elections/${encodeURIComponent(electionId)}`);
         if (el.status !== 'ACTIVE') { setErr('투표가 마감되었거나 아직 시작되지 않았습니다.'); setPhase('error'); return; }
         setElection(el);
-        if (el.encryptionMode === 'elgamal') setPub((await J(`/elections/${encodeURIComponent(electionId)}/elgamal-pubkey`)).pubKey);
+        if (el.encryptionMode === 'elgamal' || el.encryptionMode === 'elgamal-vector-v3') setPub((await J(`/elections/${encodeURIComponent(electionId)}/elgamal-pubkey`)).pubKey);
         setBf((await J(`/elections/${encodeURIComponent(electionId)}/blinding-factor`)).blindingFactor);
         const voter = getDemoVoter();
         setCred((await J('/credential/idemix', { method: 'POST', body: JSON.stringify({ enrollmentID: voter, enrollmentSecret: `${voter}pw`, electionID: electionId }) })).credential);
@@ -70,7 +71,11 @@ export default function KioskPage({ electionId }) {
       const nh = await computeNullifier(vs, electionId, bf);
       const candidateID = election.candidates[pick];
       const body = { electionID: electionId, nullifierHash: nh, credentialType: mode === 'panic' ? 'panic' : 'real' };
-      if (election.encryptionMode === 'elgamal') {
+	  if (election.encryptionMode === 'elgamal-vector-v3') {
+		const vectorBallot = generateVectorBallotV3(pub, pick, election.candidates.length);
+		body.encryptedCandidateVector = vectorBallot.encryptedCandidateVector;
+		body.vectorBallotValidityProof = vectorBallot.vectorBallotValidityProof;
+	  } else if (election.encryptionMode === 'elgamal') {
         const { c1, c2, _r } = elgamalEncrypt(pub, candidateID, pick);
         body.encryptedCandidateID = `${c1}:${c2}`;
         body.ballotValidityProof = JSON.stringify(generateBallotValidityProof(pub, c1, c2, _r, pick, election.candidates.length));
