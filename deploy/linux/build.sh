@@ -8,13 +8,17 @@ require_cmd npm
 require_cmd go
 
 log "installing reproducible Node dependencies"
-npm --prefix "${MONGBAS_REPO_DIR}/application" ci
+npm --prefix "${MONGBAS_REPO_DIR}/application" ci --omit=optional
 npm --prefix "${MONGBAS_REPO_DIR}/frontend" ci
 log "running chaincode unit/property tests"
 (cd "${MONGBAS_REPO_DIR}/chaincode/voting" && go test ./...)
 log "running standalone verifier tests"
 npm --prefix "${MONGBAS_REPO_DIR}/verifier" ci
 npm --prefix "${MONGBAS_REPO_DIR}/verifier" test
+log "auditing deployed Node dependency sets"
+npm --prefix "${MONGBAS_REPO_DIR}/application" audit --omit=optional --audit-level=high
+npm --prefix "${MONGBAS_REPO_DIR}/frontend" audit --audit-level=high
+npm --prefix "${MONGBAS_REPO_DIR}/verifier" audit --audit-level=high
 log "building frontend and fresh chaincode image"
 npm --prefix "${MONGBAS_REPO_DIR}/frontend" run build
 docker compose -f "${MONGBAS_REPO_DIR}/network/docker-compose.yaml" build --pull voting-chaincode

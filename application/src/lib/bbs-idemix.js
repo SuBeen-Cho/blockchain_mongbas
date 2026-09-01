@@ -16,6 +16,12 @@
 
 'use strict';
 
+// The maintained package includes a WASM implementation and an optional,
+// archived native addon.  Force WASM so production never loads the addon's
+// vulnerable node-pre-gyp/tar installation chain even if it is present in a
+// developer's global npm configuration or an old node_modules directory.
+process.env.BBS_SIGNATURES_MODE = 'WASM';
+
 const {
   generateBls12381G2KeyPair,
   blsSign,
