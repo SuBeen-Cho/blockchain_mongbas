@@ -51,6 +51,7 @@ MONGBAS_PROFILE=benchmark ./deploy/linux/fault-evaluation.sh
 MONGBAS_PROFILE=benchmark ./deploy/linux/critical-fault-evaluation.sh
 MONGBAS_PROFILE=benchmark MONGBAS_LONGEVITY_KIND=steady ./deploy/linux/longevity-evaluation.sh
 MONGBAS_PROFILE=benchmark MONGBAS_LONGEVITY_KIND=soak ./deploy/linux/longevity-evaluation.sh
+MONGBAS_PROFILE=benchmark ./deploy/linux/verifier-evaluation.sh
 ```
 
 N=100 측정은 독립된 loopback 벤치마크 백엔드를 `DISABLE_RATE_LIMITS=true`로 기동한 후에만 실행한다. 벤치마크 프로그램은 `/health`에서 이 상태를 확인하고, 일반 rate limit이 켜진 백엔드에서는 부분 측정을 시작하지 않는다. 측정 후에는 즉시 일반 백엔드로 재기동해야 한다.
@@ -60,6 +61,7 @@ N=100 측정은 독립된 loopback 벤치마크 백엔드를 `DISABLE_RATE_LIMIT
 `fault-evaluation.sh`는 volume을 삭제하지 않고 허용 목록의 잉여 컴포넌트만 `docker stop/start`한다. 모든 장애 구간과 복구 후에 새 vector-v3 선거를 생성해 1표 exact threshold tally까지 검증하며, trap으로 정상 상태를 복원한다.
 `critical-fault-evaluation.sh`는 현재 Gateway peer, primary CouchDB, chaincode service 중단 시 요청이 fail-closed하는지와 복구 후 exact threshold tally가 돌아오는지를 분리해 기록한다.
 `longevity-evaluation.sh`는 일반 3000 번 백엔드를 건드리지 않고 loopback 3001 번에 rate-limit을 해제한 독립 측정 백엔드를 기동한다. `steady`는 기본 30분, `soak`는 기본 2시간 동안 반복 라운드의 0건 실패, exact tally, 2개 이상의 partial-decryption proof, 자원·컨테이너 상태를 검증한다. 개발자용 짧은 dry run만 `MONGBAS_LONGEVITY_SECONDS`(60초 이상)로 조정하며, 정식 평가는 기본 시간을 사용한다.
+`verifier-evaluation.sh`는 3표의 live vector-v3 선거를 만들고 bundle source를 export한 뒤, 서버를 종료하고 임시 2-of-3 Ed25519 서명을 추가한다. 이후 `npm pack`으로 만든 clean 디렉터리 verifier로 정상 bundle은 exit 0, 15개 변조 bundle은 모두 exit 1임을 검증한다. 임시 private key는 result에 저장하지 않고 서명 후 삭제하며, single-host 임시 서명은 기관 독립성 증거로 해석하지 않는다.
 
 ## 안전한 종료
 

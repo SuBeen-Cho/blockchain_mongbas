@@ -6,7 +6,8 @@
   "type": "commonjs",
   "bin": {
     "mongbas-verify": "bin/mongbas-verify.js",
-    "mongbas-bundle": "bin/mongbas-bundle.js"
+    "mongbas-bundle": "bin/mongbas-bundle.js",
+    "mongbas-tamper-corpus": "bin/mongbas-tamper-corpus.js"
   },
   "scripts": {
     "test": "node --test"

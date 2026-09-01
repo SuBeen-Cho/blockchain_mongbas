@@ -1,7 +1,11 @@
 'use strict';
 
 const assert = require('node:assert/strict');
+const { spawnSync } = require('node:child_process');
 const crypto = require('node:crypto');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
 const test = require('node:test');
 const {
   G, HOMOMORPHIC_BASE, P, P_HEX, Q,
@@ -374,3 +378,22 @@ for (const [name, mutate] of Object.entries(vectorMutations)) {
     assert.ok(result.errors.length > 0);
   });
 }
+
+test('tamper-corpus CLI emits 15 independently rejected canonical bundles', () => {
+  const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'mongbas-tamper-'));
+  try {
+    const input = path.join(temporary, 'valid.json');
+    const output = path.join(temporary, 'corpus');
+    fs.writeFileSync(input, canonicalize(buildVectorBundle()));
+    const generated = spawnSync(process.execPath, [path.join(__dirname, '../bin/mongbas-tamper-corpus.js'), input, output], { encoding: 'utf8' });
+    assert.equal(generated.status, 0, generated.stderr);
+    const manifest = JSON.parse(fs.readFileSync(path.join(output, 'manifest.json'), 'utf8'));
+    assert.equal(manifest.length, 15);
+    for (const entry of manifest) {
+      const result = verifyBundleBytes(fs.readFileSync(path.join(output, entry.filename)));
+      assert.equal(result.valid, false, `${entry.name} unexpectedly verified`);
+    }
+  } finally {
+    fs.rmSync(temporary, { recursive: true, force: true });
+  }
+});
