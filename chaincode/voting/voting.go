@@ -1957,27 +1957,6 @@ func (c *VotingContract) tallyVotesInternal(
 	panicFiltered := 0 // [PAPER-12] Cleansing-Hiding: 필터링된 패닉 투표 수 (비공개)
 	var decProofs []DecryptionProof
 
-	// N개 ballot에 대한 N회 PDC point query는 CouchDB round-trip을 증폭시킨다.
-	// 비공개 collection을 한 번 조회해 panic nullifier set을 메모리에 구축한다.
-	panicNullifiers := make(map[string]bool)
-	privateQuery := fmt.Sprintf(`{"selector":{"docType":"votePrivate","electionID":"%s","credentialType":"panic"}}`, electionID)
-	privateIterator, privateErr := ctx.GetStub().GetPrivateDataQueryResult(VotePrivatePDC, privateQuery)
-	if privateErr != nil {
-		return nil, fmt.Errorf("panic PDC 일괄 조회 실패: %w", privateErr)
-	}
-	for privateIterator.HasNext() {
-		item, err := privateIterator.Next()
-		if err != nil {
-			privateIterator.Close()
-			return nil, fmt.Errorf("panic PDC 순회 실패: %w", err)
-		}
-		var privateVote VotePrivate
-		if json.Unmarshal(item.Value, &privateVote) == nil && privateVote.NullifierHash != "" {
-			panicNullifiers[privateVote.NullifierHash] = true
-		}
-	}
-	privateIterator.Close()
-
 	// [PAPER-13] 동형 집계를 위한 암호문 누적기 (ElGamal 모드)
 	accC1 := big.NewInt(1) // Π c1_i mod p
 	accC2 := big.NewInt(1) // Π c2_i mod p
@@ -2006,10 +1985,18 @@ func (c *VotingContract) tallyVotesInternal(
 			continue
 		}
 
-		// [PAPER-12] Cleansing-Hiding: 일괄 조회한 비공개 panic set을 사용한다.
-		if panicNullifiers[nullifier.NullifierHash] {
-			panicFiltered++
-			continue
+		// Fabric은 write transaction에서 private-data rich query를 금지한다.
+		// 따라서 피어가 검증 가능한 개별 PDC point read로 panic 여부를 확인한다.
+		vpBytes, vpErr := ctx.GetStub().GetPrivateData(VotePrivatePDC, nullifier.NullifierHash)
+		if vpErr != nil {
+			return nil, fmt.Errorf("PDC 투표 조회 실패 (nullifier=%s): %w", nullifier.NullifierHash, vpErr)
+		}
+		if vpBytes != nil {
+			var vpCheck VotePrivate
+			if json.Unmarshal(vpBytes, &vpCheck) == nil && vpCheck.CredentialType == "panic" {
+				panicFiltered++
+				continue
+			}
 		}
 
 		// 레거시 평문 레코드만 호환한다. 신규 레코드의 빈 암호문은 아래
