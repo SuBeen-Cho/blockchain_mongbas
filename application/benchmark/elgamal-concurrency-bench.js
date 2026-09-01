@@ -260,6 +260,34 @@ function systemSnapshot() {
   return snapshot;
 }
 
+async function measureExactTally(electionID, expectedResults) {
+  const close = await post(`/api/elections/${electionID}/close`, {}, {}, 180000);
+  if (close.status >= 400) return { success: false, error: `close failed: ${close.status}`, closeMs: +close.ms.toFixed(1) };
+  const partials = [];
+  for (const shareIndex of ['1', '2']) {
+    const partial = await post(`/api/elections/${electionID}/partial-decryptions`, { shareIndex }, {}, 180000);
+    partials.push(partial);
+    if (partial.status >= 400) return { success: false, error: `partial ${shareIndex} failed: ${partial.status}` };
+  }
+  const tally = await get(`/api/elections/${electionID}/tally`);
+  const body = tally.body || {};
+  const results = body.results || {};
+  const proofCount = Array.isArray(body.vectorPartialDecryptions) ? body.vectorPartialDecryptions.length : 0;
+  const exact = tally.status < 400 && body.decrypted === true && proofCount >= 2 &&
+    CANDIDATES.every(candidate => results[candidate] === expectedResults[candidate]);
+  return {
+    success: exact,
+    error: exact ? null : `exact threshold tally mismatch (status=${tally.status}, proofs=${proofCount})`,
+    expectedResults,
+    actualResults: results,
+    totalVotes: body.totalVotes,
+    vectorPartialDecryptionProofs: proofCount,
+    closeMs: +close.ms.toFixed(1),
+    partialMs: +partials.reduce((sum, item) => sum + item.ms, 0).toFixed(1),
+    readMs: +tally.ms.toFixed(1),
+  };
+}
+
 // ── 동시성 라운드 ───────────────────────────────────────────────
 async function runConcurrency(label, concurrency, idemixEnabled) {
   console.log(`\n  [${label}] C=${concurrency} — 선거 생성...`);
@@ -294,8 +322,13 @@ async function runConcurrency(label, concurrency, idemixEnabled) {
     const key = `${r.status}:${(r.error || '').slice(0, 120)}`;
     errors[key] = (errors[key] || 0) + 1;
   }
+  const expectedResults = Object.fromEntries(CANDIDATES.map(candidate => [candidate, 0]));
+  for (const result of ok) expectedResults[CANDIDATES[result.index % CANDIDATES.length]] += 1;
+  console.log('  threshold exact tally 검증...');
+  const tally = await measureExactTally(electionID, expectedResults);
 
   const round = {
+    electionID,
     concurrency,
     success: ok.length,
     fail: fail.length,
@@ -305,6 +338,7 @@ async function runConcurrency(label, concurrency, idemixEnabled) {
     latency: stats(ok.map(r => r.ms)),
     errors,
     failedSamples: fail.slice(0, 20).map(({ index, status, ms, error }) => ({ index, status, ms: +ms.toFixed(1), error })),
+    tally,
   };
 
   console.log(`  성공=${round.success}/${concurrency} TPS=${round.tps} avg=${round.latency.avg}ms P95=${round.latency.p95}ms fail=${round.failRate}%`);
@@ -365,6 +399,9 @@ async function main() {
   }
 
   console.log(`\n결과 저장: ${OUT}`);
+  if (rounds.some(round => !round.tally?.success)) {
+    throw new Error('one or more exact threshold tally checks failed');
+  }
 }
 
 main().catch(err => {
