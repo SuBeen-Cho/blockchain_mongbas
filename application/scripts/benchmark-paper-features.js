@@ -17,6 +17,7 @@
 const crypto = require('crypto');
 
 const BASE_URL = (process.env.BENCH_BASE_URL || 'http://localhost:3000').replace(/\/$/, '');
+const ADMIN_API_TOKEN = process.env.ADMIN_API_TOKEN || '';
 const ITERATIONS = parseInt(process.env.BENCH_ITERATIONS || '20', 10);
 const ELECTION_ID = `bench-paper-${Date.now()}`;
 const CANDIDATES = ['CANDIDATE_A', 'CANDIDATE_B', 'CANDIDATE_C'];
@@ -40,7 +41,11 @@ function encryptAESGCM(keyHex, plaintext) {
 async function requestJson(path, options = {}) {
   const res = await fetch(`${BASE_URL}${path}`, {
     ...options,
-    headers: { 'content-type': 'application/json', ...(options.headers || {}) },
+    headers: {
+      'content-type': 'application/json',
+      ...(ADMIN_API_TOKEN ? { authorization: `Bearer ${ADMIN_API_TOKEN}` } : {}),
+      ...(options.headers || {}),
+    },
   });
   const text = await res.text();
   let body = null;
@@ -53,7 +58,19 @@ async function measure(label, fn) {
   const start = performance.now();
   const result = await fn();
   const elapsed = performance.now() - start;
+  if (result && typeof result.ok === 'boolean' && !result.ok) {
+    throw new Error(`${label} failed: HTTP ${result.status} ${JSON.stringify(result.body)}`);
+  }
   return { label, elapsed, result };
+}
+
+function requireLegacyBenchmarkOptIn() {
+  if (process.env.ALLOW_LEGACY_INSECURE_BENCHMARK !== 'true') {
+    throw new Error(
+      'legacy PAPER-1~8 benchmark is disabled: it uses bypass/plaintext/AES-era paths; ' +
+      'use deploy/linux/rate-evaluation.sh for publishable vector-v3 results',
+    );
+  }
 }
 
 // 통계 계산
@@ -72,6 +89,7 @@ function stats(values) {
 }
 
 async function main() {
+  requireLegacyBenchmarkOptIn();
   console.log('═══════════════════════════════════════════════════');
   console.log(' PAPER Features Performance Benchmark');
   console.log(`   Election: ${ELECTION_ID}`);
@@ -87,7 +105,7 @@ async function main() {
   if (!health.ok) throw new Error('API server not running');
 
   const endTime = Math.floor(Date.now() / 1000) + 7200;
-  await requestJson('/api/elections', {
+  const created = await requestJson('/api/elections', {
     method: 'POST',
     body: JSON.stringify({
       electionID: ELECTION_ID,
@@ -98,7 +116,9 @@ async function main() {
       endTime,
     }),
   });
-  await requestJson(`/api/elections/${ELECTION_ID}/activate`, { method: 'POST' });
+  if (!created.ok) throw new Error(`create election failed: HTTP ${created.status} ${JSON.stringify(created.body)}`);
+  const activated = await requestJson(`/api/elections/${ELECTION_ID}/activate`, { method: 'POST' });
+  if (!activated.ok) throw new Error(`activate election failed: HTTP ${activated.status} ${JSON.stringify(activated.body)}`);
   console.log('[OK] Election created and activated\n');
 
   // ── Benchmark 1: GetEncryptionKey (PAPER-1) ───────────────
