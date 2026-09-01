@@ -5,7 +5,13 @@ source "$(cd "$(dirname "$0")" && pwd)/lib.sh"
 ensure_runtime
 load_runtime_env
 base_url="${MONGBAS_BASE_URL:-http://127.0.0.1:3000}"
-curl --fail --silent --show-error --max-time 10 "${base_url}/health" >/dev/null
+backend_timeout="${MONGBAS_BACKEND_READY_TIMEOUT:-60}"
+backend_deadline=$((SECONDS + backend_timeout))
+while ! curl --fail --silent --max-time 5 "${base_url}/health" >/dev/null 2>&1; do
+  (( SECONDS < backend_deadline )) || die "backend readiness timed out after ${backend_timeout}s: ${base_url}/health"
+  sleep 1
+done
+log "backend is ready at ${base_url}"
 E2E_BASE_URL="${base_url}" npm --prefix "${MONGBAS_REPO_DIR}/application" run e2e:full \
   2>&1 | tee "${MONGBAS_LOG_DIR}/e2e-$(timestamp_utc).log"
 log "smoke/E2E completed with a zero exit status"
