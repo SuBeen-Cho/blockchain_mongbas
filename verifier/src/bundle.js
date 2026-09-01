@@ -34,6 +34,31 @@ function buildUnsignedBundle(source) {
     c2 = (c2 * BigInt(`0x${ballot.ciphertext.c2}`)) % P;
   }
   const aggregateCiphertext = { c1: c1.toString(16), c2: c2.toString(16) };
+  if (source.aggregateCiphertext && (source.aggregateCiphertext.c1 !== aggregateCiphertext.c1 || source.aggregateCiphertext.c2 !== aggregateCiphertext.c2)) {
+    throw new Error('source aggregate ciphertext does not match recomputed ballot aggregate');
+  }
+  if (Array.isArray(source.partialDecryptions) && source.partialDecryptions.length > 0) {
+    if (!Array.isArray(source.thresholdPublicShares) || source.thresholdPublicShares.length < 2) {
+      throw new Error('threshold public shares are required');
+    }
+    return {
+      schema: 'mongbas-election-bundle/v2',
+      algorithms: {
+        canonicalization: 'mongbas-canonical-json-v1', hash: 'sha-256', signature: 'ed25519',
+        tally: 'mongbas-exp-elgamal-threshold-v2',
+      },
+      configuration: source.configuration,
+      provenance: source.provenance,
+      publicKey: source.publicKey,
+      trusteePublicShares: source.thresholdPublicShares,
+      ballots,
+      bulletinBoard: { root: merkleRoot(ballots), publishedAt: source.publishedAt },
+      aggregateCiphertext,
+      tally: { results: source.tallyResults, totalVotes: source.totalVotes },
+      partialDecryptions: source.partialDecryptions,
+      signatures: [],
+    };
+  }
   const aggregateProofs = (source.decryptionProofs || []).filter((proof) => proof.nullifierHash === 'HOMOMORPHIC_TALLY');
   if (aggregateProofs.length !== 1 || !aggregateProofs[0].zkProof) throw new Error('exactly one homomorphic tally proof is required');
   const sourceProof = aggregateProofs[0].zkProof;

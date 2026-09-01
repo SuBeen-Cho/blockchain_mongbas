@@ -728,10 +728,13 @@ router.get('/:id/election-bundle-source', requireValidElectionID, async (req, re
       },
       provenance: { gitCommit, imageDigest, softwareVersion },
       publicKey: board.elgamalPubKey,
+      thresholdPublicShares: board.thresholdPublicShares,
       ballots,
       tallyResults: board.tallyResults,
       totalVotes: board.totalVotes,
       decryptionProofs: board.decryptionProofs,
+      partialDecryptions: board.partialDecryptions,
+      aggregateCiphertext: { c1: board.encAggC1, c2: board.encAggC2 },
       publishedAt: board.publishedAt,
     });
   } catch (err) {

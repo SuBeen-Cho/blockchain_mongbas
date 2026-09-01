@@ -30,13 +30,21 @@ The process exits `0` only when every implemented check passes, `1` for an inval
 - every disjunctive Chaum–Pedersen ballot-validity proof, including Fiat–Shamir challenge recomputation;
 - aggregate ciphertext recomputation from all ballots;
 - tally count/range and total consistency;
-- aggregate decryption Chaum–Pedersen proof, including Fiat–Shamir challenge recomputation;
+- v1 aggregate decryption Chaum–Pedersen proof, or v2 trustee partial
+  decryptions with trustee/MSP binding, Fiat–Shamir challenge recomputation,
+  Lagrange combination, combined-public-key validation, and tally recovery;
 - deterministic bulletin-board Merkle root;
 - threshold of distinct Ed25519 organization signatures over the complete unsigned canonical bundle;
 - downgrade, deletion, replacement, reordering, duplication and proof/signature mutation tests.
 
 ## Current protocol limitation
 
-Version `mongbas-exp-elgamal-scalar-v1` matches the current chaincode's mixed-radix scalar tally. It cannot safely support the project's intended large election sizes. The verifier rejects counts outside the base-10,000 digit range. A future bundle version must use per-candidate ciphertext vectors and verifiable trustee partial decryptions; the current aggregate proof is generated only after reconstructing the complete private key and is not evidence of true threshold ElGamal.
+Bundle v2 removes complete-private-key reconstruction and verifies 2-of-3
+partial decryptions. Key generation is still dealer-assisted and trustee secret
+shares currently reside in a shared Fabric private-data collection, so this is
+not a DKG-backed production threshold deployment. The mixed-radix scalar tally
+also remains capped below 10,000 votes per candidate. A production-oriented v3
+should use DKG, per-organization secret storage, and per-candidate ciphertext
+vectors.
 
 The verifier intentionally does not call `GetSecurityProperties` and does not accept a server-provided `isValid` flag as evidence.

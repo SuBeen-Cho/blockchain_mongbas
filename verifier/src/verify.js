@@ -20,6 +20,7 @@ const G = 2n;
 const Q = (P - 1n) / 2n;
 const HOMOMORPHIC_BASE = 10000n;
 const ALGORITHM = 'mongbas-exp-elgamal-scalar-v1';
+const THRESHOLD_ALGORITHM = 'mongbas-exp-elgamal-threshold-v2';
 
 function sha256Hex(value) {
   return crypto.createHash('sha256').update(value).digest('hex');
@@ -148,6 +149,69 @@ function verifyDecryptionProof(publicKeyY, aggregate, results, candidates, proof
   if (modPow(c1, z, P) !== (a2 * modPow(sharedSecret, e, P)) % P) throw new Error('tally proof equation 2 failed');
 }
 
+function lagrangeCoefficientAtZero(index, indexes) {
+  let numerator = 1n;
+  let denominator = 1n;
+  const i = BigInt(index);
+  for (const other of indexes) {
+    if (other === index) continue;
+    const j = BigInt(other);
+    numerator = (numerator * j) % Q;
+    denominator = (denominator * (j - i)) % Q;
+  }
+  const inverse = modInverse(denominator, Q);
+  if (inverse === null) throw new Error('invalid trustee index set');
+  return ((numerator * inverse) % Q + Q) % Q;
+}
+
+function combineThresholdValues(values) {
+  const indexes = [...values.keys()].sort((a, b) => a - b);
+  if (indexes.length < 2 || new Set(indexes).size !== indexes.length) throw new Error('fewer than two unique trustee values');
+  let combined = 1n;
+  for (const index of indexes) combined = (combined * modPow(values.get(index), lagrangeCoefficientAtZero(index, indexes), P)) % P;
+  return combined;
+}
+
+function verifyThresholdDecryptions(publicKeyY, aggregate, results, candidates, publicShares, partials) {
+  if (!Array.isArray(publicShares) || publicShares.length !== 3 || !Array.isArray(partials) || partials.length < 2) {
+    throw new Error('expected three public shares and at least two partial decryptions');
+  }
+  const configured = new Map(publicShares.map((share) => [share.index, share]));
+  if (configured.size !== publicShares.length) throw new Error('duplicate trustee public share index');
+  const values = new Map();
+  const publicValues = new Map();
+  for (const partial of partials) {
+    if (values.has(partial.index)) throw new Error(`duplicate partial decryption index: ${partial.index}`);
+    const expected = configured.get(partial.index);
+    if (!expected || expected.mspID !== partial.mspID || expected.publicKeyY !== partial.publicKeyY) {
+      throw new Error(`partial decryption ${partial.index} trustee binding mismatch`);
+    }
+    const y = parseHex(partial.publicKeyY, `partial[${partial.index}].publicKeyY`, { subgroup: true });
+    const value = parseHex(partial.value, `partial[${partial.index}].value`, { subgroup: true });
+    const proof = partial.proof;
+    if (proof?.c1 !== aggregate.c1 || proof?.c2 !== partial.value) throw new Error(`partial ${partial.index} ciphertext mismatch`);
+    const a1 = parseHex(proof.a1, `partial[${partial.index}].a1`, { subgroup: true });
+    const a2 = parseHex(proof.a2, `partial[${partial.index}].a2`, { subgroup: true });
+    const e = parseHex(proof.e, `partial[${partial.index}].e`, { scalar: true });
+    const z = parseHex(proof.z, `partial[${partial.index}].z`, { scalar: true });
+    const c1 = parseHex(aggregate.c1, 'aggregate.c1', { subgroup: true });
+    const challengeText = [G, y, c1, value, a1, a2].map((item) => item.toString(16)).join('|');
+    if (e !== BigInt(`0x${sha256Hex(challengeText)}`) % Q) throw new Error(`partial ${partial.index} Fiat-Shamir challenge mismatch`);
+    if (modPow(G, z, P) !== (a1 * modPow(y, e, P)) % P) throw new Error(`partial ${partial.index} proof equation 1 failed`);
+    if (modPow(c1, z, P) !== (a2 * modPow(value, e, P)) % P) throw new Error(`partial ${partial.index} proof equation 2 failed`);
+    values.set(partial.index, value);
+    publicValues.set(partial.index, y);
+  }
+  if (combineThresholdValues(publicValues) !== publicKeyY) throw new Error('combined trustee public key mismatch');
+  const combined = combineThresholdValues(values);
+  const c2 = parseHex(aggregate.c2, 'aggregate.c2', { subgroup: true });
+  const inverse = modInverse(combined, P);
+  if (inverse === null) throw new Error('combined partial has no inverse');
+  const actualMessage = (c2 * inverse) % P;
+  const expectedMessage = modPow(G, encodedTally(results, candidates), P);
+  if (actualMessage !== expectedMessage) throw new Error('threshold-decrypted tally does not match results');
+}
+
 function ballotLeaf(ballot) {
   return sha256Hex(canonicalize({
     candidateCommitment: ballot.candidateCommitment,
@@ -203,8 +267,9 @@ function verifyBundle(bundle) {
   const check = (label, fn) => {
     try { return fn(); } catch (error) { errors.push(`${label}: ${error.message}`); return undefined; }
   };
-  if (bundle?.schema !== 'mongbas-election-bundle/v1') errors.push('schema: unsupported bundle schema');
-  if (bundle?.algorithms?.tally !== ALGORITHM) errors.push('algorithms.tally: unsupported or downgraded algorithm');
+  const thresholdV2 = bundle?.schema === 'mongbas-election-bundle/v2';
+  if (!thresholdV2 && bundle?.schema !== 'mongbas-election-bundle/v1') errors.push('schema: unsupported bundle schema');
+  if (bundle?.algorithms?.tally !== (thresholdV2 ? THRESHOLD_ALGORITHM : ALGORITHM)) errors.push('algorithms.tally: unsupported or downgraded algorithm');
   const candidates = bundle?.configuration?.candidates;
   if (!Array.isArray(candidates) || candidates.length < 2 || new Set(candidates).size !== candidates.length) errors.push('configuration.candidates: invalid or duplicate candidates');
   if (!Number.isSafeInteger(bundle?.configuration?.signatureThreshold) || bundle.configuration.signatureThreshold < 1) errors.push('configuration.signatureThreshold: invalid threshold');
@@ -236,7 +301,10 @@ function verifyBundle(bundle) {
     const total = candidates.reduce((sum, candidate) => sum + (bundle.tally.results[candidate] ?? -1), 0);
     if (total !== bundle.tally.totalVotes) errors.push('tally.results: counts do not sum to totalVotes');
   }
-  if (y && aggregate && candidates) check('decryptionProof', () => verifyDecryptionProof(y, aggregate, bundle.tally.results, candidates, bundle.decryptionProof));
+  if (y && aggregate && candidates) {
+    if (thresholdV2) check('partialDecryptions', () => verifyThresholdDecryptions(y, aggregate, bundle.tally.results, candidates, bundle.trusteePublicShares, bundle.partialDecryptions));
+    else check('decryptionProof', () => verifyDecryptionProof(y, aggregate, bundle.tally.results, candidates, bundle.decryptionProof));
+  }
   const root = Array.isArray(ballots) ? check('bulletinBoard.root', () => merkleRoot(ballots)) : undefined;
   if (root && bundle?.bulletinBoard?.root !== root) errors.push('bulletinBoard.root: Merkle root mismatch');
   const payloadBytes = Buffer.from(canonicalize(unsignedBundle(bundle)));
@@ -265,6 +333,7 @@ function verifyBundleBytes(bytes) {
 
 module.exports = {
   ALGORITHM,
+  THRESHOLD_ALGORITHM,
   G,
   HOMOMORPHIC_BASE,
   P,

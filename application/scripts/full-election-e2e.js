@@ -710,6 +710,17 @@ async function main() {
   }
   const elgamalZkpOk = true;
 
+  await assertOk('publish ElGamal threshold audit data',
+    requestJson(`/api/elections/${EG_ELECTION_ID}/publish-audit`, { method: 'POST' })
+  );
+  const egBoard = await assertOk('get ElGamal threshold bulletin board',
+    requestJson(`/api/elections/${EG_ELECTION_ID}/bulletin-board`)
+  );
+  if (egBoard.partialDecryptions?.length !== 2 || egBoard.thresholdPublicShares?.length !== 3 ||
+      egBoard.encAggC1 !== egTally.encAggC1 || egBoard.encAggC2 !== egTally.encAggC2) {
+    throw new Error(`ElGamal bulletin board lacks threshold verification material: ${JSON.stringify(egBoard)}`);
+  }
+
   // ── Phase 15: Deniable Credential Duality (PAPER-12) ─────
   console.log('\n── Phase 15: Deniable Credential Duality ──');
 

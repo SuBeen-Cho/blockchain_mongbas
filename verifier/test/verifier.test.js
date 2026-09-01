@@ -73,6 +73,21 @@ function decryptionProof(privateKey, publicKeyY, aggregate, sum) {
   };
 }
 
+function thresholdPartial(index, share, aggregate, mspID) {
+  const c1 = BigInt(`0x${aggregate.c1}`);
+  const y = modPow(G, share, P);
+  const value = modPow(c1, share, P);
+  const nonce = scalar(`partial:${index}:nonce`);
+  const a1 = modPow(G, nonce, P);
+  const a2 = modPow(c1, nonce, P);
+  const challengeText = [G, y, c1, value, a1, a2].map((item) => item.toString(16)).join('|');
+  const e = BigInt(`0x${sha256Hex(challengeText)}`) % Q;
+  return {
+    index, mspID, publicKeyY: y.toString(16), value: value.toString(16),
+    proof: { c1: aggregate.c1, c2: value.toString(16), a1: a1.toString(16), a2: a2.toString(16), e: e.toString(16), z: ((nonce + e * share) % Q).toString(16) },
+  };
+}
+
 function buildBundle() {
   const electionID = 'verifier-known-answer-1';
   const candidates = ['ALICE', 'BOB'];
@@ -225,4 +240,41 @@ test('offline signer rejects a key that does not match the configured organizati
   bundle.signatures = [];
   const wrongKey = crypto.generateKeyPairSync('ed25519').privateKey.export({ format: 'pem', type: 'pkcs8' });
   assert.throws(() => signBundle(bundle, 'ec', wrongKey), /does not match/);
+});
+
+test('builds and verifies a 2-of-3 threshold bundle without a private-key reconstruction proof', () => {
+  const legacy = buildBundle();
+  const secret = scalar('threshold-election-secret');
+  const coefficient = scalar('threshold-coefficient');
+  const shares = [1, 2, 3].map((index) => (secret + coefficient * BigInt(index)) % Q);
+  const publicKeyY = modPow(G, secret, P);
+  const ballots = [0, 1].map((selection, index) => {
+    const encrypted = encryptAndProve(publicKeyY, selection, 2, `threshold-ballot:${index}`);
+    const nullifierHash = sha256Hex(`threshold-nullifier:${index}`);
+    const encryptedCandidateID = `${encrypted.ciphertext.c1}:${encrypted.ciphertext.c2}`;
+    return { nullifierHash, candidateCommitment: sha256Hex(`threshold-test|${nullifierHash}|${encryptedCandidateID}`), encryptedCandidateID, ballotValidityProof: encrypted.validityProof };
+  });
+  const aggregate = ballots.reduce((result, ballot) => {
+    const [c1, c2] = ballot.encryptedCandidateID.split(':').map((item) => BigInt(`0x${item}`));
+    return { c1: ((BigInt(`0x${result.c1}`) * c1) % P).toString(16), c2: ((BigInt(`0x${result.c2}`) * c2) % P).toString(16) };
+  }, { c1: '1', c2: '1' });
+  const mspIDs = ['ElectionCommissionMSP', 'PartyObserverMSP', 'CivilSocietyMSP'];
+  const source = {
+    schema: 'mongbas-election-bundle-source/v1', encryptionMode: 'elgamal',
+    configuration: { ...legacy.configuration, electionID: 'threshold-test' }, provenance: legacy.provenance,
+    publicKey: { p: P_HEX, g: '2', y: publicKeyY.toString(16) }, ballots,
+    tallyResults: { ALICE: 1, BOB: 1 }, totalVotes: 2, aggregateCiphertext: aggregate,
+    thresholdPublicShares: shares.map((share, offset) => ({ index: offset + 1, mspID: mspIDs[offset], publicKeyY: modPow(G, share, P).toString(16) })),
+    partialDecryptions: [thresholdPartial(1, shares[0], aggregate, mspIDs[0]), thresholdPartial(2, shares[1], aggregate, mspIDs[1])],
+    publishedAt: 1,
+  };
+  let bundle = buildUnsignedBundle(source);
+  assert.equal(bundle.schema, 'mongbas-election-bundle/v2');
+  const keys = [crypto.generateKeyPairSync('ed25519'), crypto.generateKeyPairSync('ed25519')];
+  bundle.configuration.organizations = keys.map((key, index) => ({ id: index ? 'civil' : 'ec', ed25519PublicKeyDer: key.publicKey.export({ format: 'der', type: 'spki' }).toString('base64') }));
+  bundle = signBundle(bundle, 'ec', keys[0].privateKey.export({ format: 'pem', type: 'pkcs8' }));
+  bundle = signBundle(bundle, 'civil', keys[1].privateKey.export({ format: 'pem', type: 'pkcs8' }));
+  assert.equal(verifyBundle(bundle).valid, true, verifyBundle(bundle).errors.join('\n'));
+  bundle.partialDecryptions[0].proof.z = '0';
+  assert.equal(verifyBundle(bundle).valid, false, 'tampered threshold proof must fail');
 });

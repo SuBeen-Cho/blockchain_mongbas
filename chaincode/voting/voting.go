@@ -2955,6 +2955,9 @@ func (c *VotingContract) SubmitPartialDecryption(
 			tally.Results[candidate] = counts[i]
 		}
 		tally.Decrypted = true
+		proofBytes, _ := json.Marshal(tally.PartialDecryptions)
+		proofHash := sha256.Sum256(proofBytes)
+		tally.TallyProofHash = hex.EncodeToString(proofHash[:])
 		status.IsDecrypted = true
 	}
 	tallyBytes, _ = json.Marshal(tally)
@@ -3363,8 +3366,12 @@ type BulletinBoard struct {
 	ShuffleProofHash string            `json:"shuffleProofHash,omitempty" metadata:",optional"` // [PAPER-7] 셔플 정확성 증명
 	PublishedAt      int64             `json:"publishedAt"`
 	// [PAPER-11] ElGamal 모드 전용 필드
-	EncryptionMode string            `json:"encryptionMode,omitempty" metadata:",optional"` // "aes" | "elgamal"
-	ElGamalPubKey  *ElGamalPublicKey `json:"elgamalPubKey,omitempty" metadata:",optional"`  // ElGamal 공개키 (ZKP 검증용)
+	EncryptionMode        string                 `json:"encryptionMode,omitempty" metadata:",optional"` // "aes" | "elgamal"
+	ElGamalPubKey         *ElGamalPublicKey      `json:"elgamalPubKey,omitempty" metadata:",optional"`  // ElGamal 공개키 (ZKP 검증용)
+	ThresholdPublicShares []ThresholdPublicShare `json:"thresholdPublicShares,omitempty" metadata:",optional"`
+	PartialDecryptions    []PartialDecryption    `json:"partialDecryptions,omitempty" metadata:",optional"`
+	EncAggC1              string                 `json:"encAggC1,omitempty" metadata:",optional"`
+	EncAggC2              string                 `json:"encAggC2,omitempty" metadata:",optional"`
 }
 
 // EncryptedBallot 공개 원장의 개별 암호화 투표
@@ -3428,7 +3435,10 @@ func (c *VotingContract) PublishAuditData(
 		if !tally.Decrypted {
 			return nil, fmt.Errorf("ElGamal 집계는 threshold 복원과 복호화 완료 후에만 게시할 수 있습니다")
 		}
-		if len(tally.DecryptionProofs) == 0 {
+		if len(election.ThresholdPublicShares) > 0 && len(tally.PartialDecryptions) < ShamirThreshold {
+			return nil, fmt.Errorf("ElGamal threshold partial decryption 증명이 부족합니다")
+		}
+		if len(election.ThresholdPublicShares) == 0 && len(tally.DecryptionProofs) == 0 {
 			return nil, fmt.Errorf("ElGamal 집계 복호화 증명이 없어 게시할 수 없습니다")
 		}
 	}
@@ -3442,13 +3452,10 @@ func (c *VotingContract) PublishAuditData(
 		}
 		encKeyHex = hex.EncodeToString(encKey)
 	} else {
-		// ElGamal 모드: AES 키도 셔플 시드 유도에 필요
-		var ekErr error
-		encKey, ekErr = getEncryptionKey(ctx, electionID)
-		if ekErr != nil {
-			return nil, fmt.Errorf("셔플 시드용 키 조회 실패: %w", ekErr)
-		}
-		// ElGamal 모드에서는 AES 키를 공개하지 않음
+		// The shuffle seed is published, so deriving it from an unrelated secret
+		// adds no secrecy and breaks v2 after AES key deletion. Bind it to the
+		// public, proof-authenticated tally instead.
+		encKey = []byte("ELGAMAL-PUBLIC-SHUFFLE-V2")
 		encKeyHex = ""
 	}
 
@@ -3517,20 +3524,24 @@ func (c *VotingContract) PublishAuditData(
 	}
 
 	bb := BulletinBoard{
-		ObjectType:       "bulletinBoard",
-		ElectionID:       electionID,
-		EncryptionKeyHex: encKeyHex, // AES 모드에서만 공개, ElGamal 모드에서는 빈 문자열
-		EncryptedBallots: shuffledBallots,
-		TallyResults:     tally.Results,
-		TotalVotes:       tally.TotalVotes,
-		DecryptionProofs: shuffledProofs,
-		TallyProofHash:   tally.TallyProofHash,
-		MerkleRoot:       merkleRoot,
-		ShuffleSeed:      hex.EncodeToString(shuffleSeed),
-		ShuffleProofHash: shuffleProofHash,
-		PublishedAt:      now,
-		EncryptionMode:   election.EncryptionMode,
-		ElGamalPubKey:    election.ElGamalPubKey, // ElGamal 모드에서만 포함
+		ObjectType:            "bulletinBoard",
+		ElectionID:            electionID,
+		EncryptionKeyHex:      encKeyHex, // AES 모드에서만 공개, ElGamal 모드에서는 빈 문자열
+		EncryptedBallots:      shuffledBallots,
+		TallyResults:          tally.Results,
+		TotalVotes:            tally.TotalVotes,
+		DecryptionProofs:      shuffledProofs,
+		TallyProofHash:        tally.TallyProofHash,
+		MerkleRoot:            merkleRoot,
+		ShuffleSeed:           hex.EncodeToString(shuffleSeed),
+		ShuffleProofHash:      shuffleProofHash,
+		PublishedAt:           now,
+		EncryptionMode:        election.EncryptionMode,
+		ElGamalPubKey:         election.ElGamalPubKey, // ElGamal 모드에서만 포함
+		ThresholdPublicShares: election.ThresholdPublicShares,
+		PartialDecryptions:    tally.PartialDecryptions,
+		EncAggC1:              tally.EncAggC1,
+		EncAggC2:              tally.EncAggC2,
 	}
 	if bb.EncryptionMode == "" {
 		bb.EncryptionMode = "aes"
@@ -3766,26 +3777,29 @@ func (c *VotingContract) GetSecurityProperties(
 	hasPubKey := os.Getenv("ED25519_PUBLIC_KEY_DER_B64") != ""
 
 	credMechanism := "metadata-only"
+	credStatus := "not-achieved"
 	if hasCredSecret {
 		credMechanism = "chaincode-hmac"
+		credStatus = "achieved"
 	}
 	if hasPubKey {
 		credMechanism = "chaincode-ed25519"
+		credStatus = "achieved"
 	}
 
 	return &SecurityProperties{
 		BallotSecrecy: SecurityProperty{
 			Property:   "Ballot Secrecy",
-			Status:     "achieved",
-			Mechanism:  "AES-256-GCM client-side encryption (blind mode) + nullifier anonymity",
-			Assumption: "AES IND-CPA + SHA-256 preimage resistance",
+			Status:     "partial",
+			Mechanism:  "ElGamal client-side encryption + dealer-assisted 2-of-3 partial decryption",
+			Assumption: "DDH; dealer does not retain the key; shared PDC readers do not collude",
 			PaperRef:   "PAPER-1 (21차)",
 		},
 		CastAsIntended: SecurityProperty{
 			Property:   "Cast-as-Intended",
-			Status:     "achieved",
+			Status:     "partial",
 			Mechanism:  "Benaloh Challenge (PrepareBallot/AuditBallot) with deterministic re-encryption",
-			Assumption: "AES-256-GCM deterministic nonce correctness",
+			Assumption: "audited ballot sampling is representative; unaudited cast ballot remains hidden",
 			PaperRef:   "PAPER-3 (23차)",
 		},
 		RecordedAsCast: SecurityProperty{
@@ -3797,28 +3811,28 @@ func (c *VotingContract) GetSecurityProperties(
 		},
 		TalliedAsRecorded: SecurityProperty{
 			Property:   "Tallied-as-Recorded",
-			Status:     "achieved",
-			Mechanism:  "Homomorphic tally (ElGamal) with Chaum-Pedersen ZKP / DecryptionProof per-vote (AES)",
-			Assumption: "DDH assumption (ElGamal) + SHA-256 preimage resistance",
+			Status:     "partial",
+			Mechanism:  "Homomorphic ElGamal tally with proof-carrying 2-of-3 partial decryptions",
+			Assumption: "DDH; every included ballot has a validity proof; filtering requires separate proof",
 			PaperRef:   "PAPER-2 (22차), PAPER-13 (33차)",
 		},
 		UniversalVerifiability: SecurityProperty{
 			Property:   "Universal Verifiability",
-			Status:     "achieved",
-			Mechanism:  "Homomorphic tally ZKP (ElGamal) / Bulletin Board + key publication (AES)",
-			Assumption: "DDH assumption + SHA-256 collision resistance",
+			Status:     "partial",
+			Mechanism:  "Signed offline bundle v2 verifies ballots, aggregate, trustee proofs, and tally",
+			Assumption: "bundle publication is complete; organization signing threshold is honestly operated",
 			PaperRef:   "PAPER-6 (26차), PAPER-13 (33차)",
 		},
 		CoercionResistance: SecurityProperty{
 			Property:   "Coercion Resistance (Layered)",
-			Status:     "achieved",
+			Status:     "partial",
 			Mechanism:  "PDC-based Deniable Credential Duality (Layer 1: Panic Credential, Layer 2: Re-voting, Layer 3: Panic Password, Layer 4: Receipt-Free) + Cleansing-Hiding tally + multi-org endorsement",
-			Assumption: "2-of-3 honest majority + PDC channel confidentiality + SHA-256 preimage resistance + re-voting window",
+			Assumption: "demo-only panic filtering; no formal JCJ-style coercion proof or indistinguishable cleansing proof",
 			PaperRef:   "PAPER-12 (32차)",
 		},
 		EligibilityVerify: SecurityProperty{
 			Property:   "Eligibility Verifiability",
-			Status:     "achieved",
+			Status:     credStatus,
 			Mechanism:  credMechanism + " + 2-of-3 endorsement",
 			Assumption: "HMAC-SHA256 PRF / Ed25519 SUF-CMA",
 			PaperRef:   "PAPER-4 (24차)",
@@ -3832,7 +3846,7 @@ func (c *VotingContract) GetSecurityProperties(
 			"SHA-256 (hash, commitment, Merkle tree)",
 			"Ed25519 (credential signature, RFC 8032)",
 			"HMAC-SHA256 (credential authentication)",
-			"Shamir SSS (2-of-3 threshold, GF(secp256k1 prime))",
+			"Dealer-assisted threshold ElGamal (2-of-3 partial decryption; DKG pending)",
 			"PDC-based Deniable Credential Duality (Cleansing-Hiding coercion resistance)",
 		},
 		EndorsementPolicy: "2-of-3 (ElectionCommission, PartyObserver, CivilSociety)",
