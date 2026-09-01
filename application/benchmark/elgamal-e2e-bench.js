@@ -301,6 +301,7 @@ async function measureSingleVote(electionID, pubKey, candidateIdx, authHeaders, 
 
   return {
     success: res.status >= 200 && res.status < 300,
+    candidateIndex: candidateIdx,
     status: res.status,
     timings,
     payloadBytes,
@@ -392,7 +393,8 @@ async function main() {
   // 3. Warmup
   console.log(`\n[3/5] Warmup (${WARMUP}회)...`);
   for (let i = 0; i < WARMUP; i++) {
-    await measureSingleVote(electionID, pubKey, i % CANDIDATES.length, authHeaders, `warmup-${i}`);
+    const warmupResult = await measureSingleVote(electionID, pubKey, i % CANDIDATES.length, authHeaders, `warmup-${i}`);
+    if (!warmupResult.success) throw new Error(`warmup vote ${i} failed: HTTP ${warmupResult.status} ${warmupResult.error}`);
     process.stdout.write(`\r  warmup: ${i + 1}/${WARMUP}`);
   }
   console.log(' done');
@@ -436,7 +438,9 @@ async function main() {
   console.log('\n[5/5] 집계(TallyVotes) 측정...');
   const expectedResults = Object.fromEntries(CANDIDATES.map((candidate) => [candidate, 0]));
   for (let i = 0; i < WARMUP; i++) expectedResults[CANDIDATES[i % CANDIDATES.length]]++;
-  for (let i = 0; i < N; i++) expectedResults[CANDIDATES[i % CANDIDATES.length]]++;
+  for (const result of results) {
+    if (result.success) expectedResults[CANDIDATES[result.candidateIndex]]++;
+  }
   const tally = await measureTally(electionID, expectedResults);
   console.log(`  tally: ${tally.success ? 'OK' : 'FAIL'} latency=${tally.tallyMs}ms`);
   if (!tally.success) throw new Error(tally.error || 'threshold tally failed');
