@@ -48,6 +48,7 @@ BBS+ 실험 모드는 `@mattrglobal/bbs-signatures` 2.0.0의 WASM 경로만 사�
 MONGBAS_PROFILE=benchmark ./deploy/linux/benchmark.sh
 MONGBAS_PROFILE=benchmark MONGBAS_CONCURRENCY_LEVELS=1,5,10,25,50 ./deploy/linux/concurrency-benchmark.sh
 MONGBAS_PROFILE=benchmark ./deploy/linux/fault-evaluation.sh
+MONGBAS_PROFILE=benchmark ./deploy/linux/critical-fault-evaluation.sh
 ```
 
 N=100 측정은 독립된 loopback 벤치마크 백엔드를 `DISABLE_RATE_LIMITS=true`로 기동한 후에만 실행한다. 벤치마크 프로그램은 `/health`에서 이 상태를 확인하고, 일반 rate limit이 켜진 백엔드에서는 부분 측정을 시작하지 않는다. 측정 후에는 즉시 일반 백엔드로 재기동해야 한다.
@@ -55,6 +56,7 @@ N=100 측정은 독립된 loopback 벤치마크 백엔드를 `DISABLE_RATE_LIMIT
 `smoke-test.sh`는 HTTP 200만 확인하지 않고 15단계 Fabric E2E의 종료 코드를 그대로 전파한다. 결과와 환경 기록은 runtime의 `logs/`, `results/`에 저장한다. benchmark는 demo 실행과 결과가 섞이지 않도록 명시적인 `benchmark` profile에서만 시작한다.
 
 `fault-evaluation.sh`는 volume을 삭제하지 않고 허용 목록의 잉여 컴포넌트만 `docker stop/start`한다. 모든 장애 구간과 복구 후에 새 vector-v3 선거를 생성해 1표 exact threshold tally까지 검증하며, trap으로 정상 상태를 복원한다.
+`critical-fault-evaluation.sh`는 현재 Gateway peer, primary CouchDB, chaincode service 중단 시 요청이 fail-closed하는지와 복구 후 exact threshold tally가 돌아오는지를 분리해 기록한다.
 
 ## 안전한 종료
 
