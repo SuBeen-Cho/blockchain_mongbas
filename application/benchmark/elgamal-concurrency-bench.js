@@ -46,6 +46,9 @@ function rawRequest(method, urlPath, body = null, headers = {}, timeoutMs = 9000
       port: url.port || 80,
       path: url.pathname + url.search,
       method,
+      // Node 22 globalAgent의 오래된 keep-alive socket 재사용을 배제하고
+      // 독립된 원격 투표자가 각각 연결하는 부하를 모사한다.
+      agent: false,
       headers: {
         ...(payload ? { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload) } : {}),
         ...(ADMIN_API_TOKEN ? { Authorization: `Bearer ${ADMIN_API_TOKEN}` } : {}),
