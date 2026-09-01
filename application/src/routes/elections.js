@@ -17,6 +17,7 @@
 const crypto = require('crypto');
 const express = require('express');
 const { connectGateway, connectGatewayForShareIndex } = require('../gateway');
+const { submitTransactionAndWait } = require('../lib/submitTransaction');
 const liveCount = require('../lib/liveCount');  // [부스 시연] 라이브 투표 카운터
 const demoLive  = require('../lib/demoLive');   // [부스 시연] 라이브 암호문 표 + 셔플 + 이벤트 버스
 
@@ -103,12 +104,11 @@ router.post('/:id/revoke-credential', async (req, res) => {
   try {
     const connection = await connectGateway();
     gateway = connection.gateway;
-    const transaction = await connection.contract
-      .newProposal('RevokeCredential', { arguments: [id, revocationHandle, reasonCode] })
-      .then(proposal => proposal.endorse())
-      .then(endorsed => endorsed.submit());
-    const status = await transaction.getStatus();
-    if (!status.successful) throw new Error(`credential revocation commit failed: ${status.code}`);
+    await submitTransactionAndWait(
+      connection.contract,
+      'RevokeCredential',
+      [id, revocationHandle, reasonCode],
+    );
     res.json({ electionID: id, revoked: true, reasonCode });
   } catch (err) {
     console.error('[elections] RevokeCredential error:', err.message);
