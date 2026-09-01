@@ -13,8 +13,8 @@ import { computeMerkleRootFromProof } from '../utils/crypto.js';
  */
 const API = '/api';
 const CANDIDATES = ['치킨', '피자', '떡볶이'];
-// [부스 시연] Firebase 릴레이 — 새 세션의 키오스크 URL을 여기에 기록하면 쇼케이스 QR이 자동 동기화됨
-const FB_KIOSK = 'https://mongbas-blockchain-vote-default-rtdb.firebaseio.com/kioskUrl.json';
+// External relay is disabled unless an operator explicitly supplies a build-time URL.
+const KIOSK_RELAY_URL = String(import.meta.env.VITE_KIOSK_RELAY_URL || '').trim();
 let activeControlAdminToken = '';
 
 const T = {
@@ -23,6 +23,17 @@ const T = {
   paper: '#ffffff', paper2: '#eef1ff', ink: '#0a0f24', sub: '#54607a', line: '#d7dcfb', panel: '#f5f7ff',
 };
 const tr = (s, n = 10) => (s ? `${s.slice(0, n)}…${s.slice(-4)}` : '—');
+function kioskURL(electionID) {
+  const configured = String(import.meta.env.VITE_PUBLIC_VOTER_ORIGIN || '').trim();
+  let origin = window.location.origin;
+  if (configured) {
+    try {
+      const candidate = new URL(configured);
+      if (candidate.protocol === 'https:' || candidate.protocol === 'http:') origin = candidate.origin;
+    } catch { /* fall back to the dashboard origin */ }
+  }
+  return `${origin}/?app=kiosk&e=${encodeURIComponent(electionID)}`;
+}
 
 async function J(path, opts = {}) {
   const { headers, ...rest } = opts;
@@ -96,7 +107,7 @@ export default function ControlPage() {
   const [tallyMath, setTallyMath] = useState(null); // 개표 집계 과정 실제 계산값
   const [narrow, setNarrow] = useState(typeof window !== 'undefined' && window.innerWidth < 860);
   const pollRef = useRef(null); const evRef = useRef(0);
-  const kioskUrl = eid ? `${window.location.origin}/?app=kiosk&e=${encodeURIComponent(eid)}` : '';
+  const kioskUrl = eid ? kioskURL(eid) : '';
   useEffect(() => { const f = () => setNarrow(window.innerWidth < 860); window.addEventListener('resize', f); return () => window.removeEventListener('resize', f); }, []);
   const addLog = useCallback((m) => setLog((l) => [`${new Date().toLocaleTimeString()} ${m}`, ...l].slice(0, 10)), []);
 
@@ -136,13 +147,15 @@ export default function ControlPage() {
     try {
       const id = `DEMO_${Date.now()}`;
       const now = Math.floor(Date.now() / 1000);
-      await J('/elections', { method: 'POST', body: JSON.stringify({ electionID: id, title: '2026 모의 선거', candidates: CANDIDATES, encryptionMode: 'elgamal', endTime: now + 24 * 3600 }) });
+      await J('/elections', { method: 'POST', body: JSON.stringify({ electionID: id, title: '2026 모의 선거', candidates: CANDIDATES, encryptionMode: 'elgamal-vector-v3', endTime: now + 24 * 3600 }) });
       await J(`/elections/${id}/activate`, { method: 'POST' });
       setEid(id); setStatus('ACTIVE'); setLive(0); setVotes([]); setShuffled(false);
       setResults(null); setDecrypted(false); setView('session'); setVres(null); setVfail(''); setRootHash(''); setTallyMath(null); evRef.current = 0;
-      // [부스 시연] 이 세션의 키오스크 URL을 Firebase 릴레이에 기록 → 쇼케이스 QR 자동 동기화
-      const ku = `${window.location.origin}/?app=kiosk&e=${encodeURIComponent(id)}`;
-      try { fetch(FB_KIOSK, { method: 'PUT', body: JSON.stringify({ url: ku, electionID: id, ts: Date.now() }) }).catch(() => {}); } catch { /* noop */ }
+      // Optional showcase relay. It is off by default because it discloses the election URL externally.
+      const ku = kioskURL(id);
+      if (KIOSK_RELAY_URL) {
+        try { fetch(KIOSK_RELAY_URL, { method: 'PUT', body: JSON.stringify({ url: ku, electionID: id, ts: Date.now() }) }).catch(() => {}); } catch { /* noop */ }
+      }
       addLog(`새 세션 시작: ${id}`);
     } catch (e) { addLog('오류: ' + e.message); }
     setBusy('');
@@ -176,12 +189,20 @@ export default function ControlPage() {
           else throw e;
         }
       }
-      setStatus('CLOSED'); addLog('선거 종료 — 2개 기관 조각 복원 시작');
-      setBusy('2-of-3 키 조각 복원 중…');
+      setStatus('CLOSED'); addLog('선거 종료 — 2개 기관 partial decryption 시작');
+      setBusy('2-of-3 partial decryption 중…');
       for (const idx of ['1', '2']) {
-        const s = await J(`/elections/${encodeURIComponent(eid)}/shares/${idx}`);
-        await J(`/elections/${encodeURIComponent(eid)}/shares`, { method: 'POST', body: JSON.stringify({ shareIndex: idx, shareHex: s.shareHex }) });
-        addLog(`조각 ${idx}/2 제출`);
+        let submitted = false;
+        for (let attempt = 0; attempt < 30 && !submitted; attempt++) {
+          try {
+            await J(`/elections/${encodeURIComponent(eid)}/partial-decryptions`, { method: 'POST', body: JSON.stringify({ shareIndex: idx }) });
+            submitted = true;
+          } catch (error) {
+            if (attempt === 29) throw error;
+            await new Promise((resolve) => setTimeout(resolve, 2000));
+          }
+        }
+        addLog(`기관 ${idx}/2 증명된 partial decryption 제출`);
       }
       setBusy('복호화 확인 중…');
       let t = null;

@@ -23,8 +23,14 @@ async function J(path, opts = {}) {
 }
 
 function getDemoVoter() {
-  let id = localStorage.getItem('mongbas_demo_voter');
-  if (!id) { id = `demo${String(1 + Math.floor(Math.random() * 100)).padStart(3, '0')}`; localStorage.setItem('mongbas_demo_voter', id); }
+  // Session scope avoids leaving a durable demo credential identifier on the phone.
+  localStorage.removeItem('mongbas_demo_voter');
+  for (let index = localStorage.length - 1; index >= 0; index -= 1) {
+    const key = localStorage.key(index);
+    if (key?.startsWith('mongbas_hist_')) localStorage.removeItem(key);
+  }
+  let id = sessionStorage.getItem('mongbas_demo_voter');
+  if (!id) { id = `demo${String(1 + Math.floor(Math.random() * 100)).padStart(3, '0')}`; sessionStorage.setItem('mongbas_demo_voter', id); }
   return id;
 }
 
@@ -83,12 +89,8 @@ export default function KioskPage({ electionId }) {
       } else body.candidateID = candidateID;
       const resp = await J('/vote', { method: 'POST', headers: { 'x-idemix-credential': cred }, body: JSON.stringify(body) });
       const s = nh.slice(0, 6).toUpperCase();
-      // 재투표 이력(같은 폰=같은 nullifier=같은 추적번호, 마지막 표만 유효)
-      const hk = `mongbas_hist_${electionId}`;
-      const hist = JSON.parse(localStorage.getItem(hk) || '[]');
-      hist.push({ mode: mode === 'panic' ? '패닉' : '정상', cand: candidateID });
-      localStorage.setItem(hk, JSON.stringify(hist));
-      setReceipt({ code: `${s.slice(0, 4)}-${s.slice(4)}`, nh, isRevote: !!resp.isRevote, hist });
+      // Never persist the selected candidate or normal/panic mode on the device.
+      setReceipt({ code: `${s.slice(0, 4)}-${s.slice(4)}`, nh, isRevote: !!resp.isRevote });
       setSent(false);
       setPhase('done');
     } catch (e) { setErr(e.message); setPhase('error'); }
@@ -126,18 +128,6 @@ export default function KioskPage({ electionId }) {
         <div style={{ width: '100%', background: C.blue, color: '#fff', padding: '26px 0', margin: '18px 0', fontSize: 46, fontWeight: 900, letterSpacing: 6, boxSizing: 'border-box', fontFamily: 'monospace' }}>
           {receipt.code}
         </div>
-        {receipt.hist && receipt.hist.length > 1 && (
-          <div style={{ marginBottom: 14, padding: '10px 12px', border: `1.5px solid ${C.line}`, background: '#fff', textAlign: 'left' }}>
-            <div style={{ fontSize: 11, fontWeight: 900, letterSpacing: '.1em', color: C.sub, marginBottom: 4 }}>투표 이력 (마지막만 유효)</div>
-            <div style={{ fontSize: 13.5, fontWeight: 800, color: C.ink }}>
-              {receipt.hist.map((h, i) => (
-                <span key={i} style={{ color: i === receipt.hist.length - 1 ? C.blue : '#aab1cf' }}>
-                  {i > 0 ? ' → ' : ''}{h.mode}·{h.cand}{i === receipt.hist.length - 1 ? ' (현재)' : ''}
-                </span>
-              ))}
-            </div>
-          </div>
-        )}
         <p style={{ color: C.sub, fontSize: 13, lineHeight: 1.6, fontWeight: 600 }}>이 번호로 <b style={{ color: C.ink }}>내 표가 변조 없이 집계에 들어갔는지</b> 확인할 수 있습니다. 누구에게 투표했는지는 드러나지 않습니다.</p>
         <button onClick={() => { setPick(null); setMode(null); setSent(false); setPhase('choose'); }}
           style={{ width: '100%', marginTop: 4, marginBottom: 8, padding: 15, border: `2px solid ${C.line}`, background: '#fff', color: C.ink, fontSize: 15, fontWeight: 900, fontFamily: 'inherit', cursor: 'pointer', boxSizing: 'border-box' }}>
@@ -171,9 +161,9 @@ export default function KioskPage({ electionId }) {
       <button onClick={() => { setMode('panic'); setPhase('ready'); }}
         style={{ width: '100%', textAlign: 'left', padding: '20px 18px', border: `2px solid ${C.blue}`, background: '#fff', color: C.ink, fontFamily: 'inherit', cursor: 'pointer', boxSizing: 'border-box' }}>
         <div style={{ fontSize: 20, fontWeight: 900, letterSpacing: '-0.03em', color: C.blue }}>패닉(강압) 투표</div>
-        <div style={{ fontSize: 13, fontWeight: 600, color: C.sub, marginTop: 4 }}>강압 상황 가정 — 화면·영수증·검증은 똑같지만 집계에서 제외됩니다</div>
+        <div style={{ fontSize: 13, fontWeight: 600, color: C.sub, marginTop: 4 }}>강압 상황을 가정한 연구용 필터링 데모입니다</div>
       </button>
-      <p style={{ textAlign: 'center', color: C.sub, fontSize: 11.5, marginTop: 16, fontWeight: 600, lineHeight: 1.5 }}>강압자는 둘을 구별할 수 없습니다.<br />이게 강압 저항(coercion resistance)입니다.</p>
+      <p style={{ textAlign: 'center', color: C.sub, fontSize: 11.5, marginTop: 16, fontWeight: 600, lineHeight: 1.5 }}>현재 화면 동작만으로 강압 저항이 검증된 것은 아닙니다.<br />네트워크·시간·기관 공모 공격 평가가 추가로 필요합니다.</p>
     </Shell>
   );
 
