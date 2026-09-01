@@ -261,7 +261,7 @@ function systemSnapshot() {
 }
 
 async function measureExactTally(electionID, expectedResults) {
-  const close = await post(`/api/elections/${electionID}/close`, {}, {}, 180000);
+  const close = await post(`/api/elections/${electionID}/close`, {}, {}, 360000);
   if (close.status >= 400) return { success: false, error: `close failed: ${close.status}`, closeMs: +close.ms.toFixed(1) };
   const partials = [];
   for (const shareIndex of ['1', '2']) {

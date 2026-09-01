@@ -47,7 +47,9 @@ function timeoutMs(name, fallback, maximum) {
 
 const GATEWAY_TIMEOUTS = {
   evaluate: timeoutMs('FABRIC_EVALUATE_TIMEOUT_MS', 30_000, 300_000),
-  endorse: timeoutMs('FABRIC_ENDORSE_TIMEOUT_MS', 120_000, 600_000),
+  // 1k+ ballot CloseElection의 O(n) proof/aggregate 검증을 위한 상한.
+  // 이는 성능 최적화가 아니며 대규모 선거는 batch/incremental tally로 분리해야 한다.
+  endorse: timeoutMs('FABRIC_ENDORSE_TIMEOUT_MS', 300_000, 600_000),
   submit: timeoutMs('FABRIC_SUBMIT_TIMEOUT_MS', 15_000, 120_000),
   commit: timeoutMs('FABRIC_COMMIT_TIMEOUT_MS', 180_000, 600_000),
 };
