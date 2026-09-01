@@ -16,7 +16,8 @@ function splitCiphertext(value, label) {
 
 function buildUnsignedBundle(source) {
   if (source?.schema !== 'mongbas-election-bundle-source/v1') throw new Error('unsupported bundle source schema');
-  if (source.encryptionMode !== 'elgamal') throw new Error('bundle v1 supports ElGamal elections only');
+  if (source.encryptionMode === 'elgamal-vector-v3') return buildUnsignedVectorBundle(source);
+  if (source.encryptionMode !== 'elgamal') throw new Error('bundle supports ElGamal elections only');
   if (!Array.isArray(source.ballots) || source.ballots.length === 0) throw new Error('bundle source contains no ballots');
   const ballots = source.ballots.map((ballot, index) => {
     if (!ballot.ballotValidityProof) throw new Error(`ballot ${index} has no validity proof`);
@@ -91,6 +92,52 @@ function buildUnsignedBundle(source) {
     aggregateCiphertext,
     tally: { results: source.tallyResults, totalVotes: source.totalVotes },
     decryptionProof,
+    signatures: [],
+  };
+}
+
+function buildUnsignedVectorBundle(source) {
+  if (!Array.isArray(source.ballots) || source.ballots.length === 0) throw new Error('bundle source contains no ballots');
+  const candidateCount = source.configuration?.candidates?.length;
+  if (!Number.isInteger(candidateCount) || candidateCount < 2) throw new Error('invalid candidate configuration');
+  const ballots = source.ballots.map((ballot, index) => {
+    if (!Array.isArray(ballot.encryptedCandidateVector) || ballot.encryptedCandidateVector.length !== candidateCount || !ballot.vectorBallotValidityProof) {
+      throw new Error(`ballot ${index} has invalid vector/proof`);
+    }
+    return {
+      nullifierHash: requireString(ballot.nullifierHash, `ballot ${index} nullifierHash`),
+      candidateCommitment: requireString(ballot.candidateCommitment, `ballot ${index} candidateCommitment`),
+      ciphertextVector: ballot.encryptedCandidateVector,
+      validityProof: ballot.vectorBallotValidityProof,
+    };
+  });
+  const aggregateCiphertextVector = Array.from({ length: candidateCount }, () => ({ c1: '1', c2: '1' }));
+  for (const ballot of ballots) {
+    ballot.ciphertextVector.forEach((ciphertext, index) => {
+      aggregateCiphertextVector[index] = {
+        c1: ((BigInt(`0x${aggregateCiphertextVector[index].c1}`) * BigInt(`0x${ciphertext.c1}`)) % P).toString(16),
+        c2: ((BigInt(`0x${aggregateCiphertextVector[index].c2}`) * BigInt(`0x${ciphertext.c2}`)) % P).toString(16),
+      };
+    });
+  }
+  if (canonicalize(source.aggregateCiphertextVector) !== canonicalize(aggregateCiphertextVector)) {
+    throw new Error('source vector aggregate does not match recomputed ballot aggregates');
+  }
+  if (!Array.isArray(source.vectorPartialDecryptions) || source.vectorPartialDecryptions.length < 2) {
+    throw new Error('at least two vector partial decryptions are required');
+  }
+  return {
+    schema: 'mongbas-election-bundle/v3',
+    algorithms: { canonicalization: 'mongbas-canonical-json-v1', hash: 'sha-256', signature: 'ed25519', tally: 'mongbas-exp-elgamal-vector-threshold-v3' },
+    configuration: source.configuration,
+    provenance: source.provenance,
+    publicKey: source.publicKey,
+    trusteePublicShares: source.thresholdPublicShares,
+    ballots,
+    bulletinBoard: { root: merkleRoot(ballots), publishedAt: source.publishedAt },
+    aggregateCiphertextVector,
+    tally: { results: source.tallyResults, totalVotes: source.totalVotes },
+    vectorPartialDecryptions: source.vectorPartialDecryptions,
     signatures: [],
   };
 }

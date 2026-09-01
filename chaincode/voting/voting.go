@@ -2507,12 +2507,20 @@ func computeMerkleLeafHash(n *Nullifier) string {
 	if n == nil {
 		return ""
 	}
-	if n.CandidateCommitment == "" || n.EncryptedCandidateID == "" {
+	ciphertext := n.EncryptedCandidateID
+	if ciphertext == "" && len(n.EncryptedCandidateVector) > 0 {
+		encoded, err := json.Marshal(n.EncryptedCandidateVector)
+		if err != nil {
+			return ""
+		}
+		ciphertext = string(encoded)
+	}
+	if n.CandidateCommitment == "" || ciphertext == "" {
 		// 레거시 호환: 이전 버전 원장은 nullifierHash만 Merkle leaf로 사용했다.
 		h := sha256.Sum256([]byte(n.NullifierHash))
 		return fmt.Sprintf("%x", h)
 	}
-	return hashWithLengthPrefix(n.ElectionID, n.NullifierHash, n.CandidateCommitment, n.EncryptedCandidateID)
+	return hashWithLengthPrefix(n.ElectionID, n.NullifierHash, n.CandidateCommitment, ciphertext)
 }
 
 // collectMerkleLeaves CouchDB Rich Query로 선거의 모든 암호화 투표 레코드 leaf를 수집합니다.

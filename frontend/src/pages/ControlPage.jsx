@@ -37,6 +37,21 @@ function computeTallyMath(pubKey, ballots, results, candidates) {
     const p = BigInt('0x' + pubKey.p), g = BigInt('0x' + pubKey.g);
     const mod = (a, b) => ((a % b) + b) % b;
     const modPow = (b, e, m) => { b = mod(b, m); let r = 1n; while (e > 0n) { if (e & 1n) r = mod(r * b, m); e >>= 1n; b = mod(b * b, m); } return r; };
+	const vectorMode = ballots.some((ballot) => Array.isArray(ballot.encryptedCandidateVector));
+	if (vectorMode) {
+	  const aggregates = candidates.map(() => ({ c1: 1n, c2: 1n }));
+	  let n = 0;
+	  for (const ballot of ballots) {
+		if (ballot.encryptedCandidateVector?.length !== candidates.length) continue;
+		ballot.encryptedCandidateVector.forEach((ciphertext, index) => {
+		  aggregates[index].c1 = mod(aggregates[index].c1 * BigInt('0x' + ciphertext.c1), p);
+		  aggregates[index].c2 = mod(aggregates[index].c2 * BigInt('0x' + ciphertext.c2), p);
+		});
+		n++;
+	  }
+	  return { ballotCount: n, vector: aggregates.map((value) => ({ c1: value.c1.toString(16), c2: value.c2.toString(16) })), shares: [1, 2],
+		perCand: candidates.map((cn) => ({ cn, v: results[cn] || 0, w: 'vector component' })) };
+	}
     let c1 = 1n, c2 = 1n, n = 0;
     for (const b of ballots) {
       const [c1h, c2h] = String(b.encryptedCandidateID || '').split(':');
@@ -200,7 +215,8 @@ export default function ControlPage() {
       const pr = await J(`/elections/${encodeURIComponent(eid)}/proof/${full}`);
       const computedRoot = await computeMerkleRootFromProof(pr.leafHash, pr.proof);
       const sealMatch = computedRoot === merkle.rootHash;
-      setVres({ full, idx, total: ballots.length, ballots, leafHash: pr.leafHash, chainRoot: merkle.rootHash, computedRoot, sealMatch, cipher: ballots[idx].encryptedCandidateID });
+	  const selectedCiphertext = ballots[idx].encryptedCandidateID || JSON.stringify(ballots[idx].encryptedCandidateVector || []);
+	  setVres({ full, idx, total: ballots.length, ballots, leafHash: pr.leafHash, chainRoot: merkle.rootHash, computedRoot, sealMatch, cipher: selectedCiphertext });
       addLog(`검증: ${tr(full, 8)} → ${sealMatch ? '봉인 일치 ✓' : '불일치 ✗'}`);
     } catch (e) { setVfail(e.message); }
     setBusy('');

@@ -64,20 +64,28 @@ function generateVectorBallot(pubKey, selectedIndex, candidateCount) {
   }
   const p = BigInt(`0x${pubKey.p}`), g = BigInt(`0x${pubKey.g}`), y = BigInt(`0x${pubKey.y}`), q = (p - 1n) / 2n;
   const encryptedCandidateVector = [], bitProofs = [];
+	let encryptionNs = 0n, proofNs = 0n;
   let randomnessSum = 0n, productC1 = 1n, productC2 = 1n;
   for (let index = 0; index < candidateCount; index++) {
     const bit = index === selectedIndex ? 1 : 0, r = randomScalar(q);
+	const encryptionStart = process.hrtime.bigint();
     const c1 = modPow(g, r, p), c2 = (modPow(y, r, p) * (bit ? g : 1n)) % p;
+	encryptionNs += process.hrtime.bigint() - encryptionStart;
     const ciphertext = { c1: c1.toString(16), c2: c2.toString(16) };
     encryptedCandidateVector.push(ciphertext);
-    bitProofs.push(proveBit(pubKey, ciphertext, r, bit, index));
+	const proofStart = process.hrtime.bigint();
+	bitProofs.push(proveBit(pubKey, ciphertext, r, bit, index));
+	proofNs += process.hrtime.bigint() - proofStart;
     randomnessSum = (randomnessSum + r) % q; productC1 = (productC1 * c1) % p; productC2 = (productC2 * c2) % p;
   }
   const result2 = (productC2 * modInverse(g, p)) % p, nonce = randomScalar(q);
+	const sumProofStart = process.hrtime.bigint();
   const a1 = modPow(g, nonce, p), a2 = modPow(y, nonce, p), domain = 'mongbas/vector-v3/sum';
   const transcript = `${domain}|${g.toString(16)}|${y.toString(16)}|${productC1.toString(16)}|${result2.toString(16)}|${a1.toString(16)}|${a2.toString(16)}`;
   const e = challenge(transcript, q), z = (nonce + e * randomnessSum) % q;
-  return { encryptedCandidateVector, vectorBallotValidityProof: { bitProofs, sumProof: { a1: a1.toString(16), a2: a2.toString(16), e: e.toString(16), z: z.toString(16) } } };
+	proofNs += process.hrtime.bigint() - sumProofStart;
+  return { encryptedCandidateVector, vectorBallotValidityProof: { bitProofs, sumProof: { a1: a1.toString(16), a2: a2.toString(16), e: e.toString(16), z: z.toString(16) } },
+	  _timings: { encryptionMs: Number(encryptionNs) / 1e6, proofMs: Number(proofNs) / 1e6 } };
 }
 
 module.exports = { generateVectorBallot };

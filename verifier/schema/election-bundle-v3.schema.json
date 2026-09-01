@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mongbas.example/schema/election-bundle-v3.schema.json",
+  "title": "Mongbas One-Hot Vector Threshold Election Bundle v3",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "algorithms", "configuration", "provenance", "publicKey", "trusteePublicShares", "ballots", "bulletinBoard", "aggregateCiphertextVector", "tally", "vectorPartialDecryptions", "signatures"],
+  "properties": {
+    "schema": { "const": "mongbas-election-bundle/v3" },
+    "algorithms": {
+      "type": "object", "additionalProperties": false,
+      "required": ["canonicalization", "hash", "signature", "tally"],
+      "properties": {
+        "canonicalization": { "const": "mongbas-canonical-json-v1" },
+        "hash": { "const": "sha-256" },
+        "signature": { "const": "ed25519" },
+        "tally": { "const": "mongbas-exp-elgamal-vector-threshold-v3" }
+      }
+    },
+    "configuration": { "$ref": "election-bundle-v1.schema.json#/properties/configuration" },
+    "provenance": { "$ref": "election-bundle-v1.schema.json#/properties/provenance" },
+    "publicKey": { "$ref": "election-bundle-v1.schema.json#/$defs/publicKey" },
+    "trusteePublicShares": { "type": "array", "minItems": 3, "maxItems": 3, "items": { "$ref": "election-bundle-v2.schema.json#/$defs/publicShare" } },
+    "ballots": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/vectorBallot" } },
+    "bulletinBoard": { "$ref": "election-bundle-v1.schema.json#/properties/bulletinBoard" },
+    "aggregateCiphertextVector": { "type": "array", "minItems": 2, "items": { "$ref": "election-bundle-v1.schema.json#/$defs/ciphertext" } },
+    "tally": { "$ref": "election-bundle-v1.schema.json#/properties/tally" },
+    "vectorPartialDecryptions": { "type": "array", "minItems": 2, "maxItems": 3, "items": { "$ref": "#/$defs/vectorPartial" } },
+    "signatures": { "$ref": "election-bundle-v1.schema.json#/properties/signatures" }
+  },
+  "$defs": {
+    "hex": { "type": "string", "pattern": "^(0|[1-9a-f][0-9a-f]*)$" },
+    "orProof": {
+      "type": "object", "additionalProperties": false, "required": ["a1s", "a2s", "es", "zs"],
+      "properties": { "a1s": { "type": "array", "minItems": 2, "maxItems": 2, "items": { "$ref": "#/$defs/hex" } }, "a2s": { "type": "array", "minItems": 2, "maxItems": 2, "items": { "$ref": "#/$defs/hex" } }, "es": { "type": "array", "minItems": 2, "maxItems": 2, "items": { "$ref": "#/$defs/hex" } }, "zs": { "type": "array", "minItems": 2, "maxItems": 2, "items": { "$ref": "#/$defs/hex" } } }
+    },
+    "sumProof": { "type": "object", "additionalProperties": false, "required": ["a1", "a2", "e", "z"], "properties": { "a1": { "$ref": "#/$defs/hex" }, "a2": { "$ref": "#/$defs/hex" }, "e": { "$ref": "#/$defs/hex" }, "z": { "$ref": "#/$defs/hex" } } },
+    "vectorBallot": { "type": "object", "additionalProperties": false, "required": ["nullifierHash", "candidateCommitment", "ciphertextVector", "validityProof"], "properties": { "nullifierHash": { "type": "string", "pattern": "^[0-9a-f]{64}$" }, "candidateCommitment": { "type": "string", "pattern": "^[0-9a-f]{64}$" }, "ciphertextVector": { "type": "array", "minItems": 2, "items": { "$ref": "election-bundle-v1.schema.json#/$defs/ciphertext" } }, "validityProof": { "type": "object", "additionalProperties": false, "required": ["bitProofs", "sumProof"], "properties": { "bitProofs": { "type": "array", "minItems": 2, "items": { "$ref": "#/$defs/orProof" } }, "sumProof": { "$ref": "#/$defs/sumProof" } } } } },
+    "vectorPartial": { "type": "object", "additionalProperties": false, "required": ["index", "mspID", "publicKeyY", "values", "proofs"], "properties": { "index": { "type": "integer", "minimum": 1, "maximum": 3 }, "mspID": { "type": "string", "minLength": 1 }, "publicKeyY": { "$ref": "#/$defs/hex" }, "values": { "type": "array", "minItems": 2, "items": { "$ref": "#/$defs/hex" } }, "proofs": { "type": "array", "minItems": 2, "items": { "$ref": "election-bundle-v2.schema.json#/$defs/proof" } } } }
+  }
+}

@@ -8,6 +8,7 @@ const {
   canonicalize, merkleRoot, modInverse, modPow, sha256Hex, unsignedBundle, verifyBundle, verifyBundleBytes,
 } = require('../src/verify');
 const { buildUnsignedBundle, signBundle } = require('../src/bundle');
+const { generateVectorBallot } = require('../../application/src/lib/vectorElgamal');
 
 function scalar(label) {
   const value = BigInt(`0x${sha256Hex(label)}`) % Q;
@@ -277,4 +278,40 @@ test('builds and verifies a 2-of-3 threshold bundle without a private-key recons
   assert.equal(verifyBundle(bundle).valid, true, verifyBundle(bundle).errors.join('\n'));
   bundle.partialDecryptions[0].proof.z = '0';
   assert.equal(verifyBundle(bundle).valid, false, 'tampered threshold proof must fail');
+});
+
+test('builds and verifies vector-v3 one-hot ballots and per-candidate threshold decryptions', () => {
+  const legacy = buildBundle(), electionID = 'vector-v3-test', candidates = ['A', 'B', 'C'];
+  const secret = scalar('vector-secret'), coefficient = scalar('vector-coefficient');
+  const shares = [1, 2, 3].map((index) => (secret + coefficient * BigInt(index)) % Q);
+  const publicKeyY = modPow(G, secret, P), publicKey = { p: P_HEX, g: '2', y: publicKeyY.toString(16) };
+  const ballots = [0, 1, 2, 0].map((selection, index) => {
+    const generated = generateVectorBallot(publicKey, selection, candidates.length);
+    const nullifierHash = sha256Hex(`vector-nullifier:${index}`);
+    return { nullifierHash, candidateCommitment: sha256Hex(`${electionID}|${nullifierHash}|${JSON.stringify(generated.encryptedCandidateVector)}`),
+      encryptedCandidateVector: generated.encryptedCandidateVector, vectorBallotValidityProof: generated.vectorBallotValidityProof };
+  });
+  const aggregates = candidates.map((_, candidateIndex) => ballots.reduce((aggregate, ballot) => ({
+    c1: ((BigInt(`0x${aggregate.c1}`) * BigInt(`0x${ballot.encryptedCandidateVector[candidateIndex].c1}`)) % P).toString(16),
+    c2: ((BigInt(`0x${aggregate.c2}`) * BigInt(`0x${ballot.encryptedCandidateVector[candidateIndex].c2}`)) % P).toString(16),
+  }), { c1: '1', c2: '1' }));
+  const mspIDs = ['ElectionCommissionMSP', 'PartyObserverMSP', 'CivilSocietyMSP'];
+  const vectorPartials = [0, 1].map((offset) => ({ index: offset + 1, mspID: mspIDs[offset], publicKeyY: modPow(G, shares[offset], P).toString(16),
+    values: aggregates.map((aggregate) => thresholdPartial(offset + 1, shares[offset], aggregate, mspIDs[offset]).value),
+    proofs: aggregates.map((aggregate) => thresholdPartial(offset + 1, shares[offset], aggregate, mspIDs[offset]).proof) }));
+  const source = { schema: 'mongbas-election-bundle-source/v1', encryptionMode: 'elgamal-vector-v3',
+    configuration: { ...legacy.configuration, electionID, candidates }, provenance: legacy.provenance, publicKey, ballots,
+    tallyResults: { A: 2, B: 1, C: 1 }, totalVotes: 4, aggregateCiphertextVector: aggregates,
+    thresholdPublicShares: shares.map((share, offset) => ({ index: offset + 1, mspID: mspIDs[offset], publicKeyY: modPow(G, share, P).toString(16) })),
+    vectorPartialDecryptions: vectorPartials, publishedAt: 1 };
+  let bundle = buildUnsignedBundle(source);
+  assert.equal(bundle.schema, 'mongbas-election-bundle/v3');
+  const keys = [crypto.generateKeyPairSync('ed25519'), crypto.generateKeyPairSync('ed25519')];
+  bundle.configuration.organizations = keys.map((key, index) => ({ id: index ? 'civil' : 'ec', ed25519PublicKeyDer: key.publicKey.export({ format: 'der', type: 'spki' }).toString('base64') }));
+  bundle = signBundle(bundle, 'ec', keys[0].privateKey.export({ format: 'pem', type: 'pkcs8' }));
+  bundle = signBundle(bundle, 'civil', keys[1].privateKey.export({ format: 'pem', type: 'pkcs8' }));
+  const result = verifyBundle(bundle);
+  assert.equal(result.valid, true, result.errors.join('\n'));
+  bundle.ballots[0].validityProof.sumProof.z = '0';
+  assert.equal(verifyBundle(bundle).valid, false, 'tampered vector sum proof must fail');
 });

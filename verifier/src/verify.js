@@ -21,6 +21,7 @@ const Q = (P - 1n) / 2n;
 const HOMOMORPHIC_BASE = 10000n;
 const ALGORITHM = 'mongbas-exp-elgamal-scalar-v1';
 const THRESHOLD_ALGORITHM = 'mongbas-exp-elgamal-threshold-v2';
+const VECTOR_THRESHOLD_ALGORITHM = 'mongbas-exp-elgamal-vector-threshold-v3';
 
 function sha256Hex(value) {
   return crypto.createHash('sha256').update(value).digest('hex');
@@ -212,7 +213,75 @@ function verifyThresholdDecryptions(publicKeyY, aggregate, results, candidates, 
   if (actualMessage !== expectedMessage) throw new Error('threshold-decrypted tally does not match results');
 }
 
+function verifyVectorBallotProof(publicKeyY, ballot, candidateCount) {
+  if (!Array.isArray(ballot.ciphertextVector) || ballot.ciphertextVector.length !== candidateCount ||
+      !Array.isArray(ballot.validityProof?.bitProofs) || ballot.validityProof.bitProofs.length !== candidateCount) {
+    throw new Error('invalid vector ballot/proof dimensions');
+  }
+  let productC1 = 1n, productC2 = 1n;
+  ballot.ciphertextVector.forEach((ciphertext, index) => {
+    const c1 = parseHex(ciphertext.c1, `ciphertextVector[${index}].c1`, { subgroup: true });
+    const c2 = parseHex(ciphertext.c2, `ciphertextVector[${index}].c2`, { subgroup: true });
+    const proof = ballot.validityProof.bitProofs[index], messages = [1n, G];
+    for (const name of ['a1s', 'a2s', 'es', 'zs']) if (!Array.isArray(proof?.[name]) || proof[name].length !== 2) throw new Error(`bit proof ${index}.${name} invalid`);
+    let sum = 0n;
+    const domain = `mongbas/vector-v3/bit/${index}`;
+    let transcript = `${domain}|${G.toString(16)}|${publicKeyY.toString(16)}|${c1.toString(16)}|${c2.toString(16)}`;
+    for (let branch = 0; branch < 2; branch++) {
+      const a1 = parseHex(proof.a1s[branch], `bit[${index}].a1[${branch}]`, { subgroup: true });
+      const a2 = parseHex(proof.a2s[branch], `bit[${index}].a2[${branch}]`, { subgroup: true });
+      const e = parseHex(proof.es[branch], `bit[${index}].e[${branch}]`, { scalar: true });
+      const z = parseHex(proof.zs[branch], `bit[${index}].z[${branch}]`, { scalar: true });
+      const adjusted = (c2 * modInverse(messages[branch], P)) % P;
+      if (modPow(G, z, P) !== (a1 * modPow(c1, e, P)) % P || modPow(publicKeyY, z, P) !== (a2 * modPow(adjusted, e, P)) % P) throw new Error(`bit proof ${index}/${branch} equation failed`);
+      sum = (sum + e) % Q;
+      transcript += `|${messages[branch].toString(16)}|${a1.toString(16)}|${a2.toString(16)}`;
+    }
+    if (sum !== BigInt(`0x${sha256Hex(transcript)}`) % Q) throw new Error(`bit proof ${index} challenge mismatch`);
+    productC1 = (productC1 * c1) % P; productC2 = (productC2 * c2) % P;
+  });
+  const result2 = (productC2 * modInverse(G, P)) % P;
+  const proof = ballot.validityProof.sumProof;
+  const a1 = parseHex(proof?.a1, 'sumProof.a1', { subgroup: true }), a2 = parseHex(proof?.a2, 'sumProof.a2', { subgroup: true });
+  const e = parseHex(proof?.e, 'sumProof.e', { scalar: true }), z = parseHex(proof?.z, 'sumProof.z', { scalar: true });
+  const transcript = `mongbas/vector-v3/sum|${G.toString(16)}|${publicKeyY.toString(16)}|${productC1.toString(16)}|${result2.toString(16)}|${a1.toString(16)}|${a2.toString(16)}`;
+  if (e !== BigInt(`0x${sha256Hex(transcript)}`) % Q || modPow(G, z, P) !== (a1 * modPow(productC1, e, P)) % P ||
+      modPow(publicKeyY, z, P) !== (a2 * modPow(result2, e, P)) % P) throw new Error('one-hot sum proof failed');
+}
+
+function verifyVectorThresholdDecryptions(publicKeyY, aggregates, results, candidates, publicShares, partials) {
+  if (!Array.isArray(aggregates) || aggregates.length !== candidates.length || !Array.isArray(partials) || partials.length < 2) throw new Error('invalid vector aggregates/partials');
+  const configured = new Map(publicShares.map((share) => [share.index, share]));
+  const publicValues = new Map(), values = aggregates.map(() => new Map());
+  for (const partial of partials) {
+    if (publicValues.has(partial.index) || !Array.isArray(partial.values) || partial.values.length !== candidates.length || !Array.isArray(partial.proofs) || partial.proofs.length !== candidates.length) throw new Error(`partial ${partial.index} shape/duplicate failure`);
+    const expected = configured.get(partial.index);
+    if (!expected || expected.mspID !== partial.mspID || expected.publicKeyY !== partial.publicKeyY) throw new Error(`partial ${partial.index} trustee binding mismatch`);
+    const y = parseHex(partial.publicKeyY, `partial[${partial.index}].y`, { subgroup: true });
+    partial.values.forEach((valueHex, candidateIndex) => {
+      const value = parseHex(valueHex, `partial[${partial.index}].value[${candidateIndex}]`, { subgroup: true });
+      const c1 = parseHex(aggregates[candidateIndex].c1, `aggregate[${candidateIndex}].c1`, { subgroup: true });
+      const proof = partial.proofs[candidateIndex];
+      if (proof?.c1 !== aggregates[candidateIndex].c1 || proof?.c2 !== valueHex) throw new Error(`partial ${partial.index}/${candidateIndex} ciphertext mismatch`);
+      const a1 = parseHex(proof.a1, 'partial.a1', { subgroup: true }), a2 = parseHex(proof.a2, 'partial.a2', { subgroup: true });
+      const e = parseHex(proof.e, 'partial.e', { scalar: true }), z = parseHex(proof.z, 'partial.z', { scalar: true });
+      const transcript = [G, y, c1, value, a1, a2].map((item) => item.toString(16)).join('|');
+      if (e !== BigInt(`0x${sha256Hex(transcript)}`) % Q || modPow(G, z, P) !== (a1 * modPow(y, e, P)) % P || modPow(c1, z, P) !== (a2 * modPow(value, e, P)) % P) throw new Error(`partial ${partial.index}/${candidateIndex} proof failed`);
+      values[candidateIndex].set(partial.index, value);
+    });
+    publicValues.set(partial.index, y);
+  }
+  if (combineThresholdValues(publicValues) !== publicKeyY) throw new Error('combined trustee public key mismatch');
+  candidates.forEach((candidate, index) => {
+    const combined = combineThresholdValues(values[index]);
+    const c2 = parseHex(aggregates[index].c2, `aggregate[${index}].c2`, { subgroup: true });
+    const count = results[candidate];
+    if (!Number.isSafeInteger(count) || count < 0 || (c2 * modInverse(combined, P)) % P !== modPow(G, BigInt(count), P)) throw new Error(`candidate ${candidate} decrypted result mismatch`);
+  });
+}
+
 function ballotLeaf(ballot) {
+	if (ballot.ciphertextVector) return sha256Hex(canonicalize({ candidateCommitment: ballot.candidateCommitment, ciphertextVector: ballot.ciphertextVector, nullifierHash: ballot.nullifierHash, validityProof: ballot.validityProof }));
   return sha256Hex(canonicalize({
     candidateCommitment: ballot.candidateCommitment,
     ciphertext: ballot.ciphertext,
@@ -261,7 +330,45 @@ function verifySignatures(bundle, payloadBytes) {
   return valid;
 }
 
+function verifyVectorBundle(bundle) {
+  const errors = [];
+  const check = (label, fn) => { try { return fn(); } catch (error) { errors.push(`${label}: ${error.message}`); return undefined; } };
+  if (bundle?.algorithms?.tally !== VECTOR_THRESHOLD_ALGORITHM) errors.push('algorithms.tally: vector-v3 required (downgrade rejected)');
+  const candidates = bundle?.configuration?.candidates;
+  if (!Array.isArray(candidates) || candidates.length < 2 || new Set(candidates).size !== candidates.length) errors.push('configuration.candidates: invalid');
+  if (!Number.isSafeInteger(bundle?.configuration?.signatureThreshold) || bundle.configuration.signatureThreshold < 1 || !Array.isArray(bundle?.configuration?.organizations) || bundle.configuration.organizations.length < bundle.configuration.signatureThreshold) errors.push('configuration signatures: invalid');
+  const key = bundle?.publicKey;
+  if (key?.p !== P_HEX || key?.g !== '2') errors.push('publicKey: parameters are not RFC 3526 group 14');
+  const y = check('publicKey.y', () => parseHex(key?.y, 'publicKey.y', { subgroup: true }));
+  const ballots = bundle?.ballots;
+  if (!Array.isArray(ballots) || ballots.length === 0) errors.push('ballots: empty or missing');
+  const aggregates = Array.isArray(candidates) ? candidates.map(() => ({ c1: 1n, c2: 1n })) : [];
+  const seen = new Set();
+  if (Array.isArray(ballots) && y && Array.isArray(candidates)) ballots.forEach((ballot, index) => check(`ballots[${index}]`, () => {
+    if (!/^[0-9a-f]{64}$/.test(ballot.nullifierHash) || seen.has(ballot.nullifierHash)) throw new Error('invalid/duplicate nullifier');
+    seen.add(ballot.nullifierHash);
+    const canonicalVector = JSON.stringify(ballot.ciphertextVector);
+    if (ballot.candidateCommitment !== sha256Hex(`${bundle.configuration.electionID}|${ballot.nullifierHash}|${canonicalVector}`)) throw new Error('candidate commitment mismatch');
+    verifyVectorBallotProof(y, ballot, candidates.length);
+    ballot.ciphertextVector.forEach((ciphertext, candidateIndex) => {
+      aggregates[candidateIndex].c1 = (aggregates[candidateIndex].c1 * BigInt(`0x${ciphertext.c1}`)) % P;
+      aggregates[candidateIndex].c2 = (aggregates[candidateIndex].c2 * BigInt(`0x${ciphertext.c2}`)) % P;
+    });
+  }));
+  const aggregateHex = aggregates.map((value) => ({ c1: value.c1.toString(16), c2: value.c2.toString(16) }));
+  if (canonicalize(bundle?.aggregateCiphertextVector) !== canonicalize(aggregateHex)) errors.push('aggregateCiphertextVector: mismatch');
+  if (bundle?.tally?.totalVotes !== ballots?.length) errors.push('tally.totalVotes: ballot count mismatch');
+  if (Array.isArray(candidates) && bundle?.tally?.results && candidates.reduce((sum, candidate) => sum + (bundle.tally.results[candidate] ?? -1), 0) !== bundle.tally.totalVotes) errors.push('tally.results: sum mismatch');
+  if (y && Array.isArray(candidates)) check('vectorPartialDecryptions', () => verifyVectorThresholdDecryptions(y, bundle.aggregateCiphertextVector, bundle.tally.results, candidates, bundle.trusteePublicShares, bundle.vectorPartialDecryptions));
+  const root = Array.isArray(ballots) ? check('bulletinBoard.root', () => merkleRoot(ballots)) : undefined;
+  if (root && root !== bundle?.bulletinBoard?.root) errors.push('bulletinBoard.root: mismatch');
+  const validSignatures = check('signatures', () => verifySignatures(bundle, Buffer.from(canonicalize(unsignedBundle(bundle))))) ?? 0;
+  return { valid: errors.length === 0, summary: errors.length ? `${errors.length} verification check(s) failed` : 'all vector-v3 bundle checks passed', errors,
+    bundleHash: sha256Hex(canonicalize(bundle)), electionID: bundle?.configuration?.electionID, ballots: ballots?.length ?? 0, validSignatures };
+}
+
 function verifyBundle(bundle) {
+	if (bundle?.schema === 'mongbas-election-bundle/v3') return verifyVectorBundle(bundle);
   const errors = [];
   let validSignatures = 0;
   const check = (label, fn) => {
@@ -334,6 +441,7 @@ function verifyBundleBytes(bytes) {
 module.exports = {
   ALGORITHM,
   THRESHOLD_ALGORITHM,
+	VECTOR_THRESHOLD_ALGORITHM,
   G,
   HOMOMORPHIC_BASE,
   P,

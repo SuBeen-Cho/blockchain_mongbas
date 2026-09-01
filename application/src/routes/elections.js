@@ -62,10 +62,11 @@ function hashWithLengthPrefix(...fields) {
 
 function computeMerkleLeafHashFromNullifier(n) {
   if (!n) return '';
-  if (!n.candidateCommitment || !n.encryptedCandidateID) {
+	const ciphertext = n.encryptedCandidateID || (Array.isArray(n.encryptedCandidateVector) ? JSON.stringify(n.encryptedCandidateVector) : '');
+  if (!n.candidateCommitment || !ciphertext) {
     return crypto.createHash('sha256').update(n.nullifierHash || '').digest('hex');
   }
-  return hashWithLengthPrefix(n.electionID, n.nullifierHash, n.candidateCommitment, n.encryptedCandidateID);
+	return hashWithLengthPrefix(n.electionID, n.nullifierHash, n.candidateCommitment, ciphertext);
 }
 
 // ── GET /api/elections/:id/blinding-factor ─────────────────────
@@ -704,17 +705,18 @@ router.get('/:id/election-bundle-source', requireValidElectionID, async (req, re
     ]);
     const election = JSON.parse(Buffer.from(electionRaw).toString('utf8'));
     const board = JSON.parse(Buffer.from(boardRaw).toString('utf8'));
-    if (board.encryptionMode !== 'elgamal' || !board.elgamalPubKey) {
-      return res.status(409).json({ error: 'bundle v1은 ElGamal 선거만 지원합니다.' });
+    if (!['elgamal', 'elgamal-vector-v3'].includes(board.encryptionMode) || !board.elgamalPubKey) {
+	  return res.status(409).json({ error: 'bundle은 검증 가능한 ElGamal 선거만 지원합니다.' });
     }
-    const ballots = (board.encryptedBallots || []).filter((ballot) => ballot.encryptedCandidateID);
+	const vectorMode = board.encryptionMode === 'elgamal-vector-v3';
+	const ballots = (board.encryptedBallots || []).filter((ballot) => vectorMode ? ballot.encryptedCandidateVector?.length : ballot.encryptedCandidateID);
     if (ballots.length !== board.totalVotes) {
       return res.status(409).json({
         error: '게시 ballot 수와 유효 집계 표수가 달라 독립 bundle을 만들 수 없습니다.',
         reason: 'panic/dummy filtering과 universal verifiability를 동시에 충족하는 padding/filtering proof가 필요합니다.',
       });
     }
-    if (ballots.some((ballot) => !ballot.ballotValidityProof)) {
+	if (ballots.some((ballot) => vectorMode ? !ballot.vectorBallotValidityProof : !ballot.ballotValidityProof)) {
       return res.status(409).json({ error: 'ballot validity proof가 누락된 레거시 투표가 있어 bundle을 만들 수 없습니다.' });
     }
     res.json({
@@ -735,6 +737,8 @@ router.get('/:id/election-bundle-source', requireValidElectionID, async (req, re
       decryptionProofs: board.decryptionProofs,
       partialDecryptions: board.partialDecryptions,
       aggregateCiphertext: { c1: board.encAggC1, c2: board.encAggC2 },
+	  aggregateCiphertextVector: board.encAggVector,
+	  vectorPartialDecryptions: board.vectorPartialDecryptions,
       publishedAt: board.publishedAt,
     });
   } catch (err) {

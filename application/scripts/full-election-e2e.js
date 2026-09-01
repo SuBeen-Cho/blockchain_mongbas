@@ -717,8 +717,8 @@ async function main() {
   const egBoard = await assertOk('get ElGamal threshold bulletin board',
     requestJson(`/api/elections/${EG_ELECTION_ID}/bulletin-board`)
   );
-  if (egBoard.partialDecryptions?.length !== 2 || egBoard.thresholdPublicShares?.length !== 3 ||
-      egBoard.encAggC1 !== egTally.encAggC1 || egBoard.encAggC2 !== egTally.encAggC2) {
+	if (egBoard.vectorPartialDecryptions?.length !== 2 || egBoard.thresholdPublicShares?.length !== 3 ||
+		JSON.stringify(egBoard.encAggVector) !== JSON.stringify(egTally.encAggVector)) {
     throw new Error(`ElGamal bulletin board lacks threshold verification material: ${JSON.stringify(egBoard)}`);
   }
 

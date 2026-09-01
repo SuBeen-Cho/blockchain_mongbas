@@ -273,12 +273,12 @@ async function measureSingleVote(electionID, pubKey, candidateIdx, authHeaders, 
   // 2. ElGamal 암호화
   const t_enc_start = process.hrtime.bigint();
   const encrypted = generateVectorBallot(pubKey, candidateIdx, CANDIDATES.length);
-  timings.clientEncryptMs = Number(process.hrtime.bigint() - t_enc_start) / 1e6;
+	timings.clientEncryptMs = encrypted._timings.encryptionMs;
 
   // 3. ZKP 생성
-  const t_zkp_start = process.hrtime.bigint();
   const proof = encrypted.vectorBallotValidityProof;
-  timings.clientZkpMs = Number(process.hrtime.bigint() - t_zkp_start) / 1e6;
+	timings.clientZkpMs = encrypted._timings.proofMs;
+	timings.clientPreparationWallMs = Number(process.hrtime.bigint() - t_enc_start) / 1e6;
 
   // 4. 페이로드 구성
   const voteBody = {
@@ -329,7 +329,7 @@ async function measureTally(electionID, expectedResults) {
   const tallyRes = await get(`/api/elections/${electionID}/tally`);
   const results = tallyRes.body?.results || {};
   const exact = tallyRes.status < 400 && tallyRes.body?.decrypted === true &&
-    tallyRes.body?.partialDecryptions?.length === 2 &&
+	  tallyRes.body?.vectorPartialDecryptions?.length === 2 &&
     CANDIDATES.every((candidate) => results[candidate] === expectedResults[candidate]);
 
   return {
