@@ -23,6 +23,9 @@ git -C "${MONGBAS_REPO_DIR}" remote -v > "${out}/git-remotes.txt"
 docker compose -f "${MONGBAS_REPO_DIR}/network/docker-compose.yaml" config > "${out}/compose-resolved.yaml"
 docker image inspect voting-chaincode:1.0 --format '{{json .RepoDigests}} {{.Id}}' > "${out}/chaincode-image.txt"
 ss -lntup > "${out}/ports.txt" 2>&1 || true
-if command -v ufw >/dev/null 2>&1; then sudo ufw status verbose > "${out}/ufw.txt" 2>&1 || true; fi
+if command -v ufw >/dev/null 2>&1; then
+  # Evidence collection must never block on an interactive sudo prompt.
+  sudo -n ufw status verbose > "${out}/ufw.txt" 2>&1 || printf 'unavailable without non-interactive sudo\n' > "${out}/ufw.txt"
+fi
 chmod -R go-rwx "${out}"
 log "environment evidence saved to ${out}"
