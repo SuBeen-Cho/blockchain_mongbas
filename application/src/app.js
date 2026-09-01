@@ -28,6 +28,7 @@ const voteRouter                   = require('./routes/vote');
 const { router: credentialRouter } = require('./routes/credential');
 const { requireVoterAuth, measureAuthLatency, idemixStatus } = require('./middleware/auth');
 const { guardElectionAdminRoutes, validateAdminConfiguration } = require('./middleware/admin');
+const { fabricConcurrencyGate } = require('./lib/fabricConcurrencyGate');
 
 const app  = express();
 const PORT = process.env.PORT || 3000;
@@ -125,6 +126,7 @@ app.get('/health', (_req, res) => {
     timestamp: new Date().toISOString(),
     idemix:    idemixStatus(),
     benchmark: { rateLimitsDisabled: DISABLE_RATE_LIMITS },
+    fabricConcurrency: fabricConcurrencyGate.status(),
     memory: {
       heapUsed:  mem.heapUsed,
       heapTotal: mem.heapTotal,

@@ -29,6 +29,7 @@
 const express = require('express');
 const crypto  = require('crypto');
 const { connectGateway } = require('../gateway');
+const { fabricConcurrencyGate } = require('../lib/fabricConcurrencyGate');
 const liveCount = require('../lib/liveCount');  // [부스 시연] 라이브 투표 카운터
 const demoLive  = require('../lib/demoLive');   // [부스 시연] 라이브 암호문 표 + 셔플 + 이벤트 버스
 
@@ -77,8 +78,14 @@ router.post('/', async (req, res) => {
   //   근거: USENIX JETS 2015 "Coercion-Resistant Elections through Consistent Behavior"
 
   // ── 실제 투표 처리 ─────────────────────────────────────────
-  const { gateway, contract } = await connectGateway();
+  let releaseFabricSlot;
+  let gateway;
   try {
+    // 암호문과 ZKP는 그대로 두고 Fabric 제출 구간에만 backpressure를 적용한다.
+    releaseFabricSlot = await fabricConcurrencyGate.acquire();
+    const connection = await connectGateway();
+    gateway = connection.gateway;
+    const { contract } = connection;
     // [PAPER-1] blind mode 판별: encryptedCandidateID가 있으면 blind mode
     const isBlindMode = !candidateID && (!!encryptedCandidateID || !!encryptedCandidateVector);
 
@@ -196,6 +203,9 @@ router.post('/', async (req, res) => {
       evictCount,
     });
   } catch (err) {
+    if (err.code === 'FABRIC_QUEUE_FULL' || err.code === 'FABRIC_QUEUE_TIMEOUT') {
+      return res.status(503).json({ error: '투표 요청이 많습니다. 잠시 후 다시 시도해 주세요.' });
+    }
     // 재투표 불가 시 체인코드가 에러 반환
     if (err.message && err.message.includes('이미 투표')) {
       return res.status(409).json({ error: '이미 투표한 선거입니다.', nullifierHash });
@@ -203,7 +213,8 @@ router.post('/', async (req, res) => {
     console.error('[vote] CastVote error:', err.message);
     res.status(500).json({ error: '투표 처리 중 오류가 발생했습니다.' });
   } finally {
-    gateway.close();
+    gateway?.close();
+    releaseFabricSlot?.();
   }
 });
 
