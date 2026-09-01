@@ -543,6 +543,27 @@ type VectorBallotReceipt struct {
 	TerminalTxID string `json:"terminalTxID,omitempty" metadata:",optional"`
 }
 
+type VectorAuditWitness struct {
+	ClientNonce string   `json:"clientNonce"`
+	Randomness  []string `json:"randomness"`
+}
+
+// VectorAuditDisclosure is public only for a spoiled ballot. It contains
+// enough material for an offline verifier to recompute every ciphertext but no
+// credential/nullifier linkage.
+type VectorAuditDisclosure struct {
+	Schema        string   `json:"schema"`
+	BallotID      string   `json:"ballotID"`
+	ElectionID    string   `json:"electionID"`
+	ArtifactHash  string   `json:"artifactHash"`
+	SelectedIndex int      `json:"selectedIndex"`
+	ClientNonce   string   `json:"clientNonce"`
+	Randomness    []string `json:"randomness"`
+	Status        string   `json:"status"`
+	AuditedAt     int64    `json:"auditedAt"`
+	AuditedTxID   string   `json:"auditedTxID"`
+}
+
 // ============================================================
 // 체인코드 컨트랙트
 // ============================================================
@@ -2086,6 +2107,118 @@ func (c *VotingContract) PrepareVectorBallot(
 		return nil, fmt.Errorf("vector ballot 공개 영수증 저장 실패: %w", err)
 	}
 	return &receipt, nil
+}
+
+// AuditVectorBallot reveals and verifies the witness for a prepared ballot,
+// then atomically spoils it. A successful transition can never be cast later.
+func (c *VotingContract) AuditVectorBallot(
+	ctx contractapi.TransactionContextInterface,
+	electionID string,
+	ballotID string,
+	nullifierHash string,
+	selectedIndex int,
+) (*VectorAuditDisclosure, error) {
+	if err := validateElectionID(electionID); err != nil {
+		return nil, err
+	}
+	if !isCanonicalSHA256Hex(ballotID) {
+		return nil, fmt.Errorf("ballotID는 64자 소문자 SHA-256 hex여야 합니다")
+	}
+	election, err := c.GetElection(ctx, electionID)
+	if err != nil {
+		return nil, err
+	}
+	if election.EncryptionMode != "elgamal-vector-v3" || election.ElGamalPubKey == nil {
+		return nil, fmt.Errorf("vector-v3 선거가 아닙니다")
+	}
+	now, err := getTxTime(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := verifyCredentialBoundNullifier(ctx, election, nullifierHash, now); err != nil {
+		return nil, err
+	}
+	privateKey := "VECTOR_BALLOT_" + ballotID
+	publicKey := "VECTOR_PREP_" + ballotID
+	privateBytes, err := ctx.GetStub().GetPrivateData(VotePrivatePDC, privateKey)
+	if err != nil || privateBytes == nil {
+		return nil, fmt.Errorf("준비된 vector ballot을 찾을 수 없습니다")
+	}
+	var preparation VectorBallotPreparation
+	if err := json.Unmarshal(privateBytes, &preparation); err != nil {
+		return nil, fmt.Errorf("vector ballot 준비 레코드 파싱 실패: %w", err)
+	}
+	if preparation.Status != "prepared" || preparation.ElectionID != electionID || preparation.BallotID != ballotID {
+		return nil, fmt.Errorf("vector ballot은 prepared 상태가 아닙니다")
+	}
+	if subtle.ConstantTimeCompare([]byte(preparation.NullifierHash), []byte(nullifierHash)) != 1 {
+		return nil, fmt.Errorf("준비 credential/nullifier와 일치하지 않습니다")
+	}
+	publicBytes, err := ctx.GetStub().GetState(publicKey)
+	if err != nil || publicBytes == nil {
+		return nil, fmt.Errorf("vector ballot 공개 영수증이 누락되었습니다")
+	}
+	var receipt VectorBallotReceipt
+	if err := json.Unmarshal(publicBytes, &receipt); err != nil || receipt.Status != "prepared" ||
+		receipt.BallotID != ballotID || receipt.ElectionID != electionID || receipt.ArtifactHash != preparation.ArtifactHash {
+		return nil, fmt.Errorf("vector ballot 공개 영수증 불일치")
+	}
+	artifactHash, err := computeVectorAuditArtifactHash(electionID, election.Candidates,
+		preparation.Artifact.EncryptedCandidateVector, preparation.Artifact.VectorBallotValidityProof)
+	if err != nil || artifactHash != preparation.ArtifactHash {
+		return nil, fmt.Errorf("저장된 vector artifact hash 불일치")
+	}
+	transient, err := ctx.GetStub().GetTransient()
+	if err != nil {
+		return nil, fmt.Errorf("transient 읽기 실패: %w", err)
+	}
+	witnessBytes, ok := transient["vectorAuditWitness"]
+	if !ok || len(witnessBytes) == 0 {
+		return nil, fmt.Errorf("vectorAuditWitness transient가 필요합니다")
+	}
+	var witness VectorAuditWitness
+	if err := json.Unmarshal(witnessBytes, &witness); err != nil {
+		return nil, fmt.Errorf("vector audit witness 파싱 실패: %w", err)
+	}
+	if !isCanonicalSHA256Hex(witness.ClientNonce) {
+		return nil, fmt.Errorf("clientNonce는 32-byte 소문자 hex여야 합니다")
+	}
+	nonceDigest := sha256.Sum256([]byte(witness.ClientNonce))
+	if subtle.ConstantTimeCompare([]byte(preparation.ClientNonceHash), []byte(hex.EncodeToString(nonceDigest[:]))) != 1 {
+		return nil, fmt.Errorf("client nonce commitment 불일치")
+	}
+	if !verifyVectorAuditWitness(election.ElGamalPubKey, preparation.Artifact.EncryptedCandidateVector, selectedIndex, witness.Randomness) {
+		return nil, fmt.Errorf("vector audit witness 검증 실패")
+	}
+	preparation.Status, preparation.TerminalAt, preparation.TerminalTxID = "audited", now, ctx.GetStub().GetTxID()
+	receipt.Status, receipt.TerminalAt, receipt.TerminalTxID = "audited", now, ctx.GetStub().GetTxID()
+	disclosure := VectorAuditDisclosure{
+		Schema: "mongbas-vector-audit-disclosure/v1", BallotID: ballotID, ElectionID: electionID,
+		ArtifactHash: preparation.ArtifactHash, SelectedIndex: selectedIndex, ClientNonce: witness.ClientNonce,
+		Randomness: append([]string(nil), witness.Randomness...), Status: "audited", AuditedAt: now, AuditedTxID: ctx.GetStub().GetTxID(),
+	}
+	updatedPrivate, err := json.Marshal(preparation)
+	if err != nil {
+		return nil, err
+	}
+	updatedReceipt, err := json.Marshal(receipt)
+	if err != nil {
+		return nil, err
+	}
+	disclosureBytes, err := json.Marshal(disclosure)
+	if err != nil {
+		return nil, err
+	}
+	if err := ctx.GetStub().PutPrivateData(VotePrivatePDC, privateKey, updatedPrivate); err != nil {
+		return nil, fmt.Errorf("vector ballot audit 상태 저장 실패: %w", err)
+	}
+	if err := ctx.GetStub().PutState(publicKey, updatedReceipt); err != nil {
+		return nil, fmt.Errorf("vector ballot audit 영수증 저장 실패: %w", err)
+	}
+	if err := ctx.GetStub().PutState("VECTOR_AUDIT_"+ballotID, disclosureBytes); err != nil {
+		return nil, fmt.Errorf("vector ballot audit disclosure 저장 실패: %w", err)
+	}
+	return &disclosure, nil
 }
 
 // PrepareBallot [PAPER-3] 투표 암호화를 사전 수행하고 commitment을 반환합니다.

@@ -262,6 +262,42 @@ router.post('/prepare-vector', async (req, res) => {
   }
 });
 
+// ── POST /api/vote/audit-vector ───────────────────────────────
+// Reveals the witness only for a spoiled ballot and commit-checks the terminal
+// transition before returning it to the client.
+router.post('/audit-vector', async (req, res) => {
+  const { electionID, ballotID, nullifierHash, selectedIndex, clientNonce, randomness } = req.body;
+  if (!electionID || !ballotID || !nullifierHash || !Number.isInteger(selectedIndex) ||
+      !clientNonce || !Array.isArray(randomness)) {
+    return res.status(400).json({ error: 'vector-v3 audit 필드가 누락되었거나 잘못되었습니다.' });
+  }
+  const credential = buildCredentialTransient(req, electionID);
+  if (credential.error) return res.status(403).json({ error: credential.error });
+  const transientData = {
+    ...credential.transientData,
+    vectorAuditWitness: Buffer.from(JSON.stringify({ clientNonce, randomness })),
+  };
+  let releaseFabricSlot;
+  let gateway;
+  try {
+    releaseFabricSlot = await fabricConcurrencyGate.acquire();
+    const connection = await connectGateway();
+    gateway = connection.gateway;
+    const result = await submitTransactionAndWait(connection.contract, 'AuditVectorBallot',
+      [electionID, ballotID, nullifierHash, String(selectedIndex)], { transientData });
+    res.json(JSON.parse(Buffer.from(result).toString('utf8')));
+  } catch (err) {
+    if (err.code === 'FABRIC_QUEUE_FULL' || err.code === 'FABRIC_QUEUE_TIMEOUT') {
+      return res.status(503).json({ error: '투표 요청이 많습니다. 잠시 후 다시 시도해 주세요.' });
+    }
+    console.error('[vote] AuditVectorBallot error:', err.message);
+    res.status(409).json({ error: 'vector-v3 audit이 거부되었습니다.' });
+  } finally {
+    gateway?.close();
+    releaseFabricSlot?.();
+  }
+});
+
 // ── POST /api/vote/prepare ────────────────────────────────────
 // [PAPER-3] Benaloh Challenge: 투표 사전 암호화 (commit phase)
 // 유권자가 후보자를 선택하면 체인코드가 암호화하고 commitment을 반환.
