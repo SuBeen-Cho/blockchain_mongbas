@@ -45,6 +45,7 @@ BBS+ 실험 모드는 `@mattrglobal/bbs-signatures` 2.0.0의 WASM 경로만 사�
 ./deploy/linux/smoke-test.sh
 MONGBAS_PROFILE=benchmark ./deploy/linux/revocation-evaluation.sh
 MONGBAS_PROFILE=benchmark ./deploy/linux/cast-intent-evaluation.sh
+MONGBAS_PROFILE=benchmark ./deploy/linux/vector-audit-or-cast-evaluation.sh
 ./deploy/linux/status.sh
 ./deploy/linux/collect-environment.sh
 MONGBAS_PROFILE=benchmark ./deploy/linux/benchmark.sh

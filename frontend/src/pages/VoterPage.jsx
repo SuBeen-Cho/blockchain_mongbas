@@ -11,6 +11,7 @@
 
 import { useState, useEffect } from 'react';
 import {
+  sha256,
   computeNullifier,
   computePasswordHash,
   encryptCandidateID,
@@ -149,6 +150,7 @@ export default function VoterPage() {
       setEncProgress(p => [...p, 'nullifier_done']);
 
       const body = { electionID, nullifierHash };
+      let vectorClientNonce = '';
 
       // Step 2: Encrypt
       setEncProgress(p => [...p, 'encrypt']);
@@ -161,6 +163,9 @@ export default function VoterPage() {
 			const vectorBallot = generateVectorBallotV3(elgamalPubKey, candidateIndex, election.candidates.length);
 			body.encryptedCandidateVector = vectorBallot.encryptedCandidateVector;
 			body.vectorBallotValidityProof = vectorBallot.vectorBallotValidityProof;
+			const nonceBytes = new Uint8Array(32);
+			crypto.getRandomValues(nonceBytes);
+			vectorClientNonce = Array.from(nonceBytes, b => b.toString(16).padStart(2, '0')).join('');
 		  } else {
 			const { c1, c2, _r } = elgamalEncrypt(elgamalPubKey, candidateID, candidateIndex);
 			body.encryptedCandidateID = `${c1}:${c2}`;
@@ -189,9 +194,18 @@ export default function VoterPage() {
       const headers = { 'Content-Type': 'application/json' };
       if (idemixCredential) headers['x-idemix-credential'] = idemixCredential;
 
-      const res = await fetch(`${API}/vote`, {
-        method: 'POST', headers, body: JSON.stringify(body),
-      });
+      let endpoint = `${API}/vote`;
+      if (isVectorV3) {
+        const prepareRes = await fetch(`${API}/vote/prepare-vector`, {
+          method: 'POST', headers,
+          body: JSON.stringify({ ...body, clientNonceHash: await sha256(vectorClientNonce) }),
+        });
+        const prepared = await prepareRes.json();
+        if (!prepareRes.ok || !prepared.ballotID) throw new Error(prepared.error || 'vector-v3 준비 실패');
+        body.ballotID = prepared.ballotID;
+        endpoint = `${API}/vote/cast-vector`;
+      }
+      const res = await fetch(endpoint, { method: 'POST', headers, body: JSON.stringify(body) });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || data.reason);
       setEncProgress(p => [...p, 'blockchain_done', 'receipt', 'receipt_done']);

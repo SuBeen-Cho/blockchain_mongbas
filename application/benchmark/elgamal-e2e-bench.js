@@ -289,7 +289,8 @@ async function measureSingleVote(electionID, pubKey, candidateIdx, authHeaders, 
 	timings.clientZkpMs = encrypted._timings.proofMs;
 	timings.clientPreparationWallMs = Number(process.hrtime.bigint() - t_enc_start) / 1e6;
 
-  // 4. 페이로드 구성
+  // 4. audit-or-cast 준비 및 cast 페이로드 구성
+  const clientNonce = crypto.randomBytes(32).toString('hex');
   const voteBody = {
     electionID,
     nullifierHash,
@@ -299,9 +300,15 @@ async function measureSingleVote(electionID, pubKey, candidateIdx, authHeaders, 
   };
   const payloadBytes = Buffer.byteLength(JSON.stringify(voteBody), 'utf8');
 
-  // 5. 서버 제출 (투표 확정 시간 = 서버 처리 + 블록 확정)
+  // 5. exact artifact prepare commit 후 terminal cast commit
   const t_submit_start = process.hrtime.bigint();
-  const res = await post('/api/vote', voteBody, authHeaders, 60000);
+  const prepared = await post('/api/vote/prepare-vector', {
+    ...voteBody,
+    clientNonceHash: sha256Hex(clientNonce),
+  }, authHeaders, 60000);
+  const res = prepared.status >= 200 && prepared.status < 300 && prepared.body?.ballotID
+    ? await post('/api/vote/cast-vector', { ...voteBody, ballotID: prepared.body.ballotID }, authHeaders, 60000)
+    : prepared;
   timings.serverConfirmMs = Number(process.hrtime.bigint() - t_submit_start) / 1e6;
 
   // 6. E2E 전체 시간

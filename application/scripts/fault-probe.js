@@ -72,7 +72,13 @@ async function main() {
     const nullifierHash = crypto.createHash('sha256').update(issued.nullifierMaterial + electionID + blinding).digest('hex');
     const candidateIndex = index % CANDIDATES.length;
     const ballot = generateVectorBallot(pubKey, candidateIndex, CANDIDATES.length);
-    requireStatus(await post('/api/vote', { electionID, nullifierHash,
+    const clientNonce = crypto.randomBytes(32).toString('hex');
+    const prepared = requireStatus(await post('/api/vote/prepare-vector', { electionID, nullifierHash,
+      clientNonceHash: crypto.createHash('sha256').update(clientNonce).digest('hex'),
+      encryptedCandidateVector: ballot.encryptedCandidateVector,
+      vectorBallotValidityProof: ballot.vectorBallotValidityProof },
+    { 'x-idemix-credential': issued.credential }, 180000), `prepare ${index + 1}`);
+    requireStatus(await post('/api/vote/cast-vector', { electionID, nullifierHash, ballotID: prepared.ballotID,
       encryptedCandidateVector: ballot.encryptedCandidateVector,
       vectorBallotValidityProof: ballot.vectorBallotValidityProof },
     { 'x-idemix-credential': issued.credential }, 180000), `vote ${index + 1}`);

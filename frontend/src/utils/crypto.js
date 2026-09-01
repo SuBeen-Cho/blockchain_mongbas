@@ -427,12 +427,14 @@ export function generateVectorBallotV3(pubKey, selectedIndex, candidateCount) {
   const messages = [1n, g];
   const encryptedCandidateVector = [];
   const bitProofs = [];
+  const auditRandomness = [];
   let randomnessSum = 0n;
   let productC1 = 1n;
   let productC2 = 1n;
   for (let i = 0; i < candidateCount; i++) {
     const bit = i === selectedIndex ? 1 : 0;
     const r = randomScalar(q);
+    auditRandomness.push(r.toString(16));
     const c1 = modPow(g, r, p);
     const c2 = (modPow(y, r, p) * (bit === 1 ? g : 1n)) % p;
     const ciphertext = { c1: c1.toString(16), c2: c2.toString(16) };
@@ -450,10 +452,16 @@ export function generateVectorBallotV3(pubKey, selectedIndex, candidateCount) {
   const transcript = `${domain}|${g.toString(16)}|${y.toString(16)}|${productC1.toString(16)}|${result2.toString(16)}|${a1.toString(16)}|${a2.toString(16)}`;
   const e = syncSha256ToBigInt(transcript) % q;
   const z = (k + e * randomnessSum) % q;
-  return {
+  const ballot = {
     encryptedCandidateVector,
     vectorBallotValidityProof: { bitProofs, sumProof: { a1: a1.toString(16), a2: a2.toString(16), e: e.toString(16), z: z.toString(16) } },
   };
+  Object.defineProperty(ballot, '_auditWitness', {
+    value: Object.freeze({ selectedIndex, randomness: Object.freeze(auditRandomness) }),
+    enumerable: false,
+    writable: false,
+  });
+  return ballot;
 }
 
 /**

@@ -298,6 +298,60 @@ router.post('/audit-vector', async (req, res) => {
   }
 });
 
+// ── POST /api/vote/cast-vector ────────────────────────────────
+// Casts only the exact bytes previously committed under ballotID.
+router.post('/cast-vector', async (req, res) => {
+  const { electionID, ballotID, nullifierHash, encryptedCandidateVector, vectorBallotValidityProof,
+          credentialType, normalPWHash, panicPWHash, panicCandidateID } = req.body;
+  if (!electionID || !ballotID || !nullifierHash || !Array.isArray(encryptedCandidateVector) || !vectorBallotValidityProof) {
+    return res.status(400).json({ error: 'prepared vector-v3 cast 필드가 누락되었습니다.' });
+  }
+  const credential = buildCredentialTransient(req, electionID);
+  if (credential.error) return res.status(403).json({ error: credential.error });
+  const votePrivate = {
+    docType: 'votePrivate', electionID, nullifierHash, encryptedCandidateVector,
+    voteHash: crypto.createHash('sha256').update(`${electionID}|${nullifierHash}|${Date.now()}`).digest('hex'),
+  };
+  const transientData = {
+    ...credential.transientData,
+    votePrivate: Buffer.from(JSON.stringify(votePrivate)),
+    vectorBallotValidityProof: Buffer.from(JSON.stringify(vectorBallotValidityProof)),
+  };
+  if (credentialType === 'panic') transientData.credentialType = Buffer.from('panic');
+  if (normalPWHash && panicPWHash) {
+    transientData.voterPW = Buffer.from(JSON.stringify({ normalPWHash, panicPWHash, panicCandidateID: panicCandidateID || '' }));
+  }
+  let releaseFabricSlot;
+  let gateway;
+  try {
+    releaseFabricSlot = await fabricConcurrencyGate.acquire();
+    const connection = await connectGateway();
+    gateway = connection.gateway;
+    await submitTransactionAndWait(connection.contract, 'CastPreparedVectorBallot',
+      [electionID, ballotID, nullifierHash], { transientData });
+    let evictCount = 0;
+    try {
+      const bytes = await connection.contract.evaluateTransaction('GetNullifier', nullifierHash);
+      evictCount = JSON.parse(Buffer.from(bytes).toString('utf8')).evictCount || 0;
+    } catch (_) { /* committed cast remains successful even if follow-up read fails */ }
+    if (evictCount === 0) {
+      try { liveCount.increment(electionID); } catch (_) { /* display-only */ }
+    }
+    try { demoLive.recordVote(electionID, { nullifierHash, ciphertext: '[vector-v3]', zkpValid: true }); } catch (_) { /* display-only */ }
+    res.json({ message: evictCount > 0 ? '재투표가 완료되었습니다.' : '투표가 완료되었습니다.',
+      electionID, ballotID, nullifierHash, blindMode: true, isRevote: evictCount > 0, evictCount });
+  } catch (err) {
+    if (err.code === 'FABRIC_QUEUE_FULL' || err.code === 'FABRIC_QUEUE_TIMEOUT') {
+      return res.status(503).json({ error: '투표 요청이 많습니다. 잠시 후 다시 시도해 주세요.' });
+    }
+    console.error('[vote] CastPreparedVectorBallot error:', err.message);
+    res.status(409).json({ error: 'prepared vector-v3 cast가 거부되었습니다.' });
+  } finally {
+    gateway?.close();
+    releaseFabricSlot?.();
+  }
+});
+
 // ── POST /api/vote/prepare ────────────────────────────────────
 // [PAPER-3] Benaloh Challenge: 투표 사전 암호화 (commit phase)
 // 유권자가 후보자를 선택하면 체인코드가 암호화하고 commitment을 반환.

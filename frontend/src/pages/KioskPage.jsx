@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import {
+  sha256,
   computeNullifier,
   elgamalEncrypt,
   generateBallotValidityProof,
@@ -77,17 +78,29 @@ export default function KioskPage({ electionId }) {
     try {
       const nh = await computeNullifier(nullifierMaterial, electionId, bf);
       const candidateID = election.candidates[pick];
-      const body = { electionID: electionId, nullifierHash: nh, credentialType: mode === 'panic' ? 'panic' : 'real' };
+	  const body = { electionID: electionId, nullifierHash: nh, credentialType: mode === 'panic' ? 'panic' : 'real' };
+	  let vectorClientNonce = '';
 	  if (election.encryptionMode === 'elgamal-vector-v3') {
 		const vectorBallot = generateVectorBallotV3(pub, pick, election.candidates.length);
 		body.encryptedCandidateVector = vectorBallot.encryptedCandidateVector;
 		body.vectorBallotValidityProof = vectorBallot.vectorBallotValidityProof;
+		const nonceBytes = new Uint8Array(32);
+		crypto.getRandomValues(nonceBytes);
+		vectorClientNonce = Array.from(nonceBytes, b => b.toString(16).padStart(2, '0')).join('');
 	  } else if (election.encryptionMode === 'elgamal') {
         const { c1, c2, _r } = elgamalEncrypt(pub, candidateID, pick);
         body.encryptedCandidateID = `${c1}:${c2}`;
         body.ballotValidityProof = JSON.stringify(generateBallotValidityProof(pub, c1, c2, _r, pick, election.candidates.length));
       } else body.candidateID = candidateID;
-      const resp = await J('/vote', { method: 'POST', headers: { 'x-idemix-credential': cred }, body: JSON.stringify(body) });
+      let votePath = '/vote';
+	  if (election.encryptionMode === 'elgamal-vector-v3') {
+		const prepared = await J('/vote/prepare-vector', { method: 'POST', headers: { 'x-idemix-credential': cred },
+		  body: JSON.stringify({ ...body, clientNonceHash: await sha256(vectorClientNonce) }) });
+		if (!prepared.ballotID) throw new Error('vector-v3 준비 영수증이 누락됐습니다.');
+		body.ballotID = prepared.ballotID;
+		votePath = '/vote/cast-vector';
+	  }
+      const resp = await J(votePath, { method: 'POST', headers: { 'x-idemix-credential': cred }, body: JSON.stringify(body) });
       const s = nh.slice(0, 6).toUpperCase();
       // Never persist the selected candidate or normal/panic mode on the device.
       setReceipt({ code: `${s.slice(0, 4)}-${s.slice(4)}`, nh, isRevote: !!resp.isRevote });

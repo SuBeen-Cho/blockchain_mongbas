@@ -1723,6 +1723,25 @@ func (c *VotingContract) CastVote(
 	candidateID string,
 	nullifierHash string,
 ) error {
+	election, err := c.GetElection(ctx, electionID)
+	if err != nil {
+		return err
+	}
+	if election.EncryptionMode == "elgamal-vector-v3" {
+		return fmt.Errorf("vector-v3 투표는 PrepareVectorBallot 후 CastPreparedVectorBallot으로만 제출할 수 있습니다")
+	}
+	return c.castVoteInternal(ctx, electionID, candidateID, nullifierHash)
+}
+
+// castVoteInternal contains the existing validated ledger write. It is not a
+// contract method, so external callers cannot bypass the prepared vector state
+// machine while legacy AES/ElGamal paths keep their public CastVote API.
+func (c *VotingContract) castVoteInternal(
+	ctx contractapi.TransactionContextInterface,
+	electionID string,
+	candidateID string,
+	nullifierHash string,
+) error {
 
 	// ── Step 0: 입력 형식 검증 (CouchDB 인젝션 방지) ──────────
 	if err := validateElectionID(electionID); err != nil {
@@ -2219,6 +2238,105 @@ func (c *VotingContract) AuditVectorBallot(
 		return nil, fmt.Errorf("vector ballot audit disclosure 저장 실패: %w", err)
 	}
 	return &disclosure, nil
+}
+
+// CastPreparedVectorBallot atomically consumes the exact artifact committed by
+// PrepareVectorBallot and records it through the same validated vote writer.
+func (c *VotingContract) CastPreparedVectorBallot(
+	ctx contractapi.TransactionContextInterface,
+	electionID string,
+	ballotID string,
+	nullifierHash string,
+) error {
+	if err := validateElectionID(electionID); err != nil {
+		return err
+	}
+	if !isCanonicalSHA256Hex(ballotID) {
+		return fmt.Errorf("ballotID는 64자 소문자 SHA-256 hex여야 합니다")
+	}
+	election, err := c.GetElection(ctx, electionID)
+	if err != nil {
+		return err
+	}
+	if election.Status != "ACTIVE" || election.EncryptionMode != "elgamal-vector-v3" || election.ElGamalPubKey == nil {
+		return fmt.Errorf("ACTIVE vector-v3 선거에서만 cast할 수 있습니다")
+	}
+	privateKey := "VECTOR_BALLOT_" + ballotID
+	publicKey := "VECTOR_PREP_" + ballotID
+	privateBytes, err := ctx.GetStub().GetPrivateData(VotePrivatePDC, privateKey)
+	if err != nil || privateBytes == nil {
+		return fmt.Errorf("준비된 vector ballot을 찾을 수 없습니다")
+	}
+	var preparation VectorBallotPreparation
+	if err := json.Unmarshal(privateBytes, &preparation); err != nil {
+		return fmt.Errorf("vector ballot 준비 레코드 파싱 실패: %w", err)
+	}
+	if preparation.Status != "prepared" || preparation.ElectionID != electionID || preparation.BallotID != ballotID {
+		return fmt.Errorf("vector ballot은 prepared 상태가 아닙니다")
+	}
+	if subtle.ConstantTimeCompare([]byte(preparation.NullifierHash), []byte(nullifierHash)) != 1 {
+		return fmt.Errorf("준비 credential/nullifier와 일치하지 않습니다")
+	}
+	publicBytes, err := ctx.GetStub().GetState(publicKey)
+	if err != nil || publicBytes == nil {
+		return fmt.Errorf("vector ballot 공개 영수증이 누락되었습니다")
+	}
+	var receipt VectorBallotReceipt
+	if err := json.Unmarshal(publicBytes, &receipt); err != nil || receipt.Status != "prepared" ||
+		receipt.BallotID != ballotID || receipt.ElectionID != electionID || receipt.ArtifactHash != preparation.ArtifactHash {
+		return fmt.Errorf("vector ballot 공개 영수증 불일치")
+	}
+	transient, err := ctx.GetStub().GetTransient()
+	if err != nil {
+		return fmt.Errorf("transient 읽기 실패: %w", err)
+	}
+	votePrivateBytes, ok := transient["votePrivate"]
+	if !ok || len(votePrivateBytes) == 0 {
+		return fmt.Errorf("votePrivate transient가 필요합니다")
+	}
+	var votePrivate VotePrivate
+	if err := json.Unmarshal(votePrivateBytes, &votePrivate); err != nil {
+		return fmt.Errorf("VotePrivate 파싱 실패: %w", err)
+	}
+	proofBytes, ok := transient["vectorBallotValidityProof"]
+	if !ok || len(proofBytes) == 0 {
+		return fmt.Errorf("vectorBallotValidityProof transient가 필요합니다")
+	}
+	var proof VectorBallotValidityProof
+	if err := json.Unmarshal(proofBytes, &proof); err != nil {
+		return fmt.Errorf("VectorBallotValidityProof 파싱 실패: %w", err)
+	}
+	artifactHash, err := computeVectorAuditArtifactHash(electionID, election.Candidates, votePrivate.EncryptedCandidateVector, &proof)
+	if err != nil {
+		return err
+	}
+	if subtle.ConstantTimeCompare([]byte(preparation.ArtifactHash), []byte(artifactHash)) != 1 {
+		return fmt.Errorf("cast artifact가 준비된 vector ballot과 일치하지 않습니다")
+	}
+	if err := c.castVoteInternal(ctx, electionID, "", nullifierHash); err != nil {
+		return err
+	}
+	now, err := getTxTime(ctx)
+	if err != nil {
+		return err
+	}
+	preparation.Status, preparation.TerminalAt, preparation.TerminalTxID = "cast", now, ctx.GetStub().GetTxID()
+	receipt.Status, receipt.TerminalAt, receipt.TerminalTxID = "cast", now, ctx.GetStub().GetTxID()
+	updatedPrivate, err := json.Marshal(preparation)
+	if err != nil {
+		return err
+	}
+	updatedReceipt, err := json.Marshal(receipt)
+	if err != nil {
+		return err
+	}
+	if err := ctx.GetStub().PutPrivateData(VotePrivatePDC, privateKey, updatedPrivate); err != nil {
+		return fmt.Errorf("vector ballot cast 상태 저장 실패: %w", err)
+	}
+	if err := ctx.GetStub().PutState(publicKey, updatedReceipt); err != nil {
+		return fmt.Errorf("vector ballot cast 영수증 저장 실패: %w", err)
+	}
+	return nil
 }
 
 // PrepareBallot [PAPER-3] 투표 암호화를 사전 수행하고 commitment을 반환합니다.

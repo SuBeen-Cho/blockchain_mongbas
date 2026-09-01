@@ -45,6 +45,24 @@ async function assertRejected(label, promise) {
   return res.body;
 }
 
+async function castPreparedVector(label, headers, electionID, nullifierHash, ballot) {
+  const clientNonce = crypto.randomBytes(32).toString('hex');
+  const common = {
+    electionID, nullifierHash,
+    encryptedCandidateVector: ballot.encryptedCandidateVector,
+    vectorBallotValidityProof: ballot.vectorBallotValidityProof,
+  };
+  const prepared = await assertOk(`${label} prepare`, requestJson('/api/vote/prepare-vector', {
+    method: 'POST', headers,
+    body: JSON.stringify({ ...common, clientNonceHash: sha256Hex(clientNonce) }),
+  }));
+  if (!prepared.ballotID) throw new Error(`${label}: prepared ballotID missing`);
+  return assertOk(`${label} cast`, requestJson('/api/vote/cast-vector', {
+    method: 'POST', headers,
+    body: JSON.stringify({ ...common, ballotID: prepared.ballotID }),
+  }));
+}
+
 // [PAPER-1] AES-256-GCM 클라이언트-사이드 암호화 (blind mode 테스트용)
 // 체인코드와 동일한 결정론적 nonce: SHA256(key + plaintext)[:12]
 function encryptAESGCM(keyHex, plaintext) {
@@ -644,11 +662,12 @@ async function main() {
   }
 
   const crossElectionBallot = generateVectorBallot(egPubKey.pubKey, 0, EG_CANDIDATES.length);
-  await assertRejected('credential replay across elections', requestJson('/api/vote', {
+  await assertRejected('credential replay across elections', requestJson('/api/vote/prepare-vector', {
     method: 'POST',
     headers: { 'x-idemix-credential': credentials[0] },
     body: JSON.stringify({
       electionID: EG_ELECTION_ID,
+      clientNonceHash: sha256Hex(crypto.randomBytes(32).toString('hex')),
       encryptedCandidateVector: crossElectionBallot.encryptedCandidateVector,
       nullifierHash: sha256Hex(`cross-election:${Date.now()}`),
       vectorBallotValidityProof: crossElectionBallot.vectorBallotValidityProof,
@@ -659,36 +678,16 @@ async function main() {
   const egNullifier1 = sha256Hex(egCredentialMaterials[0] + EG_ELECTION_ID + egBf.blindingFactor);
   const vote1 = generateVectorBallot(egPubKey.pubKey, 0, EG_CANDIDATES.length);
 
-  await assertOk('cast ElGamal vote (ALICE)',
-    requestJson('/api/vote', {
-      method: 'POST',
-      headers: { 'x-idemix-credential': egCredentials[0] },
-      body: JSON.stringify({
-        electionID: EG_ELECTION_ID,
-        encryptedCandidateVector: vote1.encryptedCandidateVector,
-        nullifierHash: egNullifier1,
-        vectorBallotValidityProof: vote1.vectorBallotValidityProof,
-      }),
-    })
-  );
+  await castPreparedVector('ElGamal vote (ALICE)', { 'x-idemix-credential': egCredentials[0] },
+    EG_ELECTION_ID, egNullifier1, vote1);
   console.log('[INFO] Exponential ElGamal vote (ALICE) cast with ZKP');
 
   // 투표 2: BOB (index=1)
   const egNullifier2 = sha256Hex(egCredentialMaterials[1] + EG_ELECTION_ID + egBf.blindingFactor);
   const vote2 = generateVectorBallot(egPubKey.pubKey, 1, EG_CANDIDATES.length);
 
-  await assertOk('cast ElGamal vote (BOB)',
-    requestJson('/api/vote', {
-      method: 'POST',
-      headers: { 'x-idemix-credential': egCredentials[1] },
-      body: JSON.stringify({
-        electionID: EG_ELECTION_ID,
-        encryptedCandidateVector: vote2.encryptedCandidateVector,
-        nullifierHash: egNullifier2,
-        vectorBallotValidityProof: vote2.vectorBallotValidityProof,
-      }),
-    })
-  );
+  await castPreparedVector('ElGamal vote (BOB)', { 'x-idemix-credential': egCredentials[1] },
+    EG_ELECTION_ID, egNullifier2, vote2);
   console.log('[INFO] Exponential ElGamal vote (BOB) cast with ZKP');
 
   // 14f. 선거 종료 + 암호문 집계

@@ -236,9 +236,19 @@ function prepareVote(electionID, pubKey, blindingFactor, i, credential) {
   const candidateIdx = i % CANDIDATES.length;
   const nullifierHash = sha256Hex(credential.nullifierMaterial + electionID + blindingFactor);
   const ballot = generateVectorBallot(pubKey, candidateIdx, CANDIDATES.length);
+  const clientNonce = crypto.randomBytes(32).toString('hex');
+  const clientNonceHash = sha256Hex(clientNonce);
   return {
     headers: credential.credential ? { 'x-idemix-credential': credential.credential } : {},
-    body: {
+    index: i,
+    prepareBody: {
+      electionID,
+      nullifierHash,
+      clientNonceHash,
+      encryptedCandidateVector: ballot.encryptedCandidateVector,
+      vectorBallotValidityProof: ballot.vectorBallotValidityProof,
+    },
+    castBody: {
       electionID,
       nullifierHash,
       encryptedCandidateVector: ballot.encryptedCandidateVector,
@@ -247,11 +257,17 @@ function prepareVote(electionID, pubKey, blindingFactor, i, credential) {
   };
 }
 
-function castPreparedVote(prepared, index) {
-  return post('/api/vote', prepared.body, prepared.headers, 180000).then(res => {
-    const ok = res.status >= 200 && res.status < 300;
-    return { index, ok, status: res.status, ms: res.ms, error: ok ? null : (res.body?.error || 'error') };
-  });
+async function castPreparedVote(prepared, index = prepared.index) {
+  const started = process.hrtime.bigint();
+  const committed = await post('/api/vote/prepare-vector', prepared.prepareBody, prepared.headers, 180000);
+  if (committed.status < 200 || committed.status >= 300 || !committed.body?.ballotID) {
+    return { index, ok: false, status: committed.status, ms: Number(process.hrtime.bigint() - started) / 1e6,
+      error: committed.body?.error || 'prepare-vector failed' };
+  }
+  const cast = await post('/api/vote/cast-vector', { ...prepared.castBody, ballotID: committed.body.ballotID }, prepared.headers, 180000);
+  const ok = cast.status >= 200 && cast.status < 300;
+  return { index, ok, status: cast.status, ms: Number(process.hrtime.bigint() - started) / 1e6,
+    prepareMs: committed.ms, castMs: cast.ms, error: ok ? null : (cast.body?.error || 'cast-vector failed') };
 }
 
 function systemSnapshot() {
