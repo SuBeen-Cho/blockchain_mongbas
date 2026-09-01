@@ -88,12 +88,11 @@ func TestVectorBallotIdentifierDomainBinding(t *testing.T) {
 			t.Fatalf("invalid SHA-256 encoding accepted: %q", invalid)
 		}
 	}
-	base := vectorBallotID("election-a", strings.Repeat("1", 64), strings.Repeat("2", 64), strings.Repeat("3", 64))
+	base := vectorBallotID("election-a", strings.Repeat("2", 64), strings.Repeat("3", 64))
 	variants := []string{
-		vectorBallotID("election-b", strings.Repeat("1", 64), strings.Repeat("2", 64), strings.Repeat("3", 64)),
-		vectorBallotID("election-a", strings.Repeat("4", 64), strings.Repeat("2", 64), strings.Repeat("3", 64)),
-		vectorBallotID("election-a", strings.Repeat("1", 64), strings.Repeat("5", 64), strings.Repeat("3", 64)),
-		vectorBallotID("election-a", strings.Repeat("1", 64), strings.Repeat("2", 64), strings.Repeat("6", 64)),
+		vectorBallotID("election-b", strings.Repeat("2", 64), strings.Repeat("3", 64)),
+		vectorBallotID("election-a", strings.Repeat("5", 64), strings.Repeat("3", 64)),
+		vectorBallotID("election-a", strings.Repeat("2", 64), strings.Repeat("6", 64)),
 	}
 	for _, variant := range variants {
 		if variant == base {

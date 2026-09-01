@@ -1979,8 +1979,11 @@ func isCanonicalSHA256Hex(value string) bool {
 	return err == nil && len(decoded) == sha256.Size
 }
 
-func vectorBallotID(electionID, nullifierHash, clientNonceHash, artifactHash string) string {
-	return hashWithLengthPrefix("mongbas/vector-aoc/v1", electionID, nullifierHash, clientNonceHash, artifactHash)
+func vectorBallotID(electionID, clientNonceHash, artifactHash string) string {
+	// The public identifier must not include the credential-bound nullifier.
+	// Once a final ballot publishes that nullifier, including it here would let
+	// observers link the voter's spoiled transcript to the final ballot.
+	return hashWithLengthPrefix("mongbas/vector-aoc/v1", electionID, clientNonceHash, artifactHash)
 }
 
 // PrepareVectorBallot commits the exact vector-v3 ciphertext and proof before
@@ -2035,7 +2038,7 @@ func (c *VotingContract) PrepareVectorBallot(
 	if err != nil {
 		return nil, err
 	}
-	ballotID := vectorBallotID(electionID, nullifierHash, clientNonceHash, artifactHash)
+	ballotID := vectorBallotID(electionID, clientNonceHash, artifactHash)
 	privateKey := "VECTOR_BALLOT_" + ballotID
 	publicKey := "VECTOR_PREP_" + ballotID
 	if existing, err := ctx.GetStub().GetPrivateData(VotePrivatePDC, privateKey); err != nil {
