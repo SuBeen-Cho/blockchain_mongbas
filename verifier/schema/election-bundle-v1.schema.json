@@ -1,0 +1,143 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mongbas.example/schema/election-bundle-v1.schema.json",
+  "title": "Mongbas Election Bundle v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "algorithms", "configuration", "provenance", "publicKey", "ballots", "bulletinBoard", "aggregateCiphertext", "tally", "decryptionProof", "signatures"],
+  "properties": {
+    "schema": { "const": "mongbas-election-bundle/v1" },
+    "algorithms": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["canonicalization", "hash", "signature", "tally"],
+      "properties": {
+        "canonicalization": { "const": "mongbas-canonical-json-v1" },
+        "hash": { "const": "sha-256" },
+        "signature": { "const": "ed25519" },
+        "tally": { "const": "mongbas-exp-elgamal-scalar-v1" }
+      }
+    },
+    "configuration": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["electionID", "candidates", "signatureThreshold", "organizations"],
+      "properties": {
+        "electionID": { "type": "string", "pattern": "^[A-Za-z0-9_.-]{1,256}$" },
+        "candidates": { "type": "array", "minItems": 2, "uniqueItems": true, "items": { "type": "string", "minLength": 1 } },
+        "signatureThreshold": { "type": "integer", "minimum": 1 },
+        "organizations": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["id", "ed25519PublicKeyDer"],
+            "properties": {
+              "id": { "type": "string", "minLength": 1 },
+              "ed25519PublicKeyDer": { "type": "string", "contentEncoding": "base64" }
+            }
+          }
+        }
+      }
+    },
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["gitCommit", "imageDigest", "softwareVersion"],
+      "properties": {
+        "gitCommit": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+        "imageDigest": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+        "softwareVersion": { "type": "string", "minLength": 1 }
+      }
+    },
+    "publicKey": { "$ref": "#/$defs/publicKey" },
+    "ballots": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/ballot" } },
+    "bulletinBoard": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["root", "publishedAt"],
+      "properties": {
+        "root": { "$ref": "#/$defs/hash" },
+        "publishedAt": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "aggregateCiphertext": { "$ref": "#/$defs/ciphertext" },
+    "tally": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["results", "totalVotes"],
+      "properties": {
+        "results": { "type": "object", "additionalProperties": { "type": "integer", "minimum": 0, "maximum": 9999 } },
+        "totalVotes": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "decryptionProof": { "$ref": "#/$defs/decryptionProof" },
+    "signatures": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["organizationID", "signature"],
+        "properties": {
+          "organizationID": { "type": "string", "minLength": 1 },
+          "signature": { "type": "string", "contentEncoding": "base64" }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "hash": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "hex": { "type": "string", "pattern": "^(0|[1-9a-f][0-9a-f]*)$" },
+    "publicKey": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["p", "g", "y"],
+      "properties": { "p": { "$ref": "#/$defs/hex" }, "g": { "$ref": "#/$defs/hex" }, "y": { "$ref": "#/$defs/hex" } }
+    },
+    "ciphertext": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["c1", "c2"],
+      "properties": { "c1": { "$ref": "#/$defs/hex" }, "c2": { "$ref": "#/$defs/hex" } }
+    },
+    "ballotProof": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["a1s", "a2s", "es", "zs"],
+      "properties": {
+        "a1s": { "type": "array", "items": { "$ref": "#/$defs/hex" } },
+        "a2s": { "type": "array", "items": { "$ref": "#/$defs/hex" } },
+        "es": { "type": "array", "items": { "$ref": "#/$defs/hex" } },
+        "zs": { "type": "array", "items": { "$ref": "#/$defs/hex" } }
+      }
+    },
+    "ballot": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["nullifierHash", "candidateCommitment", "ciphertext", "validityProof"],
+      "properties": {
+        "nullifierHash": { "$ref": "#/$defs/hash" },
+        "candidateCommitment": { "$ref": "#/$defs/hash" },
+        "ciphertext": { "$ref": "#/$defs/ciphertext" },
+        "validityProof": { "$ref": "#/$defs/ballotProof" }
+      }
+    },
+    "decryptionProof": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["nullifierHash", "c1", "c2", "decryptedHash", "a1", "a2", "e", "z"],
+      "properties": {
+        "nullifierHash": { "const": "HOMOMORPHIC_TALLY" },
+        "c1": { "$ref": "#/$defs/hex" },
+        "c2": { "$ref": "#/$defs/hex" },
+        "decryptedHash": { "$ref": "#/$defs/hash" },
+        "a1": { "$ref": "#/$defs/hex" },
+        "a2": { "$ref": "#/$defs/hex" },
+        "e": { "$ref": "#/$defs/hex" },
+        "z": { "$ref": "#/$defs/hex" }
+      }
+    }
+  }
+}

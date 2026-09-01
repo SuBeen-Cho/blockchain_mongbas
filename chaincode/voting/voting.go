@@ -3898,8 +3898,20 @@ func chaumPedersenVerify(pubKey *ElGamalPublicKey, proof *ChaumPedersenProof, de
 	m := elgamalEncodePlaintext(decryptedPlaintext)
 	// s = c2 * m^(-1) mod p
 	mInv := new(big.Int).ModInverse(m, p)
+	if mInv == nil {
+		return false
+	}
 	s := new(big.Int).Mul(c2, mInv)
 	s.Mod(s, p)
+
+	eInput := fmt.Sprintf("%s|%s|%s|%s|%s|%s",
+		g.Text(16), y.Text(16), c1.Text(16), s.Text(16), a1.Text(16), a2.Text(16))
+	eHash := sha256.Sum256([]byte(eInput))
+	expectedE := new(big.Int).SetBytes(eHash[:])
+	expectedE.Mod(expectedE, elgamalQ)
+	if e.Cmp(expectedE) != 0 {
+		return false
+	}
 
 	// 검증 1: g^z == a1 * y^e mod p
 	lhs1 := new(big.Int).Exp(g, z, p)
@@ -3927,7 +3939,7 @@ func chaumPedersenVerifyRaw(pubKey *ElGamalPublicKey, proof *ChaumPedersenProof,
 	p, g := elgamalP, elgamalG
 	y, okY := parseSubgroupElement(pubKey.Y)
 	c1, okC1 := parseSubgroupElement(proof.C1)
-	c2, okC2 := parseNonzeroFieldElement(proof.C2)
+	c2, okC2 := parseSubgroupElement(proof.C2)
 	a1, okA1 := parseSubgroupElement(proof.A1)
 	a2, okA2 := parseSubgroupElement(proof.A2)
 	e, okE := parseScalar(proof.E)
@@ -3943,6 +3955,15 @@ func chaumPedersenVerifyRaw(pubKey *ElGamalPublicKey, proof *ChaumPedersenProof,
 	}
 	s := new(big.Int).Mul(c2, mInv)
 	s.Mod(s, p)
+
+	eInput := fmt.Sprintf("%s|%s|%s|%s|%s|%s",
+		g.Text(16), y.Text(16), c1.Text(16), s.Text(16), a1.Text(16), a2.Text(16))
+	eHash := sha256.Sum256([]byte(eInput))
+	expectedE := new(big.Int).SetBytes(eHash[:])
+	expectedE.Mod(expectedE, elgamalQ)
+	if e.Cmp(expectedE) != 0 {
+		return false
+	}
 
 	// 검증 1: g^z == a1 * y^e mod p
 	lhs1 := new(big.Int).Exp(g, z, p)
@@ -4096,7 +4117,7 @@ func verifyBallotValidityZKP(pubKey *ElGamalPublicKey, c1Hex, c2Hex string, numC
 	p, g, q := elgamalP, elgamalG, elgamalQ
 	y, okY := parseSubgroupElement(pubKey.Y)
 	c1, okC1 := parseSubgroupElement(c1Hex)
-	c2, okC2 := parseNonzeroFieldElement(c2Hex)
+	c2, okC2 := parseSubgroupElement(c2Hex)
 	if !(okY && okC1 && okC2) {
 		return false
 	}

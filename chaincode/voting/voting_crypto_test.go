@@ -105,6 +105,21 @@ func TestHomomorphicDecryptionProofRejectsTampering(t *testing.T) {
 	}
 }
 
+func TestChaumPedersenRejectsZeroChallengeForgery(t *testing.T) {
+	_, pub := elgamalGenerateKeyPair([]byte("forgery-public-key"))
+	forged := &ChaumPedersenProof{
+		C1: "2",
+		C2: "2",
+		A1: "2",
+		A2: "2",
+		E:  "0",
+		Z:  "1",
+	}
+	if chaumPedersenVerifyRaw(pub, forged, big.NewInt(1)) {
+		t.Fatal("zero-challenge proof forgery was accepted")
+	}
+}
+
 func TestProofVerifiersRejectMalformedInputsWithoutPanic(t *testing.T) {
 	_, pub := elgamalGenerateKeyPair([]byte("malformed-proof"))
 	malformed := &ChaumPedersenProof{C1: "not-hex", C2: "0", A1: "", A2: "", E: "", Z: ""}

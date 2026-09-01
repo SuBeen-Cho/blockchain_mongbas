@@ -1,0 +1,17 @@
+{
+  "name": "mongbas-election-verifier",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Standalone verifier for canonical Mongbas election bundles",
+  "type": "commonjs",
+  "bin": {
+    "mongbas-verify": "bin/mongbas-verify.js"
+  },
+  "scripts": {
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "license": "Apache-2.0"
+}

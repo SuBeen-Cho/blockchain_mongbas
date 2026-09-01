@@ -1,0 +1,180 @@
+'use strict';
+
+const assert = require('node:assert/strict');
+const crypto = require('node:crypto');
+const test = require('node:test');
+const {
+  G, HOMOMORPHIC_BASE, P, P_HEX, Q,
+  canonicalize, merkleRoot, modInverse, modPow, sha256Hex, unsignedBundle, verifyBundle, verifyBundleBytes,
+} = require('../src/verify');
+
+function scalar(label) {
+  const value = BigInt(`0x${sha256Hex(label)}`) % Q;
+  return value === 0n ? 1n : value;
+}
+
+function encryptAndProve(publicKeyY, candidateIndex, candidateCount, label) {
+  const randomness = scalar(`${label}:r`);
+  const message = modPow(G, HOMOMORPHIC_BASE ** BigInt(candidateIndex), P);
+  const c1 = modPow(G, randomness, P);
+  const c2 = (message * modPow(publicKeyY, randomness, P)) % P;
+  const a1s = new Array(candidateCount);
+  const a2s = new Array(candidateCount);
+  const es = new Array(candidateCount);
+  const zs = new Array(candidateCount);
+  const witnessNonce = scalar(`${label}:witness`);
+  let simulatedChallengeSum = 0n;
+  for (let index = 0; index < candidateCount; index += 1) {
+    if (index === candidateIndex) continue;
+    const e = scalar(`${label}:e:${index}`);
+    const z = scalar(`${label}:z:${index}`);
+    const candidateMessage = modPow(G, HOMOMORPHIC_BASE ** BigInt(index), P);
+    const divided = (c2 * modInverse(candidateMessage, P)) % P;
+    a1s[index] = ((modPow(G, z, P) * modPow(modInverse(c1, P), e, P)) % P).toString(16);
+    a2s[index] = ((modPow(publicKeyY, z, P) * modPow(modInverse(divided, P), e, P)) % P).toString(16);
+    es[index] = e.toString(16);
+    zs[index] = z.toString(16);
+    simulatedChallengeSum = (simulatedChallengeSum + e) % Q;
+  }
+  a1s[candidateIndex] = modPow(G, witnessNonce, P).toString(16);
+  a2s[candidateIndex] = modPow(publicKeyY, witnessNonce, P).toString(16);
+  const challengeText = [c1.toString(16), c2.toString(16), ...a1s.flatMap((a1, index) => [a1, a2s[index]])].join('|');
+  const totalChallenge = BigInt(`0x${sha256Hex(challengeText)}`) % Q;
+  const realChallenge = (totalChallenge - simulatedChallengeSum + Q) % Q;
+  es[candidateIndex] = realChallenge.toString(16);
+  zs[candidateIndex] = ((witnessNonce + realChallenge * randomness) % Q).toString(16);
+  return {
+    ciphertext: { c1: c1.toString(16), c2: c2.toString(16) },
+    validityProof: { a1s, a2s, es, zs },
+  };
+}
+
+function decryptionProof(privateKey, publicKeyY, aggregate, sum) {
+  const c1 = BigInt(`0x${aggregate.c1}`);
+  const c2 = BigInt(`0x${aggregate.c2}`);
+  const message = modPow(G, sum, P);
+  const sharedSecret = (c2 * modInverse(message, P)) % P;
+  const nonce = scalar('tally-proof-nonce');
+  const a1 = modPow(G, nonce, P);
+  const a2 = modPow(c1, nonce, P);
+  const challengeText = [G, publicKeyY, c1, sharedSecret, a1, a2].map((value) => value.toString(16)).join('|');
+  const challenge = BigInt(`0x${sha256Hex(challengeText)}`) % Q;
+  const response = (nonce + challenge * privateKey) % Q;
+  return {
+    nullifierHash: 'HOMOMORPHIC_TALLY',
+    c1: aggregate.c1,
+    c2: aggregate.c2,
+    decryptedHash: sha256Hex(`homomorphic_sum:${sum}`),
+    a1: a1.toString(16),
+    a2: a2.toString(16),
+    e: challenge.toString(16),
+    z: response.toString(16),
+  };
+}
+
+function buildBundle() {
+  const electionID = 'verifier-known-answer-1';
+  const candidates = ['ALICE', 'BOB'];
+  const privateKey = scalar('election-private-key');
+  const publicKeyY = modPow(G, privateKey, P);
+  const selections = [0, 1];
+  const ballots = selections.map((selection, index) => {
+    const encrypted = encryptAndProve(publicKeyY, selection, candidates.length, `ballot:${index}`);
+    const nullifierHash = sha256Hex(`nullifier:${index}`);
+    const encryptedText = `${encrypted.ciphertext.c1}:${encrypted.ciphertext.c2}`;
+    return {
+      nullifierHash,
+      candidateCommitment: sha256Hex(`${electionID}|${nullifierHash}|${encryptedText}`),
+      ...encrypted,
+    };
+  });
+  const aggregate = ballots.reduce((result, ballot) => ({
+    c1: ((BigInt(`0x${result.c1}`) * BigInt(`0x${ballot.ciphertext.c1}`)) % P).toString(16),
+    c2: ((BigInt(`0x${result.c2}`) * BigInt(`0x${ballot.ciphertext.c2}`)) % P).toString(16),
+  }), { c1: '1', c2: '1' });
+  const { publicKey: publicKey1, privateKey: privateKey1 } = crypto.generateKeyPairSync('ed25519');
+  const { publicKey: publicKey2, privateKey: privateKey2 } = crypto.generateKeyPairSync('ed25519');
+  const bundle = {
+    schema: 'mongbas-election-bundle/v1',
+    algorithms: {
+      canonicalization: 'mongbas-canonical-json-v1',
+      hash: 'sha-256',
+      signature: 'ed25519',
+      tally: 'mongbas-exp-elgamal-scalar-v1',
+    },
+    configuration: {
+      electionID,
+      candidates,
+      signatureThreshold: 2,
+      organizations: [
+        { id: 'ec', ed25519PublicKeyDer: publicKey1.export({ format: 'der', type: 'spki' }).toString('base64') },
+        { id: 'civil', ed25519PublicKeyDer: publicKey2.export({ format: 'der', type: 'spki' }).toString('base64') },
+      ],
+    },
+    provenance: { gitCommit: '0123456789abcdef0123456789abcdef01234567', imageDigest: 'sha256:' + 'ab'.repeat(32), softwareVersion: 'test' },
+    publicKey: { p: P_HEX, g: '2', y: publicKeyY.toString(16) },
+    ballots,
+    bulletinBoard: { root: merkleRoot(ballots), publishedAt: 1 },
+    aggregateCiphertext: aggregate,
+    tally: { results: { ALICE: 1, BOB: 1 }, totalVotes: 2 },
+    decryptionProof: decryptionProof(privateKey, publicKeyY, aggregate, 1n + HOMOMORPHIC_BASE),
+  };
+  const payload = Buffer.from(canonicalize(unsignedBundle(bundle)));
+  bundle.signatures = [
+    { organizationID: 'ec', signature: crypto.sign(null, payload, privateKey1).toString('base64') },
+    { organizationID: 'civil', signature: crypto.sign(null, payload, privateKey2).toString('base64') },
+  ];
+  return bundle;
+}
+
+test('accepts a complete independently verifiable 1:1 bundle', () => {
+  const bundle = buildBundle();
+  const result = verifyBundle(bundle);
+  assert.equal(result.valid, true, result.errors.join('\n'));
+  assert.equal(result.ballots, 2);
+  assert.equal(result.validSignatures, 2);
+  const canonicalResult = verifyBundleBytes(Buffer.from(canonicalize(bundle)));
+  assert.equal(canonicalResult.valid, true, canonicalResult.errors?.join('\n'));
+});
+
+const mutations = {
+  'deleted ballot': (bundle) => { bundle.ballots.pop(); },
+  'reordered ballots': (bundle) => { bundle.ballots.reverse(); },
+  'changed ciphertext': (bundle) => { bundle.ballots[0].ciphertext.c2 = bundle.ballots[1].ciphertext.c2; },
+  'deleted proof': (bundle) => { delete bundle.ballots[0].validityProof; },
+  'changed bulletin root': (bundle) => { bundle.bulletinBoard.root = '00'.repeat(32); },
+  'changed aggregate': (bundle) => { bundle.aggregateCiphertext.c1 = '2'; },
+  'changed tally': (bundle) => { bundle.tally.results.ALICE = 2; },
+  'changed decryption proof': (bundle) => { bundle.decryptionProof.z = '0'; },
+  'deleted signature': (bundle) => { bundle.signatures.pop(); },
+  'changed signature': (bundle) => { bundle.signatures[0].signature = Buffer.alloc(64).toString('base64'); },
+  'algorithm downgrade': (bundle) => { bundle.algorithms.tally = 'none'; },
+  'duplicate ballot': (bundle) => { bundle.ballots.push(structuredClone(bundle.ballots[0])); },
+};
+
+for (const [name, mutate] of Object.entries(mutations)) {
+  test(`rejects tamper corpus: ${name}`, () => {
+    const bundle = buildBundle();
+    mutate(bundle);
+    const result = verifyBundle(bundle);
+    assert.equal(result.valid, false, `${name} unexpectedly verified`);
+    assert.ok(result.errors.length > 0);
+  });
+}
+
+test('rejects a trivial zero-challenge decryption-proof forgery', () => {
+  const bundle = buildBundle();
+  bundle.decryptionProof.e = '0';
+  bundle.decryptionProof.z = '1';
+  bundle.decryptionProof.a1 = '2';
+  bundle.decryptionProof.a2 = bundle.aggregateCiphertext.c1;
+  const result = verifyBundle(bundle);
+  assert.equal(result.valid, false);
+  assert.match(result.errors.join('\n'), /Fiat-Shamir challenge mismatch/);
+});
+
+test('rejects non-canonical JSON bytes', () => {
+  const result = verifyBundleBytes(Buffer.from(JSON.stringify(buildBundle(), null, 2)));
+  assert.equal(result.valid, false);
+  assert.match(result.summary, /not canonical/);
+});
