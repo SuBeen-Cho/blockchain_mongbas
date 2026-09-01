@@ -1484,6 +1484,66 @@ func verifyCredentialTransient(
 	return cv.CredHash, nil
 }
 
+// verifyCredentialBoundNullifier is the single authorization gate shared by
+// direct cast and the vector audit-or-cast workflow. Keeping verification here
+// prevents a future prepare/cast endpoint from accepting a valid proof while
+// silently skipping credential binding or revocation.
+func verifyCredentialBoundNullifier(
+	ctx contractapi.TransactionContextInterface,
+	election *Election,
+	nullifierHash string,
+	txNow int64,
+) (*CredentialVerification, error) {
+	if election == nil {
+		return nil, fmt.Errorf("선거 데이터가 없습니다")
+	}
+	if _, err := verifyCredentialTransient(ctx, election.ElectionID, txNow); err != nil {
+		return nil, fmt.Errorf("자격증명 거부: %w", err)
+	}
+	transient, err := ctx.GetStub().GetTransient()
+	if err != nil {
+		return nil, fmt.Errorf("transient 읽기 실패: %w", err)
+	}
+	var cv CredentialVerification
+	if err := json.Unmarshal(transient["credentialVerification"], &cv); err != nil {
+		return nil, fmt.Errorf("CredentialVerification 파싱 실패: %w", err)
+	}
+	if cv.CredType == "bypass" {
+		return &cv, nil
+	}
+	material, err := credentialNullifierMaterial(ctx, cv)
+	if err != nil {
+		return nil, fmt.Errorf("nullifier 바인딩 거부: %w", err)
+	}
+	expected, err := computeCredentialBoundNullifier(material, election.ElectionID, election.BlindingFactor)
+	if err != nil {
+		return nil, fmt.Errorf("nullifier 바인딩 거부: %w", err)
+	}
+	decoded, decodeErr := hex.DecodeString(nullifierHash)
+	if decodeErr != nil || len(decoded) != sha256.Size || nullifierHash != strings.ToLower(nullifierHash) {
+		return nil, fmt.Errorf("nullifierHash는 64자 소문자 SHA-256 hex여야 합니다")
+	}
+	if subtle.ConstantTimeCompare([]byte(nullifierHash), []byte(expected)) != 1 {
+		return nil, fmt.Errorf("nullifierHash가 서명된 자격증명과 일치하지 않습니다")
+	}
+	revocationHandle, err := computeCredentialRevocationHandle(material, election.ElectionID, election.BlindingFactor)
+	if err != nil {
+		return nil, fmt.Errorf("credential 폐기 핸들 계산 실패: %w", err)
+	}
+	revocationKey, err := credentialRevocationStateKey(election.ElectionID, revocationHandle)
+	if err != nil {
+		return nil, fmt.Errorf("credential 폐기 키 계산 실패: %w", err)
+	}
+	revoked, err := ctx.GetStub().GetState(revocationKey)
+	if err != nil {
+		return nil, fmt.Errorf("credential 폐기 상태 조회 실패: %w", err)
+	}
+	if revoked != nil {
+		return nil, fmt.Errorf("폐기된 credential입니다")
+	}
+	return &cv, nil
+}
+
 // CloseElection 선거를 종료하고 득표를 집계하여 결과를 원장에 기록합니다.
 // TallyVotes 로직이 내부에서 실행됩니다.
 func (c *VotingContract) CloseElection(
@@ -1629,56 +1689,13 @@ func (c *VotingContract) CastVote(
 		return fmt.Errorf("투표 기간이 종료되었습니다")
 	}
 
-	// ── Step 1b: [CRIT-01/02 FIX] 자격증명 체인코드 독립 검증 ────
-	// API 서버 미들웨어와 별개로 체인코드가 직접 자격증명 메타데이터를 검증.
-	// API 서버가 타협되어 auth.js 검증을 우회해도 이 레이어에서 차단됩니다.
-	_, err = verifyCredentialTransient(ctx, electionID, now)
+	// ── Step 1b: credential, nullifier binding and revocation ─────
+	if _, err = verifyCredentialBoundNullifier(ctx, election, nullifierHash, now); err != nil {
+		return err
+	}
+	transient, err := ctx.GetStub().GetTransient()
 	if err != nil {
-		return fmt.Errorf("자격증명 거부: %w", err)
-	}
-
-	// 서명/증명이 보호하는 선거별 결합값으로 nullifier를 독립 재계산한다.
-	// 이 검증으로 유효한 credential 하나로 임의 nullifier를 만들어 여러 표를
-	// 새로 생성하는 우회를 차단한다. bypass는 명시적 비보안 기준선이다.
-	transient, terr := ctx.GetStub().GetTransient()
-	if terr != nil {
-		return fmt.Errorf("transient 읽기 실패: %w", terr)
-	}
-	var cv CredentialVerification
-	if err := json.Unmarshal(transient["credentialVerification"], &cv); err != nil {
-		return fmt.Errorf("CredentialVerification 파싱 실패: %w", err)
-	}
-	if cv.CredType != "bypass" {
-		material, err := credentialNullifierMaterial(ctx, cv)
-		if err != nil {
-			return fmt.Errorf("nullifier 바인딩 거부: %w", err)
-		}
-		expected, err := computeCredentialBoundNullifier(material, electionID, election.BlindingFactor)
-		if err != nil {
-			return fmt.Errorf("nullifier 바인딩 거부: %w", err)
-		}
-		decoded, decErr := hex.DecodeString(nullifierHash)
-		if decErr != nil || len(decoded) != sha256.Size || nullifierHash != strings.ToLower(nullifierHash) {
-			return fmt.Errorf("nullifierHash는 64자 소문자 SHA-256 hex여야 합니다")
-		}
-		if subtle.ConstantTimeCompare([]byte(nullifierHash), []byte(expected)) != 1 {
-			return fmt.Errorf("nullifierHash가 서명된 자격증명과 일치하지 않습니다")
-		}
-		revocationHandle, err := computeCredentialRevocationHandle(material, electionID, election.BlindingFactor)
-		if err != nil {
-			return fmt.Errorf("credential 폐기 핸들 계산 실패: %w", err)
-		}
-		revocationKey, err := credentialRevocationStateKey(electionID, revocationHandle)
-		if err != nil {
-			return fmt.Errorf("credential 폐기 키 계산 실패: %w", err)
-		}
-		revoked, err := ctx.GetStub().GetState(revocationKey)
-		if err != nil {
-			return fmt.Errorf("credential 폐기 상태 조회 실패: %w", err)
-		}
-		if revoked != nil {
-			return fmt.Errorf("폐기된 credential입니다")
-		}
+		return fmt.Errorf("transient 읽기 실패: %w", err)
 	}
 
 	// ── Step 2: 재투표 확인 / Eviction 처리 (최종 1표만 유효) ──
