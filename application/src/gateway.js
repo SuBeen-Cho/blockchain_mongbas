@@ -37,6 +37,30 @@ const PEER_HOST_ALIAS = 'peer0.ec.voting.example.com';  // TLS SNI
 const CHANNEL_NAME    = 'voting-channel';
 const CHAINCODE_NAME  = 'voting';
 
+function timeoutMs(name, fallback, maximum) {
+  const parsed = Number(process.env[name] || fallback);
+  if (!Number.isSafeInteger(parsed) || parsed < 1_000 || parsed > maximum) {
+    throw new Error(`${name}는 1000~${maximum}ms 범위의 정수여야 합니다.`);
+  }
+  return parsed;
+}
+
+const GATEWAY_TIMEOUTS = {
+  evaluate: timeoutMs('FABRIC_EVALUATE_TIMEOUT_MS', 30_000, 300_000),
+  endorse: timeoutMs('FABRIC_ENDORSE_TIMEOUT_MS', 120_000, 600_000),
+  submit: timeoutMs('FABRIC_SUBMIT_TIMEOUT_MS', 15_000, 120_000),
+  commit: timeoutMs('FABRIC_COMMIT_TIMEOUT_MS', 180_000, 600_000),
+};
+
+function gatewayDeadlineOptions() {
+  return {
+    evaluateOptions: () => ({ deadline: Date.now() + GATEWAY_TIMEOUTS.evaluate }),
+    endorseOptions: () => ({ deadline: Date.now() + GATEWAY_TIMEOUTS.endorse }),
+    submitOptions: () => ({ deadline: Date.now() + GATEWAY_TIMEOUTS.submit }),
+    commitStatusOptions: () => ({ deadline: Date.now() + GATEWAY_TIMEOUTS.commit }),
+  };
+}
+
 const ORG_PROFILES = {
   ElectionCommissionMSP: {
     domain: 'ec.voting.example.com',
@@ -115,11 +139,7 @@ async function connectGateway() {
       credentials: certPem,
     },
     signer: signers.newPrivateKeySigner(privateKey),
-    // 트랜잭션 제출 타임아웃 (기본값 대비 여유 있게 설정)
-    evaluateOptions:        () => ({ deadline: Date.now() + 5_000 }),
-    endorseOptions:         () => ({ deadline: Date.now() + 15_000 }),
-    submitOptions:          () => ({ deadline: Date.now() + 5_000 }),
-    commitStatusOptions:    () => ({ deadline: Date.now() + 60_000 }),
+	...gatewayDeadlineOptions(),
   });
 
   const network  = gateway.getNetwork(CHANNEL_NAME);
@@ -148,10 +168,7 @@ async function connectGatewayAsVoter(mspId, voterCertPem, voterKeyPem) {
     client,
     identity: { mspId, credentials: voterCertPem },
     signer:   signers.newPrivateKeySigner(privateKey),
-    evaluateOptions:     () => ({ deadline: Date.now() + 5_000 }),
-    endorseOptions:      () => ({ deadline: Date.now() + 15_000 }),
-    submitOptions:       () => ({ deadline: Date.now() + 5_000 }),
-    commitStatusOptions: () => ({ deadline: Date.now() + 60_000 }),
+	...gatewayDeadlineOptions(),
   });
 
   const network  = gateway.getNetwork(CHANNEL_NAME);
@@ -179,10 +196,7 @@ async function connectGatewayForOrg(mspId) {
     client,
     identity: { mspId, credentials: certPem },
     signer:   signers.newPrivateKeySigner(privateKey),
-    evaluateOptions:     () => ({ deadline: Date.now() + 5_000 }),
-    endorseOptions:      () => ({ deadline: Date.now() + 15_000 }),
-    submitOptions:       () => ({ deadline: Date.now() + 5_000 }),
-    commitStatusOptions: () => ({ deadline: Date.now() + 60_000 }),
+	...gatewayDeadlineOptions(),
   });
 
   const network  = gateway.getNetwork(CHANNEL_NAME);
