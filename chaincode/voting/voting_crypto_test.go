@@ -44,6 +44,45 @@ func TestExponentialElGamalAggregateOneToOne(t *testing.T) {
 	}
 }
 
+func TestBaseBEncodingRoundTripWithinCapacity(t *testing.T) {
+	testCases := [][]int{
+		{0},
+		{1, 1},
+		{17, 29},
+		{9999, 0},
+		{3, 7, 11},
+	}
+	for _, want := range testCases {
+		sum := int64(0)
+		place := int64(1)
+		for _, count := range want {
+			sum += int64(count) * place
+			place *= HomomorphicBase
+		}
+		got := decomposeBaseB(sum, len(want))
+		for i := range want {
+			if got[i] != want[i] {
+				t.Fatalf("round trip %v: index %d got %d", want, i, got[i])
+			}
+		}
+	}
+}
+
+func TestHomomorphicCapacityRejectsAmbiguousOrInfeasibleTallies(t *testing.T) {
+	if err := validateHomomorphicTallyCapacity(HomomorphicBase, 2); err == nil {
+		t.Fatal("a vote count equal to the digit base must be rejected")
+	}
+	if err := validateHomomorphicTallyCapacity(40, 3); err == nil {
+		t.Fatal("a tally beyond the configured BSGS search bound must be rejected")
+	}
+	if err := validateHomomorphicTallyCapacity(39, 3); err != nil {
+		t.Fatalf("boundary tally should fit: %v", err)
+	}
+	if err := validateHomomorphicTallyCapacity(1, 10); err == nil {
+		t.Fatal("overflowing candidate encoding must be rejected")
+	}
+}
+
 func TestHomomorphicDecryptionProofRejectsTampering(t *testing.T) {
 	x, pub := elgamalGenerateKeyPair([]byte("proof-known-answer"))
 	c1, c2 := encryptExponentialForTest(x, 1, 31)
@@ -110,4 +149,20 @@ func assertDoesNotPanicAndReturnsFalse(t *testing.T, fn func() bool) {
 	if fn() {
 		t.Fatal("malformed input was accepted")
 	}
+}
+
+func FuzzProofVerifiersNeverPanic(f *testing.F) {
+	f.Add("", "", "", "", "", "")
+	f.Add("not-hex", "0", "-1", "01", "ffffffff", "zz")
+	f.Fuzz(func(t *testing.T, c1, c2, a1, a2, e, z string) {
+		_, pub := elgamalGenerateKeyPair([]byte("fuzz-public-key"))
+		proof := &ChaumPedersenProof{C1: c1, C2: c2, A1: a1, A2: a2, E: e, Z: z}
+		defer func() {
+			if recovered := recover(); recovered != nil {
+				t.Fatalf("proof verifier panicked: %v", recovered)
+			}
+		}()
+		_ = chaumPedersenVerify(pub, proof, "ALICE")
+		_ = chaumPedersenVerifyRaw(pub, proof, big.NewInt(1))
+	})
 }

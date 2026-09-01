@@ -325,6 +325,7 @@ const (
 	// 집계: Σm_i = c_0*B^0 + c_1*B^1 + ... (base-B 자릿수 분해로 후보별 득표수 복원)
 	// B=10000 → 후보당 최대 9999표 지원
 	HomomorphicBase = 10000
+	maxBSGSSearch   = int64(4000000000)
 )
 
 const (
@@ -1735,19 +1736,20 @@ func (c *VotingContract) tallyVotesInternal(
 			// 개별 복호화 없이 암호문을 곱셈으로 누적
 			// Π E(g^m_i) = E(g^(Σm_i)) → 한 번만 복호화
 			parts := strings.SplitN(nullifier.EncryptedCandidateID, ":", 2)
-			if len(parts) == 2 {
-				c1i, ok1 := new(big.Int).SetString(parts[0], 16)
-				c2i, ok2 := new(big.Int).SetString(parts[1], 16)
-				if ok1 && ok2 {
-					accC1.Mul(accC1, c1i)
-					accC1.Mod(accC1, elgamalP)
-					accC2.Mul(accC2, c2i)
-					accC2.Mod(accC2, elgamalP)
-					homomorphicCount++
-					totalVotes++
-				}
+			if len(parts) != 2 {
+				return nil, fmt.Errorf("ElGamal 암호문 형식 오류 (nullifier=%s)", nullifier.NullifierHash)
 			}
-			// ElGamal 모드에서 colon 없는 암호문(더미/레거시)은 동형 집계 대상 아님 → 무시
+			c1i, ok1 := parseSubgroupElement(parts[0])
+			c2i, ok2 := parseSubgroupElement(parts[1])
+			if !ok1 || !ok2 {
+				return nil, fmt.Errorf("ElGamal 암호문 군 원소 검증 실패 (nullifier=%s)", nullifier.NullifierHash)
+			}
+			accC1.Mul(accC1, c1i)
+			accC1.Mod(accC1, elgamalP)
+			accC2.Mul(accC2, c2i)
+			accC2.Mod(accC2, elgamalP)
+			homomorphicCount++
+			totalVotes++
 		} else if useAES {
 			// AES 복호화 (기존 — 개별 복호화)
 			decrypted, decErr := decryptAESGCM(encKey, nullifier.EncryptedCandidateID)
@@ -1773,6 +1775,9 @@ func (c *VotingContract) tallyVotesInternal(
 	tallyDecrypted := true
 	encAggC1, encAggC2 := "", ""
 	if aggregateElGamal && homomorphicCount > 0 && canDecryptElGamal {
+		if err := validateHomomorphicTallyCapacity(homomorphicCount, len(election.Candidates)); err != nil {
+			return nil, err
+		}
 		// g^sum = accC2 * accC1^(-x) mod p
 		gSum, decErr := expElGamalDecryptToGm(elgamalPrivKey, accC1.Text(16), accC2.Text(16))
 		if decErr != nil {
@@ -1787,9 +1792,6 @@ func (c *VotingContract) tallyVotesInternal(
 		maxSum := int64(totalVotes) + 1
 		for i := 0; i < numCands-1; i++ {
 			maxSum *= HomomorphicBase
-		}
-		if maxSum < 1 || maxSum > 4000000000 { // 안전 상한 (BSGS 테이블 ~63k 이하)
-			maxSum = 4000000000
 		}
 
 		sum, bsgsErr := babyStepGiantStep(gSum, elgamalG, elgamalP, maxSum)
@@ -4057,6 +4059,28 @@ func decomposeBaseB(sum int64, numCandidates int) []int {
 		sum /= HomomorphicBase
 	}
 	return counts
+}
+
+// validateHomomorphicTallyCapacity prevents ambiguous base-B carries and an
+// infeasible/overflowed BSGS search. The current scalar encoding is a prototype
+// limit; large elections must use a per-candidate ciphertext vector instead.
+func validateHomomorphicTallyCapacity(totalVotes, numCandidates int) error {
+	if totalVotes < 0 || numCandidates <= 0 {
+		return fmt.Errorf("동형 집계 범위 오류: votes=%d candidates=%d", totalVotes, numCandidates)
+	}
+	if totalVotes >= HomomorphicBase {
+		return fmt.Errorf("동형 집계 인코딩 용량 초과: votes=%d, candidate digit base=%d", totalVotes, HomomorphicBase)
+	}
+	bound := big.NewInt(int64(totalVotes) + 1)
+	base := big.NewInt(HomomorphicBase)
+	for i := 0; i < numCandidates-1; i++ {
+		bound.Mul(bound, base)
+	}
+	if !bound.IsInt64() || bound.Int64() > maxBSGSSearch {
+		return fmt.Errorf("BSGS 안전 상한 초과: required=%s limit=%d (votes=%d candidates=%d)",
+			bound.String(), maxBSGSSearch, totalVotes, numCandidates)
+	}
+	return nil
 }
 
 // verifyBallotValidityZKP [PAPER-13] Disjunctive Chaum-Pedersen ZKP 검증
