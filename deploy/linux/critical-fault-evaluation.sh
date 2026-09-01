@@ -27,6 +27,10 @@ wait_running() {
   return 1
 }
 
+safe_inspect() {
+  docker inspect --format '{"Id":{{json .Id}},"Name":{{json .Name}},"Image":{{json .Image}},"Created":{{json .Created}},"State":{{json .State}},"RestartCount":{{json .RestartCount}},"Resources":{"Memory":{{json .HostConfig.Memory}},"NanoCpus":{{json .HostConfig.NanoCpus}},"CpusetCpus":{{json .HostConfig.CpusetCpus}}},"Networks":{{json .NetworkSettings.Networks}}}' "$1"
+}
+
 exact_probe() {
   local label="$1"
   set +e
@@ -97,7 +101,7 @@ scenario() {
   esac
   require_available "${label}-before" "${election_id}"
   log "critical scenario ${label}: stopping ${target}"
-  docker inspect "${target}" >"${out}/${label}-before-inspect.json"
+  safe_inspect "${target}" >"${out}/${label}-before-inspect.json"
   docker stop -t 20 "${target}" >"${out}/${label}-stop.txt"
   docker ps -a --format '{{.Names}} {{.Status}}' >"${out}/${label}-during-docker-ps.txt"
   case "${check_mode}" in

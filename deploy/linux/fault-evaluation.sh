@@ -27,6 +27,10 @@ wait_running() {
   return 1
 }
 
+safe_inspect() {
+  docker inspect --format '{"Id":{{json .Id}},"Name":{{json .Name}},"Image":{{json .Image}},"Created":{{json .Created}},"State":{{json .State}},"RestartCount":{{json .RestartCount}},"Resources":{"Memory":{{json .HostConfig.Memory}},"NanoCpus":{{json .HostConfig.NanoCpus}},"CpusetCpus":{{json .HostConfig.CpusetCpus}}},"Networks":{{json .NetworkSettings.Networks}}}' "$1"
+}
+
 probe() {
   local label="$1"
   set +e
@@ -44,7 +48,7 @@ scenario() {
     *) die "target is not in non-destructive fault allowlist: ${target}" ;;
   esac
   log "scenario ${label}: stopping ${target}"
-  docker inspect "${target}" >"${out}/${label}-before-inspect.json"
+  safe_inspect "${target}" >"${out}/${label}-before-inspect.json"
   docker stop -t 20 "${target}" >"${out}/${label}-stop.txt"
   docker ps --format '{{.Names}} {{.Status}}' >"${out}/${label}-during-docker-ps.txt"
   local attempt=1 converged=0 started_at="$(date +%s)"

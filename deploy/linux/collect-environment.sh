@@ -20,7 +20,21 @@ npm --version > "${out}/npm-version.txt"
 go version > "${out}/go-version.txt"
 git -C "${MONGBAS_REPO_DIR}" rev-parse HEAD > "${out}/git-commit.txt"
 git -C "${MONGBAS_REPO_DIR}" remote -v > "${out}/git-remotes.txt"
-docker compose -f "${MONGBAS_REPO_DIR}/network/docker-compose.yaml" config > "${out}/compose-resolved.yaml"
+# Resolved topology is useful evidence, but resolved credential values are not.
+# Redact sensitive YAML/environment keys before the content ever reaches disk.
+docker compose -f "${MONGBAS_REPO_DIR}/network/docker-compose.yaml" config | awk '
+  {
+    line=$0
+    key=line
+    sub(/[:=].*$/, "", key)
+    upper=toupper(key)
+    if (upper ~ /(PASSWORD|SECRET|TOKEN|PRIVATE_KEY)/ && match(line, /[:=]/)) {
+      print substr(line, 1, RSTART) " <redacted>"
+    } else {
+      print line
+    }
+  }
+' > "${out}/compose-resolved.yaml"
 docker image inspect voting-chaincode:1.0 --format '{{json .RepoDigests}} {{.Id}}' > "${out}/chaincode-image.txt"
 ss -lntup > "${out}/ports.txt" 2>&1 || true
 if command -v ufw >/dev/null 2>&1; then
