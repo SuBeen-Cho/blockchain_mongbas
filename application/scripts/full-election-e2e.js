@@ -249,7 +249,7 @@ async function main() {
     const label = allVoterLabels[i] || `voter${i}`;
     const nr = await assertOk(`get nullifier (${label})`, requestJson(`/api/nullifier/${nullifiers[i]}`));
     if (nr.candidateID && nr.candidateID !== '') {
-      console.log(`[WARN] nullifier for ${label} has candidateID in public record: ${nr.candidateID}`);
+      throw new Error(`privacy violation: nullifier for ${label} exposes candidateID ${nr.candidateID}`);
     } else {
       console.log(`[OK] nullifier for ${label} has no plaintext candidateID`);
     }
@@ -290,10 +290,10 @@ async function main() {
     }));
     console.log(`[INFO] tally verification: verified=${verifyResult.verified}, valid=${verifyResult.validProofs}/${verifyResult.totalProofs}, tallyMatch=${verifyResult.tallyMatch}, proofHashMatch=${verifyResult.proofHashMatch}`);
     if (!verifyResult.verified) {
-      console.log('[WARN] Tally verification failed — results may have been tampered');
+      throw new Error(`tally verification failed: ${JSON.stringify(verifyResult)}`);
     }
   } else {
-    console.log('[INFO] No decryption proofs in tally (legacy mode)');
+    throw new Error('tally has no decryption proofs');
   }
 
   // ── Phase 8: Merkle Tree + Proof 검증 ──────────────────────
@@ -377,7 +377,7 @@ async function main() {
   if (normalKeys === panicKeys) {
     console.log('[OK] normal/panic proof have identical response structure (indistinguishable)');
   } else {
-    console.log(`[WARN] response structure differs: normal=${normalKeys}, panic=${panicKeys}`);
+    throw new Error(`normal/panic response structure differs: normal=${normalKeys}, panic=${panicKeys}`);
   }
 
   // ── Phase 11: Security Properties (PAPER-5) ─────────────────
@@ -645,19 +645,22 @@ async function main() {
   // 동형 집계 결과 검증: ALICE=1, BOB=1
   const homoTallyOk = egTally.results?.['ALICE'] === 1 && egTally.results?.['BOB'] === 1;
   console.log(`[INFO] Homomorphic tally verification: ${homoTallyOk ? 'PASS' : 'FAIL'}`);
+  if (!homoTallyOk) {
+    throw new Error(`homomorphic tally expected exactly {ALICE:1,BOB:1}, got ${JSON.stringify(egTally.results)}`);
+  }
 
   // 14g. ZKP 검증 (동형 집계 증명)
-  let elgamalZkpOk = false;
-  try {
-    const egZkp = await assertOk('verify ElGamal ZKP',
-      requestJson(`/api/elections/${EG_ELECTION_ID}/verify-elgamal`, { method: 'POST' })
-    );
-    console.log(`[INFO] Homomorphic tally ZKP: valid=${egZkp.isValid}, proofs=${egZkp.totalProofs}`);
-    elgamalZkpOk = egZkp.isValid;
-  } catch (e) {
-    console.log(`[WARN] ZKP verification endpoint may need update for homomorphic mode: ${e.message}`);
-    elgamalZkpOk = homoTallyOk; // 동형 집계 결과 자체로 판단
+  const egZkp = await assertOk('verify ElGamal ZKP',
+    requestJson(`/api/elections/${EG_ELECTION_ID}/verify-elgamal`, { method: 'POST' })
+  );
+  console.log(`[INFO] Homomorphic tally ZKP: valid=${egZkp.isValid}, proofs=${egZkp.totalProofs}`);
+  if (!Number.isInteger(egZkp.totalProofs) || egZkp.totalProofs < 1) {
+    throw new Error(`ElGamal verification returned no proofs: ${JSON.stringify(egZkp)}`);
   }
+  if (!egZkp.isValid) {
+    throw new Error(`ElGamal proof verification failed: ${JSON.stringify(egZkp)}`);
+  }
+  const elgamalZkpOk = true;
 
   // ── Phase 15: Deniable Credential Duality (PAPER-12) ─────
   console.log('\n── Phase 15: Deniable Credential Duality ──');
@@ -768,7 +771,7 @@ async function main() {
   const panicFilterOk = crHonestVotes >= 1 && crCoercedVotes >= 1;
   console.log(`[INFO] Panic filter: HONEST=${crHonestVotes}, COERCED=${crCoercedVotes}, filtered=${panicFilterOk}`);
   if (!panicFilterOk) {
-    console.log('[WARN] Panic vote filtering may not have worked as expected');
+    throw new Error(`panic vote filtering failed: HONEST=${crHonestVotes}, COERCED=${crCoercedVotes}`);
   }
 
   // ── 최종 요약 ──────────────────────────────────────────────

@@ -241,7 +241,7 @@ type VoteTally struct {
 	DecryptionProofs []DecryptionProof `json:"decryptionProofs,omitempty" metadata:",optional"` // 개별 투표 복호화 증명
 	// [P2] ElGamal threshold: 키 분산 후에는 종료 시 복호화하지 않고 암호문 집계만 저장.
 	//   2-of-3 조각 복원 후에 복호화되어 Results가 채워지고 Decrypted=true가 된다.
-	Decrypted bool   `json:"decrypted" metadata:",optional"`         // 결과 복호화 완료 여부
+	Decrypted bool   `json:"decrypted" metadata:",optional"`          // 결과 복호화 완료 여부
 	EncAggC1  string `json:"encAggC1,omitempty" metadata:",optional"` // 동형 집계 암호문 c1 (복호화 대기 시)
 	EncAggC2  string `json:"encAggC2,omitempty" metadata:",optional"` // 동형 집계 암호문 c2 (복호화 대기 시)
 }
@@ -1625,10 +1625,11 @@ func (c *VotingContract) TallyVotes(
 }
 
 // tallyVotesInternal [P2] 집계 핵심 로직 (내부용 — contractapi 미노출).
-//   providedKey != nil → 그 키로 복호화 (복원 직후 in-memory 키; PDC 미조회).
-//                        (같은 tx에서 PutPrivateData한 키는 GetPrivateData로 안 보이므로 직접 전달)
-//   aggregateOnly=true → 복호화 없이 암호문 집계만 (종료 시; 키 미조회).
-//   기본값             → ElGamal은 PDC에서 키 조회 후 복호화 (기존 동작).
+//
+//	providedKey != nil → 그 키로 복호화 (복원 직후 in-memory 키; PDC 미조회).
+//	                     (같은 tx에서 PutPrivateData한 키는 GetPrivateData로 안 보이므로 직접 전달)
+//	aggregateOnly=true → 복호화 없이 암호문 집계만 (종료 시; 키 미조회).
+//	기본값             → ElGamal은 PDC에서 키 조회 후 복호화 (기존 동작).
 func (c *VotingContract) tallyVotesInternal(
 	ctx contractapi.TransactionContextInterface,
 	electionID string,
@@ -2501,8 +2502,9 @@ func (c *VotingContract) InitKeySharing(
 }
 
 // doInitKeySharing [P2] 상태 체크 없이 키 분산을 수행 (CloseElection 내부 호출용).
-//   CloseElection은 같은 tx에서 방금 CLOSED로 PutState하므로 GetState로는 ACTIVE로 보임 →
-//   상태 체크를 분리하여 내부 호출 시 우회. 공개 InitKeySharing은 상태 체크 후 이 함수를 호출.
+//
+//	CloseElection은 같은 tx에서 방금 CLOSED로 PutState하므로 GetState로는 ACTIVE로 보임 →
+//	상태 체크를 분리하여 내부 호출 시 우회. 공개 InitKeySharing은 상태 체크 후 이 함수를 호출.
 func (c *VotingContract) doInitKeySharing(
 	ctx contractapi.TransactionContextInterface,
 	electionID string,
@@ -3006,7 +3008,7 @@ func (c *VotingContract) VerifyElGamalProofs(
 		"resultsMatch":    resultsMatch,
 		"recount":         recount,
 		"originalResults": tally.Results,
-		"isValid":         failed == 0 && resultsMatch,
+		"isValid":         len(tally.DecryptionProofs) > 0 && verified > 0 && failed == 0 && resultsMatch,
 	}
 
 	resultJSON, _ := json.Marshal(result)
@@ -3365,7 +3367,7 @@ func (c *VotingContract) VerifyTallyPublic(
 
 	result := &PublicVerificationResult{
 		ElectionID:         electionID,
-		IsValid:            resultsMatch && proofHashMatch && shuffleVerified && failed == 0,
+		IsValid:            len(bb.DecryptionProofs) > 0 && verified > 0 && resultsMatch && proofHashMatch && shuffleVerified && failed == 0,
 		RecomputedResults:  recomputed,
 		OriginalResults:    bb.TallyResults,
 		ResultsMatch:       resultsMatch,
@@ -3845,18 +3847,50 @@ func chaumPedersenProveRaw(x *big.Int, c1Hex, c2Hex, mHex, nullifierHash, electi
 	return proof, nil
 }
 
+func parseNonzeroFieldElement(encoded string) (*big.Int, bool) {
+	v, ok := new(big.Int).SetString(encoded, 16)
+	if !ok || v.Sign() <= 0 || v.Cmp(elgamalP) >= 0 {
+		return nil, false
+	}
+	return v, true
+}
+
+func parseSubgroupElement(encoded string) (*big.Int, bool) {
+	v, ok := parseNonzeroFieldElement(encoded)
+	if !ok || v.Cmp(big.NewInt(1)) == 0 {
+		return nil, false
+	}
+	if new(big.Int).Exp(v, elgamalQ, elgamalP).Cmp(big.NewInt(1)) != 0 {
+		return nil, false
+	}
+	return v, true
+}
+
+func parseScalar(encoded string) (*big.Int, bool) {
+	v, ok := new(big.Int).SetString(encoded, 16)
+	if !ok || v.Sign() < 0 || v.Cmp(elgamalQ) >= 0 {
+		return nil, false
+	}
+	return v, true
+}
+
 // chaumPedersenVerify Chaum-Pedersen ZKP 검증 (누구나 공개키로 검증 가능)
 // 검증: g^z == a1 * y^e mod p AND c1^z == a2 * s^e mod p
 func chaumPedersenVerify(pubKey *ElGamalPublicKey, proof *ChaumPedersenProof, decryptedPlaintext string) bool {
-	p, _ := new(big.Int).SetString(pubKey.P, 16)
-	g, _ := new(big.Int).SetString(pubKey.G, 16)
-	y, _ := new(big.Int).SetString(pubKey.Y, 16)
-	c1, _ := new(big.Int).SetString(proof.C1, 16)
-	c2, _ := new(big.Int).SetString(proof.C2, 16)
-	a1, _ := new(big.Int).SetString(proof.A1, 16)
-	a2, _ := new(big.Int).SetString(proof.A2, 16)
-	e, _ := new(big.Int).SetString(proof.E, 16)
-	z, _ := new(big.Int).SetString(proof.Z, 16)
+	if pubKey == nil || proof == nil || pubKey.P != elgamalP.Text(16) || pubKey.G != elgamalG.Text(16) {
+		return false
+	}
+	p, g := elgamalP, elgamalG
+	y, okY := parseSubgroupElement(pubKey.Y)
+	c1, okC1 := parseSubgroupElement(proof.C1)
+	c2, okC2 := parseNonzeroFieldElement(proof.C2)
+	a1, okA1 := parseSubgroupElement(proof.A1)
+	a2, okA2 := parseSubgroupElement(proof.A2)
+	e, okE := parseScalar(proof.E)
+	z, okZ := parseScalar(proof.Z)
+	if !(okY && okC1 && okC2 && okA1 && okA2 && okE && okZ) {
+		return false
+	}
 
 	// m = encode(decryptedPlaintext)
 	m := elgamalEncodePlaintext(decryptedPlaintext)
@@ -3885,15 +3919,20 @@ func chaumPedersenVerify(pubKey *ElGamalPublicKey, proof *ChaumPedersenProof, de
 // chaumPedersenVerifyRaw [PAPER-13] Chaum-Pedersen ZKP 검증 (raw BigInt 평문)
 // 동형 집계용: m = g^sum (elgamalEncodePlaintext 호출 불가)
 func chaumPedersenVerifyRaw(pubKey *ElGamalPublicKey, proof *ChaumPedersenProof, m *big.Int) bool {
-	p, _ := new(big.Int).SetString(pubKey.P, 16)
-	g, _ := new(big.Int).SetString(pubKey.G, 16)
-	y, _ := new(big.Int).SetString(pubKey.Y, 16)
-	c1, _ := new(big.Int).SetString(proof.C1, 16)
-	c2, _ := new(big.Int).SetString(proof.C2, 16)
-	a1, _ := new(big.Int).SetString(proof.A1, 16)
-	a2, _ := new(big.Int).SetString(proof.A2, 16)
-	e, _ := new(big.Int).SetString(proof.E, 16)
-	z, _ := new(big.Int).SetString(proof.Z, 16)
+	if pubKey == nil || proof == nil || m == nil || pubKey.P != elgamalP.Text(16) || pubKey.G != elgamalG.Text(16) {
+		return false
+	}
+	p, g := elgamalP, elgamalG
+	y, okY := parseSubgroupElement(pubKey.Y)
+	c1, okC1 := parseSubgroupElement(proof.C1)
+	c2, okC2 := parseNonzeroFieldElement(proof.C2)
+	a1, okA1 := parseSubgroupElement(proof.A1)
+	a2, okA2 := parseSubgroupElement(proof.A2)
+	e, okE := parseScalar(proof.E)
+	z, okZ := parseScalar(proof.Z)
+	if !(okY && okC1 && okC2 && okA1 && okA2 && okE && okZ) || m.Sign() <= 0 || m.Cmp(p) >= 0 {
+		return false
+	}
 
 	// s = c2 * m^(-1) mod p
 	mInv := new(big.Int).ModInverse(m, p)
@@ -4024,25 +4063,30 @@ func decomposeBaseB(sum int64, numCandidates int) []int {
 // 투표 암호문 (c1, c2)가 {g^(B^0), g^(B^1), ..., g^(B^(k-1))} 중 하나를 암호화했음을 검증
 // Cramer-Damgård-Schoenmakers (1994) OR-proof
 func verifyBallotValidityZKP(pubKey *ElGamalPublicKey, c1Hex, c2Hex string, numCandidates int, proof *BallotValidityProof) bool {
-	if proof == nil || len(proof.A1s) != numCandidates || len(proof.A2s) != numCandidates ||
+	if pubKey == nil || pubKey.P != elgamalP.Text(16) || pubKey.G != elgamalG.Text(16) ||
+		numCandidates <= 0 || proof == nil || len(proof.A1s) != numCandidates || len(proof.A2s) != numCandidates ||
 		len(proof.Es) != numCandidates || len(proof.Zs) != numCandidates {
 		return false
 	}
 
-	p, _ := new(big.Int).SetString(pubKey.P, 16)
-	g, _ := new(big.Int).SetString(pubKey.G, 16)
-	y, _ := new(big.Int).SetString(pubKey.Y, 16)
-	c1, _ := new(big.Int).SetString(c1Hex, 16)
-	c2, _ := new(big.Int).SetString(c2Hex, 16)
-	q := new(big.Int).Rsh(new(big.Int).Sub(p, big.NewInt(1)), 1)
+	p, g, q := elgamalP, elgamalG, elgamalQ
+	y, okY := parseSubgroupElement(pubKey.Y)
+	c1, okC1 := parseSubgroupElement(c1Hex)
+	c2, okC2 := parseNonzeroFieldElement(c2Hex)
+	if !(okY && okC1 && okC2) {
+		return false
+	}
 
 	// 각 후보 j에 대해 검증
 	eSum := big.NewInt(0)
 	for j := 0; j < numCandidates; j++ {
-		a1j, _ := new(big.Int).SetString(proof.A1s[j], 16)
-		a2j, _ := new(big.Int).SetString(proof.A2s[j], 16)
-		ej, _ := new(big.Int).SetString(proof.Es[j], 16)
-		zj, _ := new(big.Int).SetString(proof.Zs[j], 16)
+		a1j, okA1 := parseSubgroupElement(proof.A1s[j])
+		a2j, okA2 := parseSubgroupElement(proof.A2s[j])
+		ej, okE := parseScalar(proof.Es[j])
+		zj, okZ := parseScalar(proof.Zs[j])
+		if !(okA1 && okA2 && okE && okZ) {
+			return false
+		}
 
 		// 후보 j의 메시지: g^(B^j) mod p
 		mj := expElGamalEncodeCandidate(j)
