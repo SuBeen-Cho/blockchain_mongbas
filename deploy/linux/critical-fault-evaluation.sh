@@ -59,8 +59,38 @@ expect_unavailable() {
   fi
 }
 
+observe_reads() {
+  local label="$1" election_id="$2" attempt http_status curl_status
+  for attempt in 1 2 3; do
+    set +e
+    http_status="$(curl --silent --show-error --max-time 40 --output "${out}/${label}-read-${attempt}-body.txt" --write-out '%{http_code}' \
+      "http://127.0.0.1:3000/api/elections/${election_id}" 2>"${out}/${label}-read-${attempt}-curl.stderr.log")"
+    curl_status=$?
+    set -e
+    printf 'curlStatus=%s\nhttpStatus=%s\n' "${curl_status}" "${http_status}" >"${out}/${label}-read-${attempt}-result.txt"
+    [ "${attempt}" -eq 3 ] || sleep 5
+  done
+}
+
+expect_write_unavailable() {
+  local label="$1" election_id="critical-write-${run_id}" started_at http_status curl_status payload
+  payload="{\"electionID\":\"${election_id}\",\"title\":\"Critical fault write probe\",\"candidates\":[\"A\",\"B\"],\"startTime\":$(date +%s),\"endTime\":$(( $(date +%s) + 1800 )),\"encryptionMode\":\"elgamal-vector-v3\"}"
+  started_at="$(date +%s)"
+  set +e
+  http_status="$(printf 'Authorization: Bearer %s\n' "${ADMIN_API_TOKEN}" | \
+    curl --header @- --silent --show-error --max-time 90 --request POST --header 'Content-Type: application/json' \
+      --data-binary "${payload}" --output "${out}/${label}-write-body.txt" --write-out '%{http_code}' \
+      'http://127.0.0.1:3000/api/elections' 2>"${out}/${label}-write-curl.stderr.log")"
+  curl_status=$?
+  set -e
+  printf 'curlStatus=%s\nhttpStatus=%s\nelapsedSeconds=%s\n' "${curl_status}" "${http_status}" "$(( $(date +%s) - started_at ))" >"${out}/${label}-write-result.txt"
+  if [ "${curl_status}" -eq 0 ] && [[ "${http_status}" =~ ^2 ]]; then
+    die "${label}: state-changing request succeeded while primary CouchDB was stopped"
+  fi
+}
+
 scenario() {
-  local label="$1" target="$2" election_id="$3" dependent="${4:-}"
+  local label="$1" target="$2" election_id="$3" check_mode="$4" dependent="${5:-}"
   case "${target}" in
     peer0.ec.voting.example.com|couchdb-ec0|voting-chaincode) ;;
     *) die "target is not in critical fault allowlist: ${target}" ;;
@@ -70,7 +100,14 @@ scenario() {
   docker inspect "${target}" >"${out}/${label}-before-inspect.json"
   docker stop -t 20 "${target}" >"${out}/${label}-stop.txt"
   docker ps -a --format '{{.Names}} {{.Status}}' >"${out}/${label}-during-docker-ps.txt"
-  expect_unavailable "${label}-during" "${election_id}"
+  case "${check_mode}" in
+    unavailable) expect_unavailable "${label}-during" "${election_id}" ;;
+    couchdb)
+      observe_reads "${label}-during" "${election_id}"
+      expect_write_unavailable "${label}-during"
+      ;;
+    *) die "unknown critical-path check mode: ${check_mode}" ;;
+  esac
   docker start "${target}" >"${out}/${label}-start.txt"
   wait_running "${target}" || die "${label}: ${target} did not return to running"
   if [ -n "${dependent}" ]; then
@@ -90,9 +127,9 @@ git -C "${MONGBAS_REPO_DIR}" rev-parse HEAD >"${out}/git-commit.txt"
 exact_probe baseline || die "baseline exact probe failed"
 probe_election_id="$(node -e "const fs=require('fs'); const value=JSON.parse(fs.readFileSync(process.argv[1], 'utf8')).electionID; if (!/^[A-Za-z0-9._-]+$/.test(value)) process.exit(1); process.stdout.write(value)" "${out}/baseline.json")"
 [ -n "${probe_election_id}" ] || die "baseline did not produce an availability election ID"
-scenario gateway-peer-stop peer0.ec.voting.example.com "${probe_election_id}"
-scenario primary-couchdb-stop couchdb-ec0 "${probe_election_id}" peer0.ec.voting.example.com
-scenario chaincode-service-stop voting-chaincode "${probe_election_id}"
+scenario gateway-peer-stop peer0.ec.voting.example.com "${probe_election_id}" unavailable
+scenario primary-couchdb-stop couchdb-ec0 "${probe_election_id}" couchdb peer0.ec.voting.example.com
+scenario chaincode-service-stop voting-chaincode "${probe_election_id}" unavailable
 exact_probe final || die "final exact probe failed"
 
 find "${out}" -type f ! -name sha256-inventory.txt -print0 | sort -z | xargs -0 sha256sum >"${out}/sha256-inventory.txt"
