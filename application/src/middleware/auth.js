@@ -286,7 +286,8 @@ async function requireVoterAuth(req, res, next) {
     req.voter = voter;
     next();
   } catch (err) {
-    res.status(500).json({ error: `인증 처리 오류: ${err.message}` });
+    console.error('[auth] credential verification error:', err.message);
+    res.status(500).json({ error: '인증 처리 중 오류가 발생했습니다.' });
   }
 }
 
