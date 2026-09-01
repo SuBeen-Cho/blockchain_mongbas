@@ -8,6 +8,24 @@ npm test
 node bin/mongbas-verify.js path/to/canonical-election-bundle.json
 ```
 
+An independently controlled observer can verify a signed bundle and append a
+signed, hash-chained checkpoint without contacting Fabric or the backend:
+
+```bash
+node bin/mongbas-witness.js observe election-bundle.signed.json checkpoints.jsonl mac-observer /secure/witness-ed25519.pem
+node bin/mongbas-witness.js verify checkpoints.jsonl witness-trust.json
+```
+
+The trust document pins witness identities to Ed25519 public keys:
+
+```json
+{"schema":"mongbas-witness-trust/v1","witnesses":[{"id":"mac-observer","ed25519PublicKeyDer":"<base64-spki>"}]}
+```
+
+Checkpoint JSONL is canonical, signed and hash-chained. A changed, inserted or
+reordered observed checkpoint is rejected. The witness private key stays on the
+observer machine.
+
 To build and sign an exported source without sending private keys to the server:
 
 ```bash
@@ -48,8 +66,11 @@ per-organization secret storage and administration, and independently controlled
 bundle-signing keys.
 
 The signed Merkle root detects changes to the exported ballot sequence, but the
-current single-host deployment has no external bulletin-board witness or public
-checkpoint. A valid bundle therefore proves consistency of the signed export,
-not that an operator never withheld a ballot before the signers approved it.
+repository now contains an independent checkpoint witness, but a same-host test
+does not establish operational independence. A valid final bundle/checkpoint
+also cannot prove that an operator withheld no ballot before the witness first
+observed it. Deployment therefore needs a separately controlled Mac/host that
+polls or receives periodic roots during the election, publishes its latest
+checkpoint out of band, and retains the pinned witness key/log.
 
 The verifier intentionally does not call `GetSecurityProperties` and does not accept a server-provided `isValid` flag as evidence.

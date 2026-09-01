@@ -7,7 +7,8 @@
   "bin": {
     "mongbas-verify": "bin/mongbas-verify.js",
     "mongbas-bundle": "bin/mongbas-bundle.js",
-    "mongbas-tamper-corpus": "bin/mongbas-tamper-corpus.js"
+    "mongbas-tamper-corpus": "bin/mongbas-tamper-corpus.js",
+    "mongbas-witness": "bin/mongbas-witness.js"
   },
   "scripts": {
     "test": "node --test"

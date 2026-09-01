@@ -12,6 +12,7 @@ const {
   canonicalize, merkleRoot, modInverse, modPow, sha256Hex, unsignedBundle, verifyBundle, verifyBundleBytes,
 } = require('../src/verify');
 const { buildUnsignedBundle, signBundle } = require('../src/bundle');
+const { TRUST_SCHEMA, checkpointHash, createCheckpoint, parseCanonicalLog, publicKeyDer, verifyCheckpointLog } = require('../src/witness');
 const { generateVectorBallot } = require('../../application/src/lib/vectorElgamal');
 
 function scalar(label) {
@@ -393,6 +394,68 @@ test('tamper-corpus CLI emits 15 independently rejected canonical bundles', () =
       const result = verifyBundleBytes(fs.readFileSync(path.join(output, entry.filename)));
       assert.equal(result.valid, false, `${entry.name} unexpectedly verified`);
     }
+  } finally {
+    fs.rmSync(temporary, { recursive: true, force: true });
+  }
+});
+
+test('independent witness creates a signed append-only checkpoint chain', () => {
+  const bundle = buildBundle();
+  const verification = verifyBundle(bundle);
+  const witness = crypto.generateKeyPairSync('ed25519');
+  const privateKeyPem = witness.privateKey.export({ format: 'pem', type: 'pkcs8' });
+  const trust = { schema: TRUST_SCHEMA, witnesses: [{ id: 'mac-observer', ed25519PublicKeyDer: publicKeyDer(privateKeyPem) }] };
+  const first = createCheckpoint({ bundle, verification, witnessID: 'mac-observer', privateKeyPem, sequence: 1,
+    observedAt: '2026-09-02T00:00:00.000Z' });
+  const second = createCheckpoint({ bundle, verification, witnessID: 'mac-observer', privateKeyPem, sequence: 2,
+    previousCheckpointHash: checkpointHash(first), observedAt: '2026-09-02T00:01:00.000Z' });
+  const result = verifyCheckpointLog([first, second], trust);
+  assert.equal(result.valid, true);
+  assert.equal(result.checkpoints, 2);
+  assert.equal(result.latestCheckpointHash, checkpointHash(second));
+});
+
+test('witness rejects checkpoint mutation, broken hash chain and untrusted key', () => {
+  const bundle = buildBundle(), verification = verifyBundle(bundle);
+  const signer = crypto.generateKeyPairSync('ed25519'), other = crypto.generateKeyPairSync('ed25519');
+  const privateKeyPem = signer.privateKey.export({ format: 'pem', type: 'pkcs8' });
+  const trust = { schema: TRUST_SCHEMA, witnesses: [{ id: 'observer', ed25519PublicKeyDer: publicKeyDer(privateKeyPem) }] };
+  const first = createCheckpoint({ bundle, verification, witnessID: 'observer', privateKeyPem, sequence: 1 });
+  const changed = structuredClone(first); changed.ballotCount += 1;
+  assert.throws(() => verifyCheckpointLog([changed], trust), /invalid signature/);
+  const wrongChain = createCheckpoint({ bundle, verification, witnessID: 'observer', privateKeyPem, sequence: 2,
+    previousCheckpointHash: '00'.repeat(32) });
+  assert.throws(() => verifyCheckpointLog([first, wrongChain], trust), /hash chain/);
+  const untrusted = { schema: TRUST_SCHEMA, witnesses: [{ id: 'observer', ed25519PublicKeyDer: other.publicKey.export({ format: 'der', type: 'spki' }).toString('base64') }] };
+  assert.throws(() => verifyCheckpointLog([first], untrusted), /untrusted witness key/);
+});
+
+test('witness log parser requires one canonical checkpoint per line', () => {
+  const bundle = buildBundle(), verification = verifyBundle(bundle), signer = crypto.generateKeyPairSync('ed25519');
+  const checkpoint = createCheckpoint({ bundle, verification, witnessID: 'observer',
+    privateKeyPem: signer.privateKey.export({ format: 'pem', type: 'pkcs8' }), sequence: 1 });
+  assert.deepEqual(parseCanonicalLog(`${canonicalize(checkpoint)}\n`), [checkpoint]);
+  assert.throws(() => parseCanonicalLog(`${JSON.stringify(checkpoint, null, 2)}\n`), /empty lines|invalid JSON|non-canonical/);
+});
+
+test('witness CLI observes and independently verifies a bundle', () => {
+  const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'mongbas-witness-'));
+  try {
+    const bundlePath = path.join(temporary, 'bundle.json');
+    const keyPath = path.join(temporary, 'witness.pem');
+    const logPath = path.join(temporary, 'checkpoints.jsonl');
+    const trustPath = path.join(temporary, 'trust.json');
+    const signer = crypto.generateKeyPairSync('ed25519');
+    const privateKeyPem = signer.privateKey.export({ format: 'pem', type: 'pkcs8' });
+    fs.writeFileSync(bundlePath, canonicalize(buildBundle()));
+    fs.writeFileSync(keyPath, privateKeyPem, { mode: 0o600 });
+    fs.writeFileSync(trustPath, JSON.stringify({ schema: TRUST_SCHEMA, witnesses: [{ id: 'mac-observer', ed25519PublicKeyDer: publicKeyDer(privateKeyPem) }] }));
+    const cli = path.join(__dirname, '../bin/mongbas-witness.js');
+    const observed = spawnSync(process.execPath, [cli, 'observe', bundlePath, logPath, 'mac-observer', keyPath], { encoding: 'utf8' });
+    assert.equal(observed.status, 0, observed.stderr);
+    const verified = spawnSync(process.execPath, [cli, 'verify', logPath, trustPath], { encoding: 'utf8' });
+    assert.equal(verified.status, 0, verified.stderr);
+    assert.match(verified.stdout, /VALID: 1 witnessed checkpoint/);
   } finally {
     fs.rmSync(temporary, { recursive: true, force: true });
   }
