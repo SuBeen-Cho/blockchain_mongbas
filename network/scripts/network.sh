@@ -174,14 +174,15 @@ join_orderers() {
 
   for PORT in 7053 7153 7253 7353; do
     info "  오더러 admin:${PORT} 채널 참여..."
-    osnadmin channel join \
+    JOIN_OUTPUT=$(osnadmin channel join \
       --channelID "${CHANNEL_NAME}" \
       --config-block "${GENESIS}" \
       -o "localhost:${PORT}" \
       --ca-file   "${ORDERER_ADMIN_CA}" \
       --client-cert "${ADMIN_TLS_CERT}" \
       --client-key  "${ADMIN_TLS_KEY}" \
-      2>&1 | grep -E "Status|error|channel" || true
+      2>&1)
+    printf '%s\n' "${JOIN_OUTPUT}" | grep -E "Status|error|channel" || printf '%s\n' "${JOIN_OUTPUT}"
   done
 
   info "오더러 채널 참여 완료. 합의 형성 대기 (5초)..."
@@ -449,10 +450,28 @@ cmd_test() {
   # ── Nullifier 확인 (이중투표 방지) ──────────────────────────
   step "[테스트 3/4] Nullifier 확인 (이중투표 방지)..."
   use_ec0
-  peer chaincode query \
+  NULLIFIER_RESULT=$(peer chaincode query \
     --channelID "${CHANNEL_NAME}" \
     --name "${CHAINCODE_NAME}" \
-    --ctor "{\"function\":\"GetNullifier\",\"Args\":[\"${NULLIFIER_HASH}\"]}"
+    --ctor "{\"function\":\"GetNullifier\",\"Args\":[\"${NULLIFIER_HASH}\"]}")
+  python3 - "${NULLIFIER_HASH}" "${ELECTION_ID}" "${NULLIFIER_RESULT}" <<'PY'
+import json
+import sys
+
+expected_nullifier, expected_election, raw = sys.argv[1:]
+try:
+    record = json.loads(raw)
+except json.JSONDecodeError as exc:
+    raise SystemExit(f"Nullifier query did not return JSON: {exc}: {raw!r}")
+if record.get("docType") != "nullifier":
+    raise SystemExit(f"unexpected docType: {record.get('docType')!r}")
+if record.get("nullifierHash") != expected_nullifier:
+    raise SystemExit("ledger nullifierHash mismatch")
+if record.get("electionID") != expected_election:
+    raise SystemExit("ledger electionID mismatch")
+if record.get("evictCount") != 0:
+    raise SystemExit(f"first vote evictCount must be 0, got {record.get('evictCount')!r}")
+PY
 
   # ── 재투표(Eviction) 확인 — 같은 Nullifier로 후보 변경 ────────
   # 설계: 동일 Nullifier 재사용 시 기존 투표를 덮어쓰고 evictCount 증가
@@ -464,7 +483,7 @@ cmd_test() {
     "${ELECTION_ID}" "${CANDIDATE_ID_B}" "${NULLIFIER_HASH}")
   PRIVATE_DATA_B=$(echo -n "${PRIVATE_JSON_B}" | base64 | tr -d '\n')
 
-  if peer chaincode invoke \
+  peer chaincode invoke \
     --channelID "${CHANNEL_NAME}" \
     --name "${CHAINCODE_NAME}" \
     --ctor "{\"function\":\"CastVote\",\"Args\":[\"${ELECTION_ID}\",\"${CANDIDATE_ID_B}\",\"${NULLIFIER_HASH}\"]}" \
@@ -474,18 +493,29 @@ cmd_test() {
     --orderer localhost:7050 \
     --peerAddresses "${EC0_ADDR}"   --tlsRootCertFiles "${EC0_TLS}" \
     --peerAddresses "${PARTY_ADDR}" --tlsRootCertFiles "${PARTY_TLS}" \
-    --waitForEvent 2>&1 | grep -q "evict\|완료\|status:200\|Chaincode invoke successful"; then
-    info "  재투표(Eviction) 정상 처리 확인"
-  else
-    info "  재투표(Eviction) 처리됨 (evictCount 증가)"
-  fi
+    --waitForEvent
 
   # Nullifier evictCount 확인
   use_ec0
   NULLIFIER_RESULT=$(peer chaincode query \
     --channelID "${CHANNEL_NAME}" \
     --name "${CHAINCODE_NAME}" \
-    --ctor "{\"function\":\"GetNullifier\",\"Args\":[\"${NULLIFIER_HASH}\"]}" 2>/dev/null || echo "{}")
+    --ctor "{\"function\":\"GetNullifier\",\"Args\":[\"${NULLIFIER_HASH}\"]}")
+  python3 - "${NULLIFIER_HASH}" "${ELECTION_ID}" "${NULLIFIER_RESULT}" <<'PY'
+import json
+import sys
+
+expected_nullifier, expected_election, raw = sys.argv[1:]
+try:
+    record = json.loads(raw)
+except json.JSONDecodeError as exc:
+    raise SystemExit(f"final Nullifier query did not return JSON: {exc}: {raw!r}")
+if record.get("nullifierHash") != expected_nullifier or record.get("electionID") != expected_election:
+    raise SystemExit("final ledger record identity mismatch")
+if record.get("evictCount") != 1:
+    raise SystemExit(f"revote evictCount must be 1, got {record.get('evictCount')!r}")
+PY
+  info "  재투표(Eviction) 정상 처리 확인"
   info "  최종 Nullifier 상태: ${NULLIFIER_RESULT}"
 
   echo ""
