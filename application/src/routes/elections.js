@@ -316,7 +316,8 @@ router.post('/:id/close', async (req, res) => {
   const { gateway, contract } = await connectGateway();
   try {
     await contract.submitTransaction('CloseElection', id);
-    res.json({ message: `선거 ${id}가 종료되었습니다. 집계가 시작됩니다.` });
+    await contract.submitTransaction('AggregateClosedElection', id);
+    res.json({ message: `선거 ${id}가 종료되었습니다. 암호문 집계가 완료되었습니다.` });
   } catch (err) {
     console.error('[elections] CloseElection error:', err.message);
     res.status(500).json({ error: sanitizeError(err) });

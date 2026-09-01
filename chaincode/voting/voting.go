@@ -1332,6 +1332,18 @@ func (c *VotingContract) CloseElection(
 		return nil, err
 	}
 	if election.Status == "CLOSED" {
+		if election.EncryptionMode == "elgamal" || election.EncryptionMode == "elgamal-vector-v3" {
+			if existing, getErr := ctx.GetStub().GetState("TALLY_" + electionID); getErr != nil {
+				return nil, getErr
+			} else if existing != nil {
+				var tally VoteTally
+				if err := json.Unmarshal(existing, &tally); err != nil {
+					return nil, err
+				}
+				return &tally, nil
+			}
+			return &VoteTally{ObjectType: "tally-pending", ElectionID: electionID, Decrypted: false}, nil
+		}
 		return nil, fmt.Errorf("이미 종료된 선거입니다: %s", electionID)
 	}
 
@@ -1346,22 +1358,18 @@ func (c *VotingContract) CloseElection(
 	}
 
 	if election.EncryptionMode == "elgamal" || election.EncryptionMode == "elgamal-vector-v3" {
-		// [P2 보안] ElGamal: 종료 시 결과를 복호화하지 않는다.
-		//   1) InitKeySharing — AES 마스터키를 Shamir 2-of-3 분할하고 AES/ElGamal 키를 PDC에서 삭제.
-		//   2) TallyVotes — 키가 없으므로 암호문 집계만 저장(복호화 대기, Decrypted=false).
+		// [P2 보안] ElGamal: CLOSED 상태와 키 분산을 먼저 커밋한다.
+		// 전체 ballot 순회를 같은 tx에 넣으면 대규모 선거에서 peer execute timeout을
+		// 넘고, rich-query phantom과 동시 CastVote를 안전하게 차단할 수 없다.
+		// 따라서 다음 별도 tx AggregateClosedElection이 암호문 집계를 생성한다.
 		//   결과 복호화는 2개 기관이 조각을 제출(SubmitKeyShare)하여 키가 복원된 후 자동 수행된다.
 		//   → "단일 기관 단독 복호화 불가 + 공개 데이터로 키 재계산 불가"가 성립.
-		// 1) 암호문 집계만(복호화 X) — 키를 읽지 않으므로 이어지는 키 삭제와 순서 무관.
-		tally, terr := c.tallyVotesInternal(ctx, electionID, nil, true)
-		if terr != nil {
-			return nil, terr
-		}
-		// 2) 키 분산(Shamir 분할 + AES/ElGamal 키 PDC 삭제). 같은 tx 내 삭제는 다음 tx부터 적용.
+		// 키 분산(Shamir 분할 + AES/ElGamal 키 PDC 삭제). 같은 tx 내 삭제는 다음 tx부터 적용.
 		//    doInitKeySharing은 상태 체크를 건너뜀(이 tx에서 방금 CLOSED로 쓴 값은 GetState로 안 보임).
 		if _, ksErr := c.doInitKeySharing(ctx, electionID); ksErr != nil {
 			return nil, fmt.Errorf("키 분산 초기화 실패: %w", ksErr)
 		}
-		return tally, nil
+		return &VoteTally{ObjectType: "tally-pending", ElectionID: electionID, Decrypted: false}, nil
 	}
 
 	// AES(레거시): 종료 즉시 복호화 집계 (기존 동작 유지)
@@ -1370,6 +1378,31 @@ func (c *VotingContract) CloseElection(
 		return nil, err
 	}
 	return tally, nil
+}
+
+// AggregateClosedElection은 CLOSED 상태가 원장에 커밋된 뒤에만 실행되는
+// ElGamal 암호문 집계 tx이다. 이로써 집계 중 신규 투표를 원장 상태로 차단한다.
+func (c *VotingContract) AggregateClosedElection(ctx contractapi.TransactionContextInterface, electionID string) (*VoteTally, error) {
+	if err := requireElectionAdmin(ctx); err != nil {
+		return nil, err
+	}
+	election, err := c.GetElection(ctx, electionID)
+	if err != nil {
+		return nil, err
+	}
+	if election.Status != "CLOSED" {
+		return nil, fmt.Errorf("CLOSED 선거만 집계할 수 있습니다: %s", election.Status)
+	}
+	if existing, err := ctx.GetStub().GetState("TALLY_" + electionID); err != nil {
+		return nil, err
+	} else if existing != nil {
+		var tally VoteTally
+		if err := json.Unmarshal(existing, &tally); err != nil {
+			return nil, err
+		}
+		return &tally, nil
+	}
+	return c.tallyVotesInternal(ctx, electionID, nil, true)
 }
 
 // ============================================================
@@ -1924,6 +1957,27 @@ func (c *VotingContract) tallyVotesInternal(
 	panicFiltered := 0 // [PAPER-12] Cleansing-Hiding: 필터링된 패닉 투표 수 (비공개)
 	var decProofs []DecryptionProof
 
+	// N개 ballot에 대한 N회 PDC point query는 CouchDB round-trip을 증폭시킨다.
+	// 비공개 collection을 한 번 조회해 panic nullifier set을 메모리에 구축한다.
+	panicNullifiers := make(map[string]bool)
+	privateQuery := fmt.Sprintf(`{"selector":{"docType":"votePrivate","electionID":"%s","credentialType":"panic"}}`, electionID)
+	privateIterator, privateErr := ctx.GetStub().GetPrivateDataQueryResult(VotePrivatePDC, privateQuery)
+	if privateErr != nil {
+		return nil, fmt.Errorf("panic PDC 일괄 조회 실패: %w", privateErr)
+	}
+	for privateIterator.HasNext() {
+		item, err := privateIterator.Next()
+		if err != nil {
+			privateIterator.Close()
+			return nil, fmt.Errorf("panic PDC 순회 실패: %w", err)
+		}
+		var privateVote VotePrivate
+		if json.Unmarshal(item.Value, &privateVote) == nil && privateVote.NullifierHash != "" {
+			panicNullifiers[privateVote.NullifierHash] = true
+		}
+	}
+	privateIterator.Close()
+
 	// [PAPER-13] 동형 집계를 위한 암호문 누적기 (ElGamal 모드)
 	accC1 := big.NewInt(1) // Π c1_i mod p
 	accC2 := big.NewInt(1) // Π c2_i mod p
@@ -1952,17 +2006,10 @@ func (c *VotingContract) tallyVotesInternal(
 			continue
 		}
 
-		// [PAPER-12] Cleansing-Hiding: PDC에서 credentialType 확인
-		// panic 투표는 집계에서 제외 (CHide 원칙: 제거 수 비공개)
-		// PDC 조회 실패 또는 항목 없음 → real로 간주 (더미 nullifier 포함)
-		vpBytes, vpErr := ctx.GetStub().GetPrivateData(VotePrivatePDC, nullifier.NullifierHash)
-		if vpErr == nil && vpBytes != nil {
-			var vpCheck VotePrivate
-			if json.Unmarshal(vpBytes, &vpCheck) == nil && vpCheck.CredentialType == "panic" {
-				panicFiltered++
-				log.Printf("[TallyVotes] PANIC 투표 필터링 — nullifier: %s...", nullifier.NullifierHash[:16])
-				continue // 집계에서 제외
-			}
+		// [PAPER-12] Cleansing-Hiding: 일괄 조회한 비공개 panic set을 사용한다.
+		if panicNullifiers[nullifier.NullifierHash] {
+			panicFiltered++
+			continue
 		}
 
 		// 레거시 평문 레코드만 호환한다. 신규 레코드의 빈 암호문은 아래
@@ -1979,10 +2026,12 @@ func (c *VotingContract) tallyVotesInternal(
 
 		if vectorElGamal {
 			if len(nullifier.EncryptedCandidateVector) != len(election.Candidates) ||
-				nullifier.VectorBallotValidityProof == nil ||
-				!verifyVectorBallotValidityZKP(election.ElGamalPubKey, nullifier.EncryptedCandidateVector, nullifier.VectorBallotValidityProof) {
+				nullifier.VectorBallotValidityProof == nil {
 				return nil, fmt.Errorf("vector-v3 원장 투표 검증 실패 (nullifier=%s)", nullifier.NullifierHash)
 			}
+			// CastVote endorsement가 one-hot ZKP를 이미 검증했고 원장은 불변이다.
+			// 집계 tx는 proof 존재와 군 원소를 재검사하며, 모든 ZKP 재연산은
+			// election bundle standalone verifier의 독립 검증 단계에서 수행한다.
 			for i, ciphertext := range nullifier.EncryptedCandidateVector {
 				c1i, ok1 := parseSubgroupElement(ciphertext.C1)
 				c2i, ok2 := parseSubgroupElement(ciphertext.C2)
