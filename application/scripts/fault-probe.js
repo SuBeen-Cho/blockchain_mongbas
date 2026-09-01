@@ -4,7 +4,7 @@
 const crypto = require('crypto');
 const http = require('http');
 const path = require('path');
-require('dotenv').config({ path: path.join(__dirname, '../.env') });
+require('dotenv').config({ path: path.join(__dirname, '../.env'), quiet: true });
 const { generateVectorBallot } = require('../src/lib/vectorElgamal');
 
 const BASE = process.env.MONGBAS_PROBE_URL || 'http://127.0.0.1:3000';
