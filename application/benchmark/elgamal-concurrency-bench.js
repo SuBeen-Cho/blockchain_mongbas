@@ -77,13 +77,16 @@ const post = (p, b, h = {}, t) => rawRequest('POST', p, b, h, t);
 function sha256Hex(input) { return crypto.createHash('sha256').update(input).digest('hex'); }
 
 function stats(values) {
-  if (!values.length) return { n: 0, avg: 0, min: 0, p50: 0, p95: 0, p99: 0, max: 0 };
+  if (!values.length) return { n: 0, avg: 0, stddev: 0, min: 0, p50: 0, p95: 0, p99: 0, max: 0 };
   const sorted = values.slice().sort((a, b) => a - b);
   const n = sorted.length;
+  const mean = sorted.reduce((a, b) => a + b, 0) / n;
+  const variance = sorted.reduce((sum, value) => sum + (value - mean) ** 2, 0) / n;
   const p = pct => sorted[Math.max(0, Math.ceil((pct / 100) * n) - 1)];
   return {
     n,
-    avg: +(sorted.reduce((a, b) => a + b, 0) / n).toFixed(1),
+    avg: +mean.toFixed(1),
+    stddev: +Math.sqrt(variance).toFixed(2),
     min: +sorted[0].toFixed(1),
     p50: +p(50).toFixed(1),
     p95: +p(95).toFixed(1),
