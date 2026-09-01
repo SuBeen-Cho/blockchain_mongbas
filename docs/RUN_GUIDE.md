@@ -8,7 +8,7 @@
 | 도구 | 용도 | 확인 |
 |---|---|---|
 | **Docker Desktop** | 블록체인(피어·오더러·CouchDB)이 Docker로 동작 — **반드시 실행 중** | `docker ps` |
-| **Node.js 18+** / npm | 백엔드·프론트엔드 | `node --version` |
+| **Node.js 22.12+** / npm | 백엔드·프론트엔드 (`puppeteer-core@25` 요구사항) | `node --version` |
 | **Go 1.21+** | 체인코드(스마트컨트랙트) 빌드 | `go version` |
 | **cloudflared** | 공개 터널 (`brew install cloudflared`) | `cloudflared --version` |
 
@@ -24,9 +24,9 @@ cd blockchain_mongbas/mongbas
 # mongbas/ 폴더에서 실행
 curl -sSL https://raw.githubusercontent.com/hyperledger/fabric/main/scripts/install-fabric.sh \
   | bash -s -- --fabric-version 2.5.9 binary
-ls fabric-samples/bin/cryptogen      # 설치 확인 (cryptogen·configtxgen·peer·orderer)
+ls bin/cryptogen      # 설치 확인 (cryptogen·configtxgen·peer·orderer)
 ```
-> `peer lifecycle` 명령이 실패하면 `fabric-samples/bin`이 `$PATH`에 포함됐는지 확인.
+> 최신 설치 스크립트는 `bin/`, `config/`, `builders/`를 프로젝트 루트에 생성한다. 기존 `fabric-samples/bin` 구조도 실행 스크립트에서 하위 호환으로 지원한다.
 
 ### 0-4. 의존성 설치 + 환경변수
 ```bash
@@ -37,6 +37,8 @@ cd ..
 
 > ⏱️ **첫 네트워크 기동 시 Docker 이미지 다운로드로 5~10분** 걸릴 수 있습니다(이후엔 빠름).
 > 이후 `demo-up.sh`가 네트워크가 안 떠 있으면 자동으로 `up + deploy`까지 수행합니다.
+
+Linux에서는 실제 secret과 실행 결과를 저장소 밖(예: `~/mongbas-runtime/`)에 두고 `application/.env`는 외부 secret 파일을 가리키는 심볼릭 링크로 구성하는 것을 권장한다.
 
 ---
 

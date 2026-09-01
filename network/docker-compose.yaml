@@ -15,8 +15,6 @@
 #   couchdb-ec0 5984 | couchdb-ec1 5985 | couchdb-party 6984 | couchdb-civil 7984
 ################################################################################
 
-version: '3.8'
-
 networks:
   voting-net:
     name: voting-net
@@ -572,6 +570,8 @@ services:
   voting-chaincode:
     container_name: voting-chaincode
     image: voting-chaincode:1.0
+    build:
+      context: ../chaincode/voting
     pull_policy: never
     environment:
       - CHAINCODE_SERVER_ADDRESS=0.0.0.0:7052

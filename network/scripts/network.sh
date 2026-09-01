@@ -21,8 +21,15 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 NETWORK_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 PROJECT_DIR="$(cd "$NETWORK_DIR/.." && pwd)"
 
-# Fabric 바이너리 경로 (PROJECT_DIR 기준 상대 경로)
-FABRIC_BIN="${PROJECT_DIR}/fabric-samples/bin"
+# 최신 install-fabric.sh는 프로젝트 루트의 bin/config에 압축을 해제한다.
+# 기존 Mac 환경의 fabric-samples 경로도 하위 호환으로 지원한다.
+if [ -d "${PROJECT_DIR}/bin" ]; then
+  FABRIC_BIN="${PROJECT_DIR}/bin"
+  PEER_CFG_PATH="${PROJECT_DIR}/config"
+else
+  FABRIC_BIN="${PROJECT_DIR}/fabric-samples/bin"
+  PEER_CFG_PATH="${PROJECT_DIR}/fabric-samples/config"
+fi
 export PATH="${FABRIC_BIN}:${PATH}"
 
 CHANNEL_NAME="voting-channel"
@@ -31,7 +38,6 @@ CHAINCODE_VERSION="1.0"
 CHAINCODE_PATH="${PROJECT_DIR}/chaincode/voting"
 CHAINCODE_LABEL="${CHAINCODE_NAME}_${CHAINCODE_VERSION}"
 FABRIC_CFG_PATH="${NETWORK_DIR}"
-PEER_CFG_PATH="${PROJECT_DIR}/fabric-samples/config"
 
 CRYPTO="${NETWORK_DIR}/crypto-config"
 

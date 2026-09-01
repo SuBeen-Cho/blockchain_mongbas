@@ -1,5 +1,8 @@
 # Hyperledger Fabric 바이너리 및 샘플 (280MB, 별도 설치)
 fabric-samples/
+/bin/
+/builders/
+/config/
 
 # ── 인증서 / 개인키 (절대 커밋 금지) ──────────────────────────
 crypto-config.zip
