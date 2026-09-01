@@ -1342,7 +1342,7 @@ func (c *VotingContract) CloseElection(
 				}
 				return &tally, nil
 			}
-			return &VoteTally{ObjectType: "tally-pending", ElectionID: electionID, Decrypted: false}, nil
+			return &VoteTally{ObjectType: "tally-pending", ElectionID: electionID, Results: map[string]int{}, Decrypted: false}, nil
 		}
 		return nil, fmt.Errorf("이미 종료된 선거입니다: %s", electionID)
 	}
@@ -1369,7 +1369,7 @@ func (c *VotingContract) CloseElection(
 		if _, ksErr := c.doInitKeySharing(ctx, electionID); ksErr != nil {
 			return nil, fmt.Errorf("키 분산 초기화 실패: %w", ksErr)
 		}
-		return &VoteTally{ObjectType: "tally-pending", ElectionID: electionID, Decrypted: false}, nil
+		return &VoteTally{ObjectType: "tally-pending", ElectionID: electionID, Results: map[string]int{}, Decrypted: false}, nil
 	}
 
 	// AES(레거시): 종료 즉시 복호화 집계 (기존 동작 유지)
