@@ -262,11 +262,13 @@ async function castPreparedVote(prepared, index = prepared.index) {
   const committed = await post('/api/vote/prepare-vector', prepared.prepareBody, prepared.headers, 180000);
   if (committed.status < 200 || committed.status >= 300 || !committed.body?.ballotID) {
     return { index, ok: false, status: committed.status, ms: Number(process.hrtime.bigint() - started) / 1e6,
+      prepareCommitted: false, castAttempted: false, castCommitted: false,
       error: committed.body?.error || 'prepare-vector failed' };
   }
   const cast = await post('/api/vote/cast-vector', { ...prepared.castBody, ballotID: committed.body.ballotID }, prepared.headers, 180000);
   const ok = cast.status >= 200 && cast.status < 300;
   return { index, ok, status: cast.status, ms: Number(process.hrtime.bigint() - started) / 1e6,
+    prepareCommitted: true, castAttempted: true, castCommitted: ok,
     prepareMs: committed.ms, castMs: cast.ms, error: ok ? null : (cast.body?.error || 'cast-vector failed') };
 }
 

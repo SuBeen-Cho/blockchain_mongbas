@@ -84,7 +84,8 @@ async function submitAtFixedRate(batch, rate) {
     maximumInFlight = Math.max(maximumInFlight, active.size);
   }
   await Promise.all(active);
-  return { results, maximumInFlight, origin };
+  const finished = process.hrtime.bigint();
+  return { results, maximumInFlight, origin, elapsedMs: Number(finished - origin) / 1e6 };
 }
 
 async function runRate(rate, repetition) {
@@ -94,6 +95,7 @@ async function runRate(rate, repetition) {
   const all = [];
   const tallies = [];
   const snapshots = [];
+  let measuredSubmissionMs = 0;
   let maxInFlight = 0;
 
   for (let batchIndex = 0; batchIndex < batchSizes.length; batchIndex += 1) {
@@ -102,6 +104,7 @@ async function runRate(rate, repetition) {
     const batch = await prepareBatch(`rate-${rate}-rep-${repetition}-batch-${batchIndex + 1}`, count);
     snapshots.push({ phase: 'before', batch: batchIndex + 1, value: systemSnapshot() });
     const submitted = await submitAtFixedRate(batch, rate);
+    measuredSubmissionMs += submitted.elapsedMs;
     maxInFlight = Math.max(maxInFlight, submitted.maximumInFlight);
     all.push(...submitted.results);
     snapshots.push({ phase: 'after', batch: batchIndex + 1, value: systemSnapshot() });
@@ -122,6 +125,10 @@ async function runRate(rate, repetition) {
     const key = `${failure.status}:${String(failure.error || '').slice(0, 160)}`;
     errors[key] = (errors[key] || 0) + 1;
   }
+  const fabricTransactionsAttempted = all.reduce((sum, item) => sum + 1 + Number(item.castAttempted === true), 0);
+  const fabricTransactionsCommitted = all.reduce((sum, item) =>
+    sum + Number(item.prepareCommitted === true) + Number(item.castCommitted === true), 0);
+  const measuredSubmissionSec = measuredSubmissionMs / 1000;
   return {
     offeredRate: rate,
     repetition,
@@ -130,7 +137,17 @@ async function runRate(rate, repetition) {
     committed: successes.length,
     failed: failures.length,
     failureRate: +(100 * failures.length / all.length).toFixed(4),
+    transactionAccounting: {
+      transactionsPerCommittedVoterOperation: 2,
+      fabricTransactionsAttempted,
+      fabricTransactionsCommitted,
+      measuredSubmissionSec: +measuredSubmissionSec.toFixed(6),
+      committedVoterOperationsPerSec: +(successes.length / measuredSubmissionSec).toFixed(6),
+      committedFabricTransactionsPerSec: +(fabricTransactionsCommitted / measuredSubmissionSec).toFixed(6),
+    },
     latencyMs: stats(successes.map(item => item.ms)),
+    prepareCommitLatencyMs: stats(successes.map(item => item.prepareMs)),
+    castCommitLatencyMs: stats(successes.map(item => item.castMs)),
     schedulerLagMs: stats(all.map(item => Math.max(0, item.scheduleLagMs))),
     maxInFlight,
     errors,
@@ -154,10 +171,12 @@ async function main() {
     }
   }
   const output = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     scenario: 'vector-v3-fixed-offered-rate',
     createdAt: new Date().toISOString(),
-    config: { rates: RATES, durationSec: DURATION_SEC, repeats: REPEATS, maxInFlight: MAX_IN_FLIGHT, credentialMode: health.body.idemix, setupExcluded: true },
+    config: { rates: RATES, durationSec: DURATION_SEC, repeats: REPEATS, maxInFlight: MAX_IN_FLIGHT,
+      credentialMode: health.body.idemix, setupExcluded: true, voterOperation: 'prepare-vector commit + cast-vector commit',
+      fabricTransactionsPerSuccessfulVoterOperation: 2 },
     rounds,
   };
   fs.mkdirSync(path.dirname(OUT), { recursive: true });

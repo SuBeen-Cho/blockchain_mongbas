@@ -4,7 +4,7 @@
 const fs = require('fs');
 
 function summarize(report) {
-  if (!report || report.schemaVersion !== 1 || report.scenario !== 'vector-v3-fixed-offered-rate') {
+  if (!report || report.schemaVersion !== 2 || report.scenario !== 'vector-v3-fixed-offered-rate') {
     throw new Error('unsupported fixed-rate report schema');
   }
   if (!Array.isArray(report.rounds) || report.rounds.length === 0) throw new Error('fixed-rate report has no rounds');
@@ -20,20 +20,38 @@ function summarize(report) {
       if (!Number.isFinite(round.latencyMs?.[field])) throw new Error(`round ${index}: invalid latency ${field}`);
     }
     if (round.latencyMs.n !== round.committed) throw new Error(`round ${index}: latency sample count mismatch`);
+    const accounting = round.transactionAccounting;
+    if (accounting?.transactionsPerCommittedVoterOperation !== 2 ||
+        accounting?.fabricTransactionsAttempted !== round.attempted * 2 ||
+        accounting?.fabricTransactionsCommitted !== round.committed * 2 ||
+        !Number.isFinite(accounting?.measuredSubmissionSec) || accounting.measuredSubmissionSec <= 0 ||
+        !Number.isFinite(accounting?.committedVoterOperationsPerSec) ||
+        !Number.isFinite(accounting?.committedFabricTransactionsPerSec)) {
+      throw new Error(`round ${index}: invalid two-transaction voter-operation accounting`);
+    }
+    for (const metric of ['prepareCommitLatencyMs', 'castCommitLatencyMs']) {
+      for (const field of ['n', 'avg', 'p50', 'p95', 'p99', 'max']) {
+        if (!Number.isFinite(round[metric]?.[field])) throw new Error(`round ${index}: invalid ${metric} ${field}`);
+      }
+      if (round[metric].n !== round.committed) throw new Error(`round ${index}: ${metric} sample count mismatch`);
+    }
     return {
       offeredRate: round.offeredRate,
       repetition: round.repetition,
       attempted: round.attempted,
       committed: round.committed,
       failed: round.failed,
+      transactionAccounting: accounting,
       latencyMs: round.latencyMs,
+      prepareCommitLatencyMs: round.prepareCommitLatencyMs,
+      castCommitLatencyMs: round.castCommitLatencyMs,
       schedulerLagMs: round.schedulerLagMs,
       maxInFlight: round.maxInFlight,
       electionCount: round.tallies.length,
     };
   });
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     sourceScenario: report.scenario,
     createdAt: new Date().toISOString(),
     strict: true,
@@ -42,6 +60,8 @@ function summarize(report) {
       attempted: rounds.reduce((sum, round) => sum + round.attempted, 0),
       committed: rounds.reduce((sum, round) => sum + round.committed, 0),
       failed: rounds.reduce((sum, round) => sum + round.failed, 0),
+      fabricTransactionsAttempted: rounds.reduce((sum, round) => sum + round.transactionAccounting.fabricTransactionsAttempted, 0),
+      fabricTransactionsCommitted: rounds.reduce((sum, round) => sum + round.transactionAccounting.fabricTransactionsCommitted, 0),
       elections: rounds.reduce((sum, round) => sum + round.electionCount, 0),
     },
     rounds,
