@@ -23,6 +23,69 @@ const ALGORITHM = 'mongbas-exp-elgamal-scalar-v1';
 const THRESHOLD_ALGORITHM = 'mongbas-exp-elgamal-threshold-v2';
 const VECTOR_THRESHOLD_ALGORITHM = 'mongbas-exp-elgamal-vector-threshold-v3';
 
+function requireExactKeys(value, expected, label) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error(`${label}: expected object`);
+  const actual = Object.keys(value).sort();
+  const wanted = expected.slice().sort();
+  if (actual.length !== wanted.length || actual.some((key, index) => key !== wanted[index])) {
+    throw new Error(`${label}: unexpected or missing fields`);
+  }
+}
+
+function requireCanonicalBase64(value, label) {
+  if (typeof value !== 'string' || value.length === 0 || !/^[A-Za-z0-9+/]+={0,2}$/.test(value) ||
+      Buffer.from(value, 'base64').toString('base64') !== value) throw new Error(`${label}: invalid canonical base64`);
+  return Buffer.from(value, 'base64');
+}
+
+function validateBundleEnvelope(bundle, schema, tallyAlgorithm, topLevelKeys, { vector = false } = {}) {
+  requireExactKeys(bundle, topLevelKeys, 'bundle');
+  if (bundle.schema !== schema) throw new Error('schema identifier mismatch');
+  requireExactKeys(bundle.algorithms, ['canonicalization', 'hash', 'signature', 'tally'], 'algorithms');
+  if (bundle.algorithms.canonicalization !== 'mongbas-canonical-json-v1' || bundle.algorithms.hash !== 'sha-256' ||
+      bundle.algorithms.signature !== 'ed25519' || bundle.algorithms.tally !== tallyAlgorithm) {
+    throw new Error('algorithm suite mismatch or downgrade');
+  }
+
+  requireExactKeys(bundle.configuration, ['electionID', 'candidates', 'signatureThreshold', 'organizations'], 'configuration');
+  if (!/^[A-Za-z0-9_.-]{1,256}$/.test(bundle.configuration.electionID)) throw new Error('configuration.electionID invalid');
+  const candidates = bundle.configuration.candidates;
+  if (!Array.isArray(candidates) || candidates.length < 2 || candidates.some(candidate => typeof candidate !== 'string' || candidate.length === 0) ||
+      new Set(candidates).size !== candidates.length) throw new Error('configuration.candidates invalid');
+  const organizations = bundle.configuration.organizations;
+  if (!Array.isArray(organizations) || organizations.length === 0) throw new Error('configuration.organizations invalid');
+  const organizationIDs = new Set();
+  for (const [index, organization] of organizations.entries()) {
+    requireExactKeys(organization, ['id', 'ed25519PublicKeyDer'], `organization[${index}]`);
+    if (typeof organization.id !== 'string' || organization.id.length === 0 || organizationIDs.has(organization.id)) throw new Error('duplicate or invalid organization id');
+    organizationIDs.add(organization.id);
+    const publicKey = crypto.createPublicKey({ key: requireCanonicalBase64(organization.ed25519PublicKeyDer, `organization[${index}].ed25519PublicKeyDer`), format: 'der', type: 'spki' });
+    if (publicKey.asymmetricKeyType !== 'ed25519') throw new Error(`organization[${index}] key is not Ed25519`);
+  }
+  if (!Number.isSafeInteger(bundle.configuration.signatureThreshold) || bundle.configuration.signatureThreshold < 1 ||
+      bundle.configuration.signatureThreshold > organizationIDs.size) throw new Error('configuration.signatureThreshold invalid');
+
+  requireExactKeys(bundle.provenance, ['gitCommit', 'imageDigest', 'softwareVersion'], 'provenance');
+  if (!/^[0-9a-f]{40}$/.test(bundle.provenance.gitCommit) || !/^sha256:[0-9a-f]{64}$/.test(bundle.provenance.imageDigest) ||
+      typeof bundle.provenance.softwareVersion !== 'string' || bundle.provenance.softwareVersion.length === 0) throw new Error('provenance invalid');
+  requireExactKeys(bundle.publicKey, ['p', 'g', 'y'], 'publicKey');
+  requireExactKeys(bundle.bulletinBoard, ['root', 'publishedAt'], 'bulletinBoard');
+  if (!/^[0-9a-f]{64}$/.test(bundle.bulletinBoard.root) || !Number.isSafeInteger(bundle.bulletinBoard.publishedAt) || bundle.bulletinBoard.publishedAt < 0) throw new Error('bulletinBoard invalid');
+  requireExactKeys(bundle.tally, ['results', 'totalVotes'], 'tally');
+  requireExactKeys(bundle.tally.results, candidates, 'tally.results');
+  if (!Number.isSafeInteger(bundle.tally.totalVotes) || bundle.tally.totalVotes < 1) throw new Error('tally.totalVotes invalid');
+  for (const candidate of candidates) {
+    const count = bundle.tally.results[candidate];
+    if (!Number.isSafeInteger(count) || count < 0 || (!vector && count >= Number(HOMOMORPHIC_BASE))) throw new Error(`tally result invalid for ${candidate}`);
+  }
+  if (!Array.isArray(bundle.signatures)) throw new Error('signatures invalid');
+  bundle.signatures.forEach((signature, index) => {
+    requireExactKeys(signature, ['organizationID', 'signature'], `signature[${index}]`);
+    if (typeof signature.organizationID !== 'string' || signature.organizationID.length === 0) throw new Error(`signature[${index}].organizationID invalid`);
+    requireCanonicalBase64(signature.signature, `signature[${index}].signature`);
+  });
+}
+
 function sha256Hex(value) {
   return crypto.createHash('sha256').update(value).digest('hex');
 }
@@ -333,6 +396,9 @@ function verifySignatures(bundle, payloadBytes) {
 function verifyVectorBundle(bundle) {
   const errors = [];
   const check = (label, fn) => { try { return fn(); } catch (error) { errors.push(`${label}: ${error.message}`); return undefined; } };
+  check('bundle envelope', () => validateBundleEnvelope(bundle, 'mongbas-election-bundle/v3', VECTOR_THRESHOLD_ALGORITHM,
+    ['schema', 'algorithms', 'configuration', 'provenance', 'publicKey', 'trusteePublicShares', 'ballots', 'bulletinBoard',
+      'aggregateCiphertextVector', 'tally', 'vectorPartialDecryptions', 'signatures'], { vector: true }));
   if (bundle?.algorithms?.tally !== VECTOR_THRESHOLD_ALGORITHM) errors.push('algorithms.tally: vector-v3 required (downgrade rejected)');
   const candidates = bundle?.configuration?.candidates;
   if (!Array.isArray(candidates) || candidates.length < 2 || new Set(candidates).size !== candidates.length) errors.push('configuration.candidates: invalid');
@@ -367,7 +433,7 @@ function verifyVectorBundle(bundle) {
     bundleHash: sha256Hex(canonicalize(bundle)), electionID: bundle?.configuration?.electionID, ballots: ballots?.length ?? 0, validSignatures };
 }
 
-function verifyBundle(bundle) {
+function verifyBundleUnchecked(bundle) {
 	if (bundle?.schema === 'mongbas-election-bundle/v3') return verifyVectorBundle(bundle);
   const errors = [];
   let validSignatures = 0;
@@ -375,6 +441,12 @@ function verifyBundle(bundle) {
     try { return fn(); } catch (error) { errors.push(`${label}: ${error.message}`); return undefined; }
   };
   const thresholdV2 = bundle?.schema === 'mongbas-election-bundle/v2';
+  check('bundle envelope', () => validateBundleEnvelope(bundle,
+    thresholdV2 ? 'mongbas-election-bundle/v2' : 'mongbas-election-bundle/v1',
+    thresholdV2 ? THRESHOLD_ALGORITHM : ALGORITHM,
+    thresholdV2
+      ? ['schema', 'algorithms', 'configuration', 'provenance', 'publicKey', 'trusteePublicShares', 'ballots', 'bulletinBoard', 'aggregateCiphertext', 'tally', 'partialDecryptions', 'signatures']
+      : ['schema', 'algorithms', 'configuration', 'provenance', 'publicKey', 'ballots', 'bulletinBoard', 'aggregateCiphertext', 'tally', 'decryptionProof', 'signatures']));
   if (!thresholdV2 && bundle?.schema !== 'mongbas-election-bundle/v1') errors.push('schema: unsupported bundle schema');
   if (bundle?.algorithms?.tally !== (thresholdV2 ? THRESHOLD_ALGORITHM : ALGORITHM)) errors.push('algorithms.tally: unsupported or downgraded algorithm');
   const candidates = bundle?.configuration?.candidates;
@@ -426,6 +498,15 @@ function verifyBundle(bundle) {
     ballots: ballots?.length ?? 0,
     validSignatures,
   };
+}
+
+function verifyBundle(bundle) {
+  try {
+    return verifyBundleUnchecked(bundle);
+  } catch (error) {
+    return { valid: false, summary: 'bundle structure verification failed', errors: [error.message],
+      bundleHash: undefined, electionID: bundle?.configuration?.electionID, ballots: Array.isArray(bundle?.ballots) ? bundle.ballots.length : 0, validSignatures: 0 };
+  }
 }
 
 function verifyBundleBytes(bytes) {

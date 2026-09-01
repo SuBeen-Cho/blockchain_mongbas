@@ -196,6 +196,33 @@ test('rejects non-canonical JSON bytes', () => {
   assert.match(result.summary, /not canonical/);
 });
 
+const envelopeMutations = {
+  'canonicalization downgrade': (bundle) => { bundle.algorithms.canonicalization = 'json'; },
+  'hash downgrade': (bundle) => { bundle.algorithms.hash = 'sha-1'; },
+  'signature downgrade': (bundle) => { bundle.algorithms.signature = 'none'; },
+  'unexpected top-level field': (bundle) => { bundle.serverVerified = true; },
+  'invalid provenance': (bundle) => { bundle.provenance.gitCommit = 'unknown'; },
+  'duplicate organization id': (bundle) => { bundle.configuration.organizations[1].id = bundle.configuration.organizations[0].id; },
+  'unexpected tally result': (bundle) => { bundle.tally.results.EXTRA = 0; },
+};
+
+for (const [name, mutate] of Object.entries(envelopeMutations)) {
+  test(`rejects signed-envelope inconsistency: ${name}`, () => {
+    const bundle = buildBundle();
+    mutate(bundle);
+    const result = verifyBundle(bundle);
+    assert.equal(result.valid, false, `${name} unexpectedly verified`);
+    assert.match(result.errors.join('\n'), /bundle envelope/);
+  });
+}
+
+test('malformed bundle objects return an invalid result instead of throwing', () => {
+  for (const value of [null, {}, { schema: 'mongbas-election-bundle/v3' }, { schema: 'unknown', configuration: null }]) {
+    assert.doesNotThrow(() => verifyBundle(value));
+    assert.equal(verifyBundle(value).valid, false);
+  }
+});
+
 test('builds and independently signs an exported live-source shape', () => {
   const fixture = buildBundle();
   const signer1 = crypto.generateKeyPairSync('ed25519');

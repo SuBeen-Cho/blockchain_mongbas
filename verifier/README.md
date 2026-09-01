@@ -37,14 +37,19 @@ The process exits `0` only when every implemented check passes, `1` for an inval
 - threshold of distinct Ed25519 organization signatures over the complete unsigned canonical bundle;
 - downgrade, deletion, replacement, reordering, duplication and proof/signature mutation tests.
 
-## Current protocol limitation
+## Current protocol limitations
 
-Bundle v2 removes complete-private-key reconstruction and verifies 2-of-3
-partial decryptions. Key generation is still dealer-assisted and trustee secret
-shares currently reside in a shared Fabric private-data collection, so this is
-not a DKG-backed production threshold deployment. The mixed-radix scalar tally
-also remains capped below 10,000 votes per candidate. A production-oriented v3
-should use DKG, per-organization secret storage, and per-candidate ciphertext
-vectors.
+Bundle v3 verifies one-hot vector ballots and 2-of-3, per-candidate threshold
+decryptions without reconstructing the complete election private key. This does
+not yet make the deployment institutionally independent: key generation remains
+dealer-assisted, and trustee secret shares currently reside in a shared Fabric
+private-data collection. Production deployment still requires auditable DKG,
+per-organization secret storage and administration, and independently controlled
+bundle-signing keys.
+
+The signed Merkle root detects changes to the exported ballot sequence, but the
+current single-host deployment has no external bulletin-board witness or public
+checkpoint. A valid bundle therefore proves consistency of the signed export,
+not that an operator never withheld a ballot before the signers approved it.
 
 The verifier intentionally does not call `GetSecurityProperties` and does not accept a server-provided `isValid` flag as evidence.
