@@ -9,6 +9,7 @@ import http from 'http';
 const PORT = 3000;
 const elections = {};
 const votes = {};
+const preparedVectors = {};
 let voteCounter = 0;
 
 function json(res, data, status = 200) {
@@ -73,13 +74,13 @@ const server = http.createServer(async (req, res) => {
   // Security properties (must be before getElMatch to avoid matching as election ID)
   if (url === '/api/elections/security-properties') {
     return json(res, {
-      ballotSecrecy: { status: 'ACHIEVED', mechanism: 'DDH assumption in ElGamal / AES-256-GCM', assumption: 'DDH' },
-      castAsIntended: { status: 'ACHIEVED', mechanism: 'Benaloh Challenge — client-side audit', assumption: 'none' },
-      recordedAsCast: { status: 'ACHIEVED', mechanism: 'Merkle proof inclusion', assumption: 'collision-resistant hash' },
-      talliedAsRecorded: { status: 'ACHIEVED', mechanism: 'Homomorphic ZKP (ElGamal) / DecryptionProof (AES)', assumption: 'DDH / CPA-secure AES' },
-      universalVerifiability: { status: 'ACHIEVED', mechanism: 'Bulletin Board + key publication / ZKP', assumption: 'none' },
-      eligibilityVerifiability: { status: 'ACHIEVED', mechanism: 'HMAC/Ed25519 chaincode verification', assumption: 'none' },
-      coercionResistance: { status: 'ACHIEVED', mechanism: 'Panic Credential + Re-voting + Receipt-Free', assumption: 'untappable channel (PDC)' },
+      ballotSecrecy: { status: 'UNVERIFIED', mechanism: 'Mock server stores request data in memory', assumption: 'not a security evaluation' },
+      castAsIntended: { status: 'PROTOTYPE_ONLY', mechanism: 'Mock state transition only', assumption: 'no cryptographic verification' },
+      recordedAsCast: { status: 'PROTOTYPE_ONLY', mechanism: 'Mock receipt only', assumption: 'no Fabric ledger' },
+      talliedAsRecorded: { status: 'UNVERIFIED', mechanism: 'Mock plaintext counter', assumption: 'no threshold proof' },
+      universalVerifiability: { status: 'PROTOTYPE_ONLY', mechanism: 'Mock response; no independent evidence', assumption: 'not a security evaluation' },
+      eligibilityVerifiability: { status: 'PROTOTYPE_ONLY', mechanism: 'Mock response; no credential validation', assumption: 'not a security evaluation' },
+      coercionResistance: { status: 'UNVERIFIED', mechanism: 'UI demonstration only', assumption: 'mock server provides no coercion guarantee' },
     });
   }
 
@@ -97,7 +98,7 @@ const server = http.createServer(async (req, res) => {
 
   // ElGamal pubkey
   const egMatch = url.match(/^\/api\/elections\/(.+?)\/elgamal-pubkey$/);
-  if (egMatch) return json(res, { pubKey: { p: '23', g: '5', y: '8' } });
+  if (egMatch) return json(res, { pubKey: { p: '17', g: '2', y: '8' } });
 
   // Blinding factor
   const bfMatch = url.match(/^\/api\/elections\/(.+?)\/blinding-factor$/);
@@ -110,6 +111,24 @@ const server = http.createServer(async (req, res) => {
     if (!votes[id]) votes[id] = [];
     votes[id].push({ ...body, voteIndex: ++voteCounter });
     return json(res, { message: '투표가 성공적으로 제출되었습니다', txID: 'mock-tx-' + voteCounter });
+  }
+
+  if (url === '/api/vote/prepare-vector' && method === 'POST') {
+    const body = await parseBody(req);
+    const ballotID = `mock-vector-${Date.now()}-${++voteCounter}`;
+    preparedVectors[ballotID] = { ...body, status: 'prepared' };
+    return json(res, { schema: 'mock-vector-receipt/v1', ballotID, electionID: body.electionID, status: 'prepared' });
+  }
+
+  if (url === '/api/vote/cast-vector' && method === 'POST') {
+    const body = await parseBody(req);
+    const prepared = preparedVectors[body.ballotID];
+    if (!prepared || prepared.status !== 'prepared') return json(res, { error: 'prepared vector ballot not found' }, 409);
+    prepared.status = 'cast';
+    const id = body.electionID;
+    if (!votes[id]) votes[id] = [];
+    votes[id].push({ ...body, voteIndex: ++voteCounter });
+    return json(res, { message: '투표가 성공적으로 제출되었습니다', ballotID: body.ballotID, txID: `mock-tx-${voteCounter}` });
   }
 
   // Vote prepare (Benaloh)
