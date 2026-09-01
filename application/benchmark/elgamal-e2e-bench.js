@@ -518,6 +518,15 @@ async function main() {
   fs.mkdirSync(path.dirname(OUT), { recursive: true });
   fs.writeFileSync(OUT, JSON.stringify(report, null, 2));
   console.log(`\n결과 저장: ${OUT}`);
+
+  // A benchmark with rejected/failed ballots is evidence of a failed run,
+  // even when the tally of the subset that reached the ledger is exact.
+  // Keep the report on disk for diagnosis, but never let automation mistake
+  // a partial run for a successful performance result.
+  if (successCount !== N) {
+    console.error(`[FAIL] ${N - successCount}/${N} measured ballots failed; report retained for diagnosis`);
+    process.exitCode = 1;
+  }
 }
 
 main().catch(err => {
