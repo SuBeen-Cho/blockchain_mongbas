@@ -44,7 +44,7 @@
 | **다조직 합의 (2-of-3)** | 3개 MSP의 2-of-3 보증 정책 구현. 기본 Docker 배포는 단일 호스트 에뮬레이션이며 기관 독립성 증거가 아님 |
 | **Exponential ElGamal 동형 집계** | 개별 ballot 평문을 열지 않고 후보별 암호문을 집계하고 threshold partial proof로 검증 |
 | **Chaum-Pedersen ZKP** | 이접적 OR-증명(CDS'94)으로 투표 유효성을 후보 선택 노출 없이 증명 |
-| **Benaloh Challenge** | 투표 제출 전 암호화 정확성을 유권자가 독립적으로 검증 (Cast-as-Intended) |
+| **Benaloh Challenge** | AES 준비 ballot의 audit/spoil 상태를 commit하고 브라우저 재검증. 실제 vector-v3 cast와 동일 암호 경로로 통합하는 작업은 진행 중 |
 | **Shamir Secret Sharing (2-of-3)** | 개표 키를 3개 기관에 분산 — 단일 관리자 없이 합의 기반 집계 |
 | **부인 가능 검증 (Deniable Verification)** | 정상/패닉 응답 구조를 맞추는 실험 기능. 강압자 비구별성은 아직 공격 평가 중 |
 | **Merkle Tree 검증** | 투표 포함/배제를 암호학적으로 증명 (E2E Verifiability) |

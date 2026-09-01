@@ -30,6 +30,7 @@ const express = require('express');
 const crypto  = require('crypto');
 const { connectGateway } = require('../gateway');
 const { fabricConcurrencyGate } = require('../lib/fabricConcurrencyGate');
+const { submitTransactionAndWait } = require('../lib/submitTransaction');
 const liveCount = require('../lib/liveCount');  // [부스 시연] 라이브 투표 카운터
 const demoLive  = require('../lib/demoLive');   // [부스 시연] 라이브 암호문 표 + 셔플 + 이벤트 버스
 
@@ -230,7 +231,7 @@ router.post('/prepare', async (req, res) => {
 
   const { gateway, contract } = await connectGateway();
   try {
-    const result = await contract.submitTransaction('PrepareBallot', electionID, candidateID);
+    const result = await submitTransactionAndWait(contract, 'PrepareBallot', [electionID, candidateID]);
     const ballot = JSON.parse(Buffer.from(result).toString('utf8'));
     res.json(ballot);
   } catch (err) {
@@ -253,7 +254,9 @@ router.post('/audit', async (req, res) => {
 
   const { gateway, contract } = await connectGateway();
   try {
-    const result = await contract.evaluateTransaction('AuditBallot', electionID, ballotID);
+    // AuditBallot changes the PDC state from prepared to audited. An evaluate
+    // proposal is simulation-only and would silently discard that state change.
+    const result = await submitTransactionAndWait(contract, 'AuditBallot', [electionID, ballotID]);
     const auditResult = JSON.parse(Buffer.from(result).toString('utf8'));
     res.json(auditResult);
   } catch (err) {
