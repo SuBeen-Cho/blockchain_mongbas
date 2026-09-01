@@ -199,6 +199,24 @@ async function main() {
     nullifiers.push(nh);
   }
 
+  // 동일 유권자/선거 credential을 재발급해도 material과 nullifier가 같고,
+  // 새 표가 아니라 Last-Vote-Wins 재투표로 처리되어야 한다.
+  const reissued = await assertOk('reissue credential (voter1)', requestJson('/api/credential/idemix', {
+    method: 'POST',
+    body: JSON.stringify({ enrollmentID: voters[0].id, enrollmentSecret: voters[0].secret, electionID: ELECTION_ID }),
+  }));
+  if (reissued.nullifierMaterial !== credentialMaterials[0]) {
+    throw new Error('credential reissuance changed election nullifier material');
+  }
+  const revote = await assertOk('reissued credential maps to revote', requestJson('/api/vote', {
+    method: 'POST',
+    headers: { 'x-idemix-credential': reissued.credential },
+    body: JSON.stringify({ electionID: ELECTION_ID, candidateID: voters[0].candidate, nullifierHash: nullifiers[0] }),
+  }));
+  if (!revote.isRevote || revote.evictCount < 1) {
+    throw new Error(`reissued credential created a new vote instead of a revote: ${JSON.stringify(revote)}`);
+  }
+
   // [PAPER-1] blind mode: voter4가 클라이언트-사이드 암호화로 투표
   console.log('\n── Phase 5b: Blind Mode Vote (PAPER-1) ──');
   const blindVoter = { id: 'voter4', secret: 'voter4pw', candidate: 'CANDIDATE_C' };
@@ -624,6 +642,18 @@ async function main() {
     egCredentials.push(cred.credential);
     egCredentialMaterials.push(cred.nullifierMaterial);
   }
+
+  const crossElectionBallot = generateVectorBallot(egPubKey.pubKey, 0, EG_CANDIDATES.length);
+  await assertRejected('credential replay across elections', requestJson('/api/vote', {
+    method: 'POST',
+    headers: { 'x-idemix-credential': credentials[0] },
+    body: JSON.stringify({
+      electionID: EG_ELECTION_ID,
+      encryptedCandidateVector: crossElectionBallot.encryptedCandidateVector,
+      nullifierHash: sha256Hex(`cross-election:${Date.now()}`),
+      vectorBallotValidityProof: crossElectionBallot.vectorBallotValidityProof,
+    }),
+  }));
 
   // 투표 1: ALICE (index=0)
   const egNullifier1 = sha256Hex(egCredentialMaterials[0] + EG_ELECTION_ID + egBf.blindingFactor);
