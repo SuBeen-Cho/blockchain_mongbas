@@ -18,7 +18,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/Security%20Properties-7%2F7-brightgreen" alt="Security">
+  <img src="https://img.shields.io/badge/Security%20Properties-independent%20verification%20in%20progress-orange" alt="Security verification in progress">
   <img src="https://img.shields.io/github/last-commit/SuBeen-Cho/blockchain_mongbas?label=Last%20Commit" alt="Last Commit">
   <img src="https://img.shields.io/github/repo-size/SuBeen-Cho/blockchain_mongbas" alt="Repo Size">
 </p>
@@ -41,12 +41,12 @@
 
 | 기능 | 설명 |
 |------|------|
-| **다조직 합의 (2-of-3)** | 선거관리위원회, 참관정당, 시민단체 3개 독립 기관 중 2개 이상 서명 필요 — 단일 기관 조작 불가 |
-| **Exponential ElGamal 동형 집계** | 개별 투표를 복호화하지 않고 암호문 상태로 집계 — 투표 비밀성 보장 |
+| **다조직 합의 (2-of-3)** | 3개 MSP의 2-of-3 보증 정책 구현. 기본 Docker 배포는 단일 호스트 에뮬레이션이며 기관 독립성 증거가 아님 |
+| **Exponential ElGamal 동형 집계** | 개별 ballot 평문을 열지 않고 후보별 암호문을 집계하고 threshold partial proof로 검증 |
 | **Chaum-Pedersen ZKP** | 이접적 OR-증명(CDS'94)으로 투표 유효성을 후보 선택 노출 없이 증명 |
 | **Benaloh Challenge** | 투표 제출 전 암호화 정확성을 유권자가 독립적으로 검증 (Cast-as-Intended) |
 | **Shamir Secret Sharing (2-of-3)** | 개표 키를 3개 기관에 분산 — 단일 관리자 없이 합의 기반 집계 |
-| **부인 가능 검증 (Deniable Verification)** | 정상 비밀번호 → 실제 투표 증명, 패닉 비밀번호 → 더미 투표 증명 — 강압자 구분 불가 |
+| **부인 가능 검증 (Deniable Verification)** | 정상/패닉 응답 구조를 맞추는 실험 기능. 강압자 비구별성은 아직 공격 평가 중 |
 | **Merkle Tree 검증** | 투표 포함/배제를 암호학적으로 증명 (E2E Verifiability) |
 | **Nullifier 기반 재투표** | 동일 nullifier로 재투표 시 기존 기록 덮어쓰기 — 강압 후 자유 의사 반영 가능 |
 
@@ -89,7 +89,7 @@
 - **정상 비밀번호** → 실제 nullifier를 재생성하여 실제 투표의 Merkle 포함 증명을 반환
 - **패닉 비밀번호** → 더미 nullifier를 결정론적으로 선택하여 더미 투표의 Merkle 포함 증명을 반환
 
-두 경우 모두 동일한 응답 구조를 가지므로, 강압자는 응답만으로 정상/패닉 모드를 구별할 수 없습니다. 이는 **Nullifier 기반 재투표**(강압 후 자유 환경에서 재투표), **Receipt-Free 검증**(투표 포함 여부만 확인, 후보 선택 미노출)과 결합하여 다층적 강압 저항성을 제공합니다.
+두 경우의 응답 구조를 동일하게 만드는 것이 구현 목표입니다. 그러나 공개 padding 인덱스, 투표 패턴, 타이밍·네트워크·로컬 상태 등 사이드채널 평가가 끝나지 않았으므로 현재 구현만으로 강압자 비구별성이나 강압 저항성을 보장한다고 주장하지 않습니다.
 
 ---
 
@@ -104,7 +104,7 @@
 | Recorded-as-cast | Merkle inclusion 검증 | 서명된 checkpoint, omission/fork witness |
 | Tallied-as-recorded | 후보별 동형 집계, 2-of-3 partial proof, tamper tests | 더 넓은 공모·장애 평가 |
 | Universal verifiability | standalone bundle verifier와 tamper corpus | 외부 witness/checkpoint와 다른 운영 주체 검증 |
-| Eligibility | election-bound credential 검증 | 실제 등록부, credential-bound nullifier, revocation |
+| Eligibility | election-bound credential/nullifier 검증, 선거별 append-only revocation 구현 | 실제 등록부 연동, 익명 accumulator non-revocation proof, Linux 공격 증거 |
 | Coercion resistance | panic/revote 실험 메커니즘 | 강압자 모델, 패턴·타이밍·네트워크 사이드채널 공격 평가 |
 
 ---

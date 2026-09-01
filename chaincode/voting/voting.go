@@ -21,6 +21,7 @@ import (
 	"crypto/subtle"
 	"crypto/x509"
 	"encoding/base64"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -165,8 +166,10 @@ type Nullifier struct {
 	Timestamp                 int64                      `json:"timestamp"`
 	EvictCount                int                        `json:"evictCount"`    // 재투표 횟수 (0 = 최초 투표)
 	LastEvictedAt             int64                      `json:"lastEvictedAt"` // 마지막 재투표 시각
-	// [CRIT-01/02 FIX] 자격증명 감사 해시
-	CredentialHash string `json:"credentialHash"` // SHA256(credential token)
+	// CredentialHash is retained only to decode legacy ledger records. New
+	// ballots intentionally omit it: a stable token hash lets the issuer link
+	// its issuance record to the public ballot/nullifier record.
+	CredentialHash string `json:"credentialHash,omitempty" metadata:",optional"`
 	// [PAPER-4] 자격증명 검증 수준
 	CredVerifyLevel string `json:"credVerifyLevel,omitempty" metadata:",optional"` // "chaincode" | "metadata-only"
 	// IsPadding marks the pre-created panic-mode padding records.  The existing
@@ -185,7 +188,17 @@ type CredentialVerification struct {
 	CredType   string `json:"credType"`   // "ps" | "bbs" | "hmac" | "ed25519" | "bypass"
 	ElectionID string `json:"electionID"` // 자격증명에 바인딩된 선거 ID
 	ExpUnix    int64  `json:"expUnix"`    // 만료 시각 (Unix seconds)
-	CredHash   string `json:"credHash"`   // SHA256(원본 토큰) — 감사용
+	CredHash   string `json:"credHash"`   // SHA256(원본 token/proof) — transient 무결성 결합용
+}
+
+type CredentialRevocation struct {
+	Schema       string `json:"schema"`
+	ElectionID   string `json:"electionID"`
+	HandleHash   string `json:"handleHash"`
+	ReasonCode   string `json:"reasonCode"`
+	RevokedAt    int64  `json:"revokedAt"`
+	RevokedByMSP string `json:"revokedByMSP"`
+	TxID         string `json:"txID"`
 }
 
 type Ed25519CredentialHeader struct {
@@ -298,6 +311,51 @@ func computeCredentialBoundNullifier(material, electionID, blindingFactor string
 	}
 	digest := sha256.Sum256([]byte(material + electionID + blindingFactor))
 	return hex.EncodeToString(digest[:]), nil
+}
+
+// computeCredentialRevocationHandle derives an election-scoped handle from
+// material that is already protected by the credential signature/proof. The
+// length-prefixed, versioned transcript is deliberately distinct from the
+// legacy ballot nullifier transcript. It is a Stage-A revocation primitive;
+// it is not an anonymous accumulator or a non-revocation proof.
+func computeCredentialRevocationHandle(material, electionID, blindingFactor string) (string, error) {
+	if material == "" || electionID == "" || blindingFactor == "" {
+		return "", fmt.Errorf("credential revocation 입력 누락")
+	}
+	fields := []string{material, electionID, blindingFactor}
+	h := sha256.New()
+	_, _ = h.Write([]byte("mongbas/revocation/v1"))
+	var length [4]byte
+	for _, field := range fields {
+		if uint64(len(field)) > uint64(^uint32(0)) {
+			return "", fmt.Errorf("credential revocation 입력이 너무 깁니다")
+		}
+		binary.BigEndian.PutUint32(length[:], uint32(len(field)))
+		_, _ = h.Write(length[:])
+		_, _ = h.Write([]byte(field))
+	}
+	return hex.EncodeToString(h.Sum(nil)), nil
+}
+
+func credentialRevocationStateKey(electionID, handle string) (string, error) {
+	if err := validateElectionID(electionID); err != nil {
+		return "", err
+	}
+	decoded, err := hex.DecodeString(handle)
+	if err != nil || len(decoded) != sha256.Size || handle != strings.ToLower(handle) {
+		return "", fmt.Errorf("revocation handle은 64자 소문자 SHA-256 hex여야 합니다")
+	}
+	digest := sha256.Sum256([]byte(electionID + "\x00" + handle))
+	return "REVOCATION_" + hex.EncodeToString(digest[:]), nil
+}
+
+func validCredentialRevocationReason(reason string) bool {
+	switch reason {
+	case "eligibility-withdrawn", "credential-compromised", "issued-in-error":
+		return true
+	default:
+		return false
+	}
 }
 
 type BBSProofPresentation struct {
@@ -1243,6 +1301,76 @@ func (c *VotingContract) GetBlindingFactor(
 	return election.BlindingFactor, nil
 }
 
+// RevokeCredential records an append-only, election-scoped credential
+// revocation. The caller supplies the versioned handle derived by the issuer;
+// no token, voter ID, free-form reason, or credential hash is persisted.
+func (c *VotingContract) RevokeCredential(
+	ctx contractapi.TransactionContextInterface,
+	electionID string,
+	revocationHandle string,
+	reasonCode string,
+) error {
+	if err := requireElectionAdmin(ctx); err != nil {
+		return err
+	}
+	election, err := c.GetElection(ctx, electionID)
+	if err != nil {
+		return err
+	}
+	if election.Status == "CLOSED" {
+		return fmt.Errorf("종료된 선거의 credential은 폐기할 수 없습니다")
+	}
+	if !validCredentialRevocationReason(reasonCode) {
+		return fmt.Errorf("허용되지 않는 credential 폐기 사유 코드")
+	}
+	key, err := credentialRevocationStateKey(electionID, revocationHandle)
+	if err != nil {
+		return err
+	}
+	existing, err := ctx.GetStub().GetState(key)
+	if err != nil {
+		return fmt.Errorf("credential 폐기 상태 조회 실패: %w", err)
+	}
+	if existing != nil {
+		handleHash := strings.TrimPrefix(key, "REVOCATION_")
+		var prior CredentialRevocation
+		if err := json.Unmarshal(existing, &prior); err != nil {
+			return fmt.Errorf("기존 credential 폐기 레코드 파싱 실패: %w", err)
+		}
+		if prior.Schema == "mongbas-credential-revocation/v1" &&
+			prior.ElectionID == electionID && prior.HandleHash == handleHash &&
+			prior.ReasonCode == reasonCode {
+			return nil
+		}
+		return fmt.Errorf("credential 폐기 레코드 충돌")
+	}
+	now, err := getTxTime(ctx)
+	if err != nil {
+		return err
+	}
+	mspID, err := ctx.GetClientIdentity().GetMSPID()
+	if err != nil {
+		return fmt.Errorf("MSP ID 조회 실패: %w", err)
+	}
+	record := CredentialRevocation{
+		Schema:       "mongbas-credential-revocation/v1",
+		ElectionID:   electionID,
+		HandleHash:   strings.TrimPrefix(key, "REVOCATION_"),
+		ReasonCode:   reasonCode,
+		RevokedAt:    now,
+		RevokedByMSP: mspID,
+		TxID:         ctx.GetStub().GetTxID(),
+	}
+	encoded, err := json.Marshal(record)
+	if err != nil {
+		return fmt.Errorf("credential 폐기 레코드 직렬화 실패: %w", err)
+	}
+	if err := ctx.GetStub().PutState(key, encoded); err != nil {
+		return fmt.Errorf("credential 폐기 레코드 저장 실패: %w", err)
+	}
+	return nil
+}
+
 // verifyCredentialTransient [CRIT-01/02 FIX] transient map의 credentialVerification 키를 읽고
 // 체인코드 레벨에서 독립적으로 자격증명을 검증합니다.
 //
@@ -1430,7 +1558,7 @@ func (c *VotingContract) AggregateClosedElection(ctx contractapi.TransactionCont
 //  3. candidateID 유효성 검사
 //  4. Transient Map에서 비공개 투표 데이터 읽기
 //  5. VotePrivate → PDC 저장 (오더러 미전달, 피어 사이드DB)
-//  6. Nullifier  → 공개 원장 저장 (신원 미포함, credentialHash 포함)
+//  6. Nullifier  → 공개 원장 저장 (신원·credential/token hash 미포함)
 func (c *VotingContract) CastVote(
 	ctx contractapi.TransactionContextInterface,
 	electionID string,
@@ -1465,7 +1593,7 @@ func (c *VotingContract) CastVote(
 	// ── Step 1b: [CRIT-01/02 FIX] 자격증명 체인코드 독립 검증 ────
 	// API 서버 미들웨어와 별개로 체인코드가 직접 자격증명 메타데이터를 검증.
 	// API 서버가 타협되어 auth.js 검증을 우회해도 이 레이어에서 차단됩니다.
-	credHash, err := verifyCredentialTransient(ctx, electionID, now)
+	_, err = verifyCredentialTransient(ctx, electionID, now)
 	if err != nil {
 		return fmt.Errorf("자격증명 거부: %w", err)
 	}
@@ -1496,6 +1624,21 @@ func (c *VotingContract) CastVote(
 		}
 		if subtle.ConstantTimeCompare([]byte(nullifierHash), []byte(expected)) != 1 {
 			return fmt.Errorf("nullifierHash가 서명된 자격증명과 일치하지 않습니다")
+		}
+		revocationHandle, err := computeCredentialRevocationHandle(material, electionID, election.BlindingFactor)
+		if err != nil {
+			return fmt.Errorf("credential 폐기 핸들 계산 실패: %w", err)
+		}
+		revocationKey, err := credentialRevocationStateKey(electionID, revocationHandle)
+		if err != nil {
+			return fmt.Errorf("credential 폐기 키 계산 실패: %w", err)
+		}
+		revoked, err := ctx.GetStub().GetState(revocationKey)
+		if err != nil {
+			return fmt.Errorf("credential 폐기 상태 조회 실패: %w", err)
+		}
+		if revoked != nil {
+			return fmt.Errorf("폐기된 credential입니다")
 		}
 	}
 
@@ -1716,7 +1859,6 @@ func (c *VotingContract) CastVote(
 			}
 			return 0
 		}(),
-		CredentialHash:  credHash, // [CRIT-01/02 FIX] 자격증명 감사 해시 기록
 		CredVerifyLevel: getCredVerifyLevel(ctx),
 	}
 	nBytes, err := json.Marshal(nullifier)

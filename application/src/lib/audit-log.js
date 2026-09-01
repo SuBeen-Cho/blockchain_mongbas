@@ -27,6 +27,15 @@ function sourcePseudonym(sourceAddress) {
   return crypto.createHmac('sha256', key).update(`source:${sourceAddress}`).digest('hex');
 }
 
+function credentialPseudonym(credentialHash) {
+  if (!credentialHash) return null;
+  const key = process.env.AUDIT_HMAC_KEY || '';
+  if (Buffer.byteLength(key) < 32) return null;
+  return crypto.createHmac('sha256', key)
+    .update(`credential:${credentialHash}`)
+    .digest('hex');
+}
+
 function writeEntry(entry) {
   if (!AUDIT_ENABLED) return;
   const safe = {
@@ -38,7 +47,7 @@ function writeEntry(entry) {
     method: entry.method || null,
     route: entry.route || null,
     electionID: entry.electionID || null,
-    credentialHash: entry.credentialHash || null,
+    credentialPseudonym: entry.credentialPseudonym || null,
     credentialType: entry.credentialType || null,
     expiresAt: entry.expiresAt || null,
     sourcePseudonym: sourcePseudonym(entry.sourceAddress),
@@ -49,17 +58,15 @@ function writeEntry(entry) {
 /**
  * credential 발급 감사 로그를 기록한다.
  *
- * 기록 항목: credentialHash, electionID, credType, issuedAt, expiresAt, success
+ * 기록 항목: keyed credential pseudonym, electionID, credType, expiresAt, success
  * 금지 항목: credential token 원문, candidateID, nullifierHash, enrollmentID 평문
  */
 function logCredentialIssuance({ credentialHash: precomputedHash, electionID, credType, expiresAt, success }) {
   if (!AUDIT_ENABLED) return;
 
-  const credentialHash = precomputedHash || 'unknown';
-
   writeEntry({
     eventType: 'credential-issuance', outcome: success ? 'success' : 'failure',
-    credentialHash, electionID, credentialType: credType,
+    credentialPseudonym: credentialPseudonym(precomputedHash), electionID, credentialType: credType,
     expiresAt: expiresAt ? new Date(expiresAt).toISOString() : null,
   });
 }
@@ -80,4 +87,11 @@ function logAdminAuthorization({ success, method, route, reason, sourceAddress }
   });
 }
 
-module.exports = { logCredentialIssuance, logCredentialFailure, logAdminAuthorization, sourcePseudonym, AUDIT_ENABLED };
+module.exports = {
+  logCredentialIssuance,
+  logCredentialFailure,
+  logAdminAuthorization,
+  sourcePseudonym,
+  credentialPseudonym,
+  AUDIT_ENABLED,
+};

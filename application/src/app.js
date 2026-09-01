@@ -165,6 +165,7 @@ app.get('/', (req, res) => {
       'POST /api/elections'                  : '선거 생성 (관리자)',
       'POST /api/elections/:id/activate'     : '선거 활성화 CREATED→ACTIVE (관리자)',
       'POST /api/elections/:id/close'        : '선거 종료 (관리자)',
+      'POST /api/elections/:id/revoke-credential': '선거별 credential 폐기 (관리자)',
       'GET  /api/elections/:id/tally'        : '개표 결과 조회',
       'POST /api/elections/:id/merkle'       : 'Merkle Tree 구축 (선거 종료 후, 관리자)',
       'GET  /api/elections/:id/merkle'       : 'Merkle Root 조회',

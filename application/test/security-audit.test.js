@@ -2,7 +2,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { sourcePseudonym } = require('../src/lib/audit-log');
+const { sourcePseudonym, credentialPseudonym } = require('../src/lib/audit-log');
 
 test('audit source pseudonym is deterministic keyed HMAC and never raw address', () => {
   const original = process.env.AUDIT_HMAC_KEY;
@@ -28,5 +28,31 @@ test('audit source pseudonym fails closed when no adequate key exists', () => {
   finally {
     if (originalAudit === undefined) delete process.env.AUDIT_HMAC_KEY; else process.env.AUDIT_HMAC_KEY = originalAudit;
     if (originalCredential === undefined) delete process.env.CREDENTIAL_SECRET; else process.env.CREDENTIAL_SECRET = originalCredential;
+  }
+});
+
+test('credential audit uses a separately-domain-bound HMAC, never the raw token hash', () => {
+  const original = process.env.AUDIT_HMAC_KEY;
+  process.env.AUDIT_HMAC_KEY = 'b'.repeat(32);
+  try {
+    const rawHash = 'c'.repeat(64);
+    const pseudonym = credentialPseudonym(rawHash);
+    assert.match(pseudonym, /^[0-9a-f]{64}$/);
+    assert.notEqual(pseudonym, rawHash);
+    assert.notEqual(pseudonym, sourcePseudonym(rawHash));
+    assert.equal(pseudonym, credentialPseudonym(rawHash));
+  } finally {
+    if (original === undefined) delete process.env.AUDIT_HMAC_KEY;
+    else process.env.AUDIT_HMAC_KEY = original;
+  }
+});
+
+test('credential audit omits its pseudonym without a dedicated strong audit key', () => {
+  const original = process.env.AUDIT_HMAC_KEY;
+  delete process.env.AUDIT_HMAC_KEY;
+  try { assert.equal(credentialPseudonym('d'.repeat(64)), null); }
+  finally {
+    if (original === undefined) delete process.env.AUDIT_HMAC_KEY;
+    else process.env.AUDIT_HMAC_KEY = original;
   }
 });

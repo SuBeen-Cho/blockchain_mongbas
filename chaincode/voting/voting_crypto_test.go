@@ -272,6 +272,68 @@ func TestCredentialBoundNullifierIsDeterministicAndElectionScoped(t *testing.T) 
 	}
 }
 
+func TestCredentialRevocationHandleIsVersionedAndElectionScoped(t *testing.T) {
+	got, err := computeCredentialRevocationHandle("signed-material", "election-a", "blind-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != sha256.Size*2 {
+		t.Fatalf("revocation handle must be SHA-256 hex, got %q", got)
+	}
+	if got != "8cabe1a5ba7fa8135d53ed00af40bad3953e1d814f74c9f33267e5f5489fd6d4" {
+		t.Fatalf("cross-language revocation vector changed: %s", got)
+	}
+	again, _ := computeCredentialRevocationHandle("signed-material", "election-a", "blind-a")
+	if again != got {
+		t.Fatal("revocation handle must be deterministic")
+	}
+	otherElection, _ := computeCredentialRevocationHandle("signed-material", "election-b", "blind-b")
+	if otherElection == got {
+		t.Fatal("revocation handle must be election scoped")
+	}
+	legacy, _ := computeCredentialBoundNullifier("signed-material", "election-a", "blind-a")
+	if legacy == got {
+		t.Fatal("revocation and ballot-nullifier domains must be distinct")
+	}
+	for _, fields := range [][3]string{{"", "election-a", "blind-a"}, {"signed-material", "", "blind-a"}, {"signed-material", "election-a", ""}} {
+		if _, err := computeCredentialRevocationHandle(fields[0], fields[1], fields[2]); err == nil {
+			t.Fatalf("missing revocation input must fail: %#v", fields)
+		}
+	}
+}
+
+func TestCredentialRevocationStateKeyAndReasonsFailClosed(t *testing.T) {
+	handle, err := computeCredentialRevocationHandle("signed-material", "election-a", "blind-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	key, err := credentialRevocationStateKey("election-a", handle)
+	if err != nil || !strings.HasPrefix(key, "REVOCATION_") || len(key) != len("REVOCATION_")+sha256.Size*2 {
+		t.Fatalf("unexpected revocation key %q: %v", key, err)
+	}
+	if same, _ := credentialRevocationStateKey("election-a", handle); same != key {
+		t.Fatal("revocation state key must be deterministic")
+	}
+	if other, _ := credentialRevocationStateKey("election-b", handle); other == key {
+		t.Fatal("revocation state key must be election scoped")
+	}
+	for _, malformed := range []string{"", "00", strings.ToUpper(handle), strings.Repeat("g", 64)} {
+		if _, err := credentialRevocationStateKey("election-a", malformed); err == nil {
+			t.Fatalf("malformed revocation handle accepted: %q", malformed)
+		}
+	}
+	for _, reason := range []string{"eligibility-withdrawn", "credential-compromised", "issued-in-error"} {
+		if !validCredentialRevocationReason(reason) {
+			t.Fatalf("documented reason rejected: %s", reason)
+		}
+	}
+	for _, reason := range []string{"", "other", "voter name", "credential-compromised\npii"} {
+		if validCredentialRevocationReason(reason) {
+			t.Fatalf("unsafe revocation reason accepted: %q", reason)
+		}
+	}
+}
+
 func TestThresholdPartialDecryptionsReconstructWithoutSecret(t *testing.T) {
 	secret, pub := elgamalGenerateKeyPair([]byte("threshold-partial-known-answer"))
 	coefficient := new(big.Int).SetBytes([]byte("independent-coefficient"))

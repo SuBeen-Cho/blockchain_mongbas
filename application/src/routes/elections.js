@@ -87,6 +87,37 @@ router.get('/:id/blinding-factor', async (req, res) => {
   }
 });
 
+// ── POST /api/elections/:id/revoke-credential ──────────────────
+// The issuer derives the versioned election-scoped handle. Raw credential,
+// voter ID and nullifier material are never accepted by this route.
+router.post('/:id/revoke-credential', async (req, res) => {
+  const { id } = req.params;
+  const { revocationHandle, reasonCode } = req.body || {};
+  if (!/^[0-9a-f]{64}$/.test(revocationHandle || '')) {
+    return res.status(400).json({ error: 'revocationHandle은 64자 소문자 SHA-256 hex여야 합니다.' });
+  }
+  if (!['eligibility-withdrawn', 'credential-compromised', 'issued-in-error'].includes(reasonCode)) {
+    return res.status(400).json({ error: '허용되지 않는 credential 폐기 사유 코드입니다.' });
+  }
+  let gateway;
+  try {
+    const connection = await connectGateway();
+    gateway = connection.gateway;
+    const transaction = await connection.contract
+      .newProposal('RevokeCredential', { arguments: [id, revocationHandle, reasonCode] })
+      .then(proposal => proposal.endorse())
+      .then(endorsed => endorsed.submit());
+    const status = await transaction.getStatus();
+    if (!status.successful) throw new Error(`credential revocation commit failed: ${status.code}`);
+    res.json({ electionID: id, revoked: true, reasonCode });
+  } catch (err) {
+    console.error('[elections] RevokeCredential error:', err.message);
+    res.status(400).json({ error: sanitizeError(err) });
+  } finally {
+    gateway?.close();
+  }
+});
+
 // ── GET /api/elections/:id/encryption-key ─────────────────────
 // [PAPER-1] 클라이언트-사이드 암호화용 AES 키 조회
 // ACTIVE 상태의 선거에서만 반환 (체인코드에서 상태 검증)
