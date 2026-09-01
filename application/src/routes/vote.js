@@ -21,9 +21,8 @@
  *
  * ══ Panic Mode (강압 대응) ═══════════════════════════════════════
  *
- * 세션에 panicMode=true 가 설정되어 있으면:
- * - 실제 투표 대신 더미 Nullifier를 반환
- * - 강압자에게 "나는 X에 투표했다"고 속일 수 있음
+ * 서버 세션은 panic 여부를 저장하지 않는다. 부인 가능 검증은 클라이언트가
+ * 생성한 해시와 체인코드/PDC 경로에서만 처리한다.
  */
 
 'use strict';
@@ -45,9 +44,6 @@ const router = express.Router();
 //   nullifierHash : string   — SHA256(voterSecret + electionID), 클라이언트 계산
 //   voterID       : string   — 유권자 식별자 (PDC 비공개 저장, 원장 미노출)
 //
-// panicPassword (optional):
-//   Body에 panicPassword 필드 포함 시 Panic Mode 활성화.
-//   세션에 panicMode=true 설정 후 더미 응답 반환.
 router.post('/', async (req, res) => {
   const { electionID, candidateID, nullifierHash,
           encryptedCandidateID,
@@ -261,20 +257,9 @@ router.post('/audit', async (req, res) => {
 // ── GET /api/nullifier/:hash ───────────────────────────────────
 // 투표 여부 확인 (최종 1표만 유효 — 재투표 허용)
 //
-// Panic Mode 중: 실제 Nullifier 대신 가짜 Nullifier 반환
-// 정상 모드  : 체인코드 GetNullifier 호출
+// 서버 세션 분기 없이 체인코드 GetNullifier만 호출한다.
 router.get('/:hash', async (req, res) => {
   const { hash } = req.params;
-
-  // ── Panic Mode: 가짜 Nullifier 반환 ───────────────────────
-  if (req.session && req.session.panicMode) {
-    // 세션에 저장된 가짜 해시를 강압자에게 표시
-    return res.json({
-      nullifierHash : req.session.fakeNullifierHash || hash,
-      candidateID   : req.session.panicCandidateID  || 'CANDIDATE_A',
-      note          : '(panic mode — dummy response)',
-    });
-  }
 
   // ── 실제 Nullifier 조회 ────────────────────────────────────
   const { gateway, contract } = await connectGateway();
@@ -290,13 +275,4 @@ router.get('/:hash', async (req, res) => {
 });
 
 // ── POST /api/panic/reset ──────────────────────────────────────
-// Panic Mode 해제 (정상 비밀번호로 로그인 시 클라이언트에서 호출)
-router.post('/panic/reset', (req, res) => {
-  req.session.panicMode         = false;
-  req.session.fakeNullifierHash = null;
-  req.session.panicCandidateID  = null;
-  req.session.panicElectionID   = null;
-  res.json({ message: 'Panic Mode가 해제되었습니다.' });
-});
-
 module.exports = router;

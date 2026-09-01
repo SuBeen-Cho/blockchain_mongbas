@@ -48,10 +48,8 @@ load_runtime_env() {
   # shellcheck disable=SC1090
   source "${MONGBAS_ENV_FILE}"
   set +a
-  [ -n "${SESSION_SECRET:-}" ] || die "SESSION_SECRET is missing"
   [ -n "${CREDENTIAL_SECRET:-}" ] || die "CREDENTIAL_SECRET is missing"
   [ -n "${ADMIN_API_TOKEN:-}" ] || die "ADMIN_API_TOKEN is missing"
-  [ "$(printf '%s' "${SESSION_SECRET}" | wc -c)" -ge 32 ] || die "SESSION_SECRET must be at least 32 bytes"
   [ "$(printf '%s' "${CREDENTIAL_SECRET}" | wc -c)" -ge 32 ] || die "CREDENTIAL_SECRET must be at least 32 bytes"
   [ "$(printf '%s' "${ADMIN_API_TOKEN}" | wc -c)" -ge 32 ] || die "ADMIN_API_TOKEN must be at least 32 bytes"
 }

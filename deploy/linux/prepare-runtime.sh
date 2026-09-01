@@ -6,18 +6,15 @@ ensure_runtime
 if [ ! -f "${MONGBAS_ENV_FILE}" ]; then
   umask 077
   install -m 0600 "${MONGBAS_REPO_DIR}/application/.env.example" "${MONGBAS_ENV_FILE}"
-  session_secret="$(openssl rand -base64 48)"
   credential_secret="$(openssl rand -base64 48)"
   admin_api_token="$(openssl rand -base64 48)"
   sed -i \
-    -e "s|^SESSION_SECRET=.*|SESSION_SECRET=${session_secret}|" \
-    -e "s|^# *SESSION_SECRET=.*|SESSION_SECRET=${session_secret}|" \
     -e "s|^CREDENTIAL_SECRET=.*|CREDENTIAL_SECRET=${credential_secret}|" \
     -e "s|^# *CREDENTIAL_SECRET=.*|CREDENTIAL_SECRET=${credential_secret}|" \
     -e "s|^# *ADMIN_API_TOKEN=.*|ADMIN_API_TOKEN=${admin_api_token}|" \
     "${MONGBAS_ENV_FILE}"
-  unset session_secret credential_secret admin_api_token
-  log "created secret template with generated session/credential/admin secrets"
+  unset credential_secret admin_api_token
+  log "created secret template with generated credential/admin secrets"
 else
   chmod 0600 "${MONGBAS_ENV_FILE}"
   if ! grep -q '^ADMIN_API_TOKEN=' "${MONGBAS_ENV_FILE}"; then

@@ -6,7 +6,6 @@
  *
  * 환경변수 (선택):
  *   PORT           - 서버 포트 (기본: 3000)
- *   SESSION_SECRET - 세션 서명 키 (기본: 개발용 임시값, 운영 시 반드시 변경)
  *   PANIC_PASSWORD - Panic Mode 활성화 비밀번호 (routes/vote.js 참조)
  *
  * ※ 네트워크가 기동된 상태에서 실행해야 합니다.
@@ -22,7 +21,6 @@ require('dotenv').config();
 
 const express        = require('express');
 const path           = require('path');
-const session        = require('express-session');
 const cors           = require('cors');
 const rateLimit      = require('express-rate-limit');
 const electionsRouter              = require('./routes/elections');
@@ -39,7 +37,7 @@ validateAdminConfiguration();
 
 // ── 운영 환경 필수 환경변수 검증 ──────────────────────────────────
 if (process.env.NODE_ENV === 'production') {
-  const required = ['IDEMIX_ENABLED', 'SESSION_SECRET', 'CREDENTIAL_SECRET'];
+  const required = ['IDEMIX_ENABLED', 'CREDENTIAL_SECRET'];
   const missing = required.filter((k) => !process.env[k]);
   if (missing.length > 0) {
     throw new Error(`운영 환경 필수 환경변수 누락: ${missing.join(', ')}`);
@@ -58,7 +56,7 @@ const allowedOrigins = (process.env.CORS_ORIGIN || 'http://localhost:5173,http:/
   .split(',').map(o => o.trim());
 app.use(cors({
   origin: allowedOrigins,
-  credentials: true,
+  credentials: false,
 }));
 
 // ── 정적 프론트엔드 서빙 (부스 시연: 단일 오리진 + cloudflared 터널) ──
@@ -88,22 +86,6 @@ app.use((_req, res, next) => {
     "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self'; img-src 'self' data:; font-src 'self'");
   next();
 });
-
-// 세션 (Panic Mode 상태 관리에 사용)
-app.use(session({
-  secret: process.env.SESSION_SECRET || (() => {
-    console.warn('[WARN] SESSION_SECRET 환경변수 미설정 — 개발용 랜덤 시크릿 사용 중.');
-    return require('crypto').randomBytes(32).toString('hex');
-  })(),
-  resave: false,
-  saveUninitialized: false,
-  cookie: {
-    secure: process.env.NODE_ENV === 'production',
-    httpOnly: true,
-    sameSite: 'strict',
-    maxAge: 60 * 60 * 1000,  // 1시간
-  },
-}));
 
 // ── 민감 엔드포인트 Rate Limiting ─────────────────────────────────
 const voteLimiter = rateLimit({
@@ -169,7 +151,6 @@ app.get('/', (req, res) => {
       'POST /api/elections/:id/proof'        : 'Deniable Verification (Normal/Panic 모드)',
       'POST /api/vote'                       : '투표 제출',
       'GET  /api/nullifier/:hash'            : '투표 여부 확인',
-      'POST /api/vote/panic/reset'           : 'Panic Mode 해제',
     },
     notes: [
       'nullifierHash는 클라이언트(브라우저)에서 계산: SHA256(voterSecret + electionID)',
