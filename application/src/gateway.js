@@ -111,6 +111,25 @@ function newGrpcClient(tlsCaCert = TLS_CA_CERT, endpoint = PEER_ENDPOINT, hostAl
 }
 
 /**
+ * fabric-gateway 1.x의 Gateway.close()는 주입받은 grpc.Client를 닫지 않는다.
+ * 요청마다 생성한 client의 소유권을 Gateway에 묶어 정확히 한 번 해제한다.
+ */
+function bindClientLifecycle(gateway, client) {
+  const closeGateway = gateway.close.bind(gateway);
+  let closed = false;
+  gateway.close = () => {
+    if (closed) return;
+    closed = true;
+    try {
+      closeGateway();
+    } finally {
+      client.close();
+    }
+  };
+  return gateway;
+}
+
+/**
  * Fabric Gateway 연결을 생성하고 { gateway, contract } 를 반환합니다.
  *
  * @returns {{ gateway: Gateway, contract: Contract }}
@@ -132,7 +151,7 @@ async function connectGateway() {
   const keyPem     = readPrivateKey(ADMIN_KEYSTORE);
   const privateKey = crypto.createPrivateKey(keyPem);
 
-  const gateway = connect({
+  const gateway = bindClientLifecycle(connect({
     client,
     identity: {
       mspId:       'ElectionCommissionMSP',
@@ -140,7 +159,7 @@ async function connectGateway() {
     },
     signer: signers.newPrivateKeySigner(privateKey),
 	...gatewayDeadlineOptions(),
-  });
+  }), client);
 
   const network  = gateway.getNetwork(CHANNEL_NAME);
   const contract = network.getContract(CHAINCODE_NAME);
@@ -164,12 +183,12 @@ async function connectGatewayAsVoter(mspId, voterCertPem, voterKeyPem) {
   const client     = newGrpcClient();
   const privateKey = crypto.createPrivateKey(voterKeyPem);
 
-  const gateway = connect({
+  const gateway = bindClientLifecycle(connect({
     client,
     identity: { mspId, credentials: voterCertPem },
     signer:   signers.newPrivateKeySigner(privateKey),
 	...gatewayDeadlineOptions(),
-  });
+  }), client);
 
   const network  = gateway.getNetwork(CHANNEL_NAME);
   const contract = network.getContract(CHAINCODE_NAME);
@@ -192,12 +211,12 @@ async function connectGatewayForOrg(mspId) {
   const keyPem     = readPrivateKey(keystore);
   const privateKey = crypto.createPrivateKey(keyPem);
 
-  const gateway = connect({
+  const gateway = bindClientLifecycle(connect({
     client,
     identity: { mspId, credentials: certPem },
     signer:   signers.newPrivateKeySigner(privateKey),
 	...gatewayDeadlineOptions(),
-  });
+  }), client);
 
   const network  = gateway.getNetwork(CHANNEL_NAME);
   const contract = network.getContract(CHAINCODE_NAME);
@@ -210,4 +229,4 @@ async function connectGatewayForShareIndex(shareIndex) {
   return connectGatewayForOrg(mspId);
 }
 
-module.exports = { connectGateway, connectGatewayAsVoter, connectGatewayForOrg, connectGatewayForShareIndex };
+module.exports = { bindClientLifecycle, connectGateway, connectGatewayAsVoter, connectGatewayForOrg, connectGatewayForShareIndex };
