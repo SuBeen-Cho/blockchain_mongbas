@@ -1,0 +1,21 @@
+[Unit]
+Description=Mongbas voting backend
+After=docker.service network-online.target
+Wants=network-online.target
+Requires=docker.service
+
+[Service]
+Type=simple
+User=user1
+WorkingDirectory=/home/user1/mongbas/application
+EnvironmentFile=/home/user1/mongbas-runtime/secrets/application.env
+ExecStart=/usr/bin/npm start
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths=/home/user1/mongbas-runtime /home/user1/mongbas/application/wallet
+
+[Install]
+WantedBy=multi-user.target
