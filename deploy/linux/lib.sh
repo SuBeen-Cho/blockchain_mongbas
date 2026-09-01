@@ -5,6 +5,10 @@ LINUX_DEPLOY_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 MONGBAS_REPO_DIR="$(cd "${LINUX_DEPLOY_DIR}/../.." && pwd)"
 MONGBAS_RUNTIME_DIR="${MONGBAS_RUNTIME_DIR:-${XDG_STATE_HOME:-${HOME}/.local/state}/mongbas}"
 MONGBAS_PROFILE="${MONGBAS_PROFILE:-demo}"
+if [ -x "${MONGBAS_RUNTIME_DIR}/tools/go-current/bin/go" ]; then
+  PATH="${MONGBAS_RUNTIME_DIR}/tools/go-current/bin:${PATH}"
+  export PATH
+fi
 
 log() { printf '[mongbas] %s\n' "$*"; }
 die() { printf '[mongbas:error] %s\n' "$*" >&2; exit 1; }

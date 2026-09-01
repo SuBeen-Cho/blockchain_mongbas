@@ -6,7 +6,7 @@
 
 - Ubuntu 24.04 x86-64
 - Node.js 22.12 이상
-- Go 1.22 이상
+- Go 1.23 이상 (`go.mod` 기준; 부족하면 bootstrap이 검증된 Go 1.26.5를 private runtime에 설치)
 - Docker Engine 29 / Docker Compose v2
 - Hyperledger Fabric CLI 2.5.9
 
