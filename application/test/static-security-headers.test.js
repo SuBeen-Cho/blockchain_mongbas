@@ -59,4 +59,27 @@ test('static voter UI and assets receive the complete security-header policy', a
       assert.match(csp, new RegExp(directive.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')), `${resource}: ${directive}`);
     }
   }
+
+  const malformed = await fetch(`${baseURL}/api/elections`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: '{"broken":',
+  });
+  assert.equal(malformed.status, 400);
+  assert.deepEqual(await malformed.json(), { error: '잘못된 JSON 요청입니다.' });
+
+  const oversized = await fetch(`${baseURL}/api/elections`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ payload: 'x'.repeat(1024 * 1024) }),
+  });
+  assert.equal(oversized.status, 413);
+  assert.deepEqual(await oversized.json(), { error: '요청 본문이 허용 크기를 초과했습니다.' });
+
+  for (const response of [malformed, oversized]) {
+    assert.equal(response.headers.get('x-powered-by'), null);
+    assert.equal(response.headers.get('x-content-type-options'), 'nosniff');
+    assert.equal(response.headers.get('cache-control'), 'no-store');
+    assert.equal(response.headers.get('pragma'), 'no-cache');
+  }
 });

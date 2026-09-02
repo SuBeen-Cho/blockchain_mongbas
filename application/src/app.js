@@ -58,19 +58,10 @@ if (process.env.NODE_ENV === 'production') {
 }
 
 // ── 미들웨어 ────────────────────────────────────────────────────
-app.use(express.json({ limit: '1mb' }));
-
-// CORS — 허용 origin 제한 (CORS_ORIGIN 환경변수 또는 개발용 localhost)
-app.use(cors({
-  origin: runtimeSecurity.allowedOrigins,
-  credentials: false,
-}));
-app.use('/api', apiRequestShapeGuard(runtimeSecurity.allowedOrigins));
-
-// Security headers must precede static-file handling. Express static ends the
-// middleware chain for an existing asset, so placing this block afterwards
-// would leave the voter UI, scripts and styles without the declared policy.
-app.use((_req, res, next) => {
+// These policies must run before body parsing as parser failures terminate the
+// normal middleware chain. Otherwise malformed/oversized requests lose the
+// response protections applied to successful API and static responses.
+app.use((req, res, next) => {
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('X-Frame-Options', 'DENY');
   res.setHeader('Referrer-Policy', 'no-referrer');
@@ -79,8 +70,20 @@ app.use((_req, res, next) => {
   res.setHeader('Content-Security-Policy',
     "default-src 'self'; base-uri 'none'; object-src 'none'; frame-ancestors 'none'; form-action 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self'; img-src 'self' data:; font-src 'self'");
   if (runtimeSecurity.hsts) res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+  if (/^\/api\/(?:credential|vote|elections)(?:\/|$)/.test(req.path)) {
+    res.setHeader('Cache-Control', 'no-store');
+    res.setHeader('Pragma', 'no-cache');
+  }
   next();
 });
+
+// CORS — 허용 origin 제한 (CORS_ORIGIN 환경변수 또는 개발용 localhost)
+app.use(cors({
+  origin: runtimeSecurity.allowedOrigins,
+  credentials: false,
+}));
+app.use('/api', apiRequestShapeGuard(runtimeSecurity.allowedOrigins));
+app.use(express.json({ limit: '1mb' }));
 
 // ── 정적 프론트엔드 서빙 (부스 시연: 단일 오리진 + cloudflared 터널) ──
 // 빌드된 SPA(frontend/dist)를 백엔드가 직접 서빙 → 폰/API 동일 출처라 CORS 무관, 터널 1개로 충분.
@@ -99,14 +102,6 @@ const globalLimiter = rateLimit({
 if (!DISABLE_RATE_LIMITS) {
   app.use(globalLimiter);
 }
-
-// Credentials, administrative responses and vote submissions must not be
-// retained by browsers or shared intermediary caches.
-app.use(['/api/credential', '/api/vote', '/api/elections'], (_req, res, next) => {
-  res.setHeader('Cache-Control', 'no-store');
-  res.setHeader('Pragma', 'no-cache');
-  next();
-});
 
 // ── 민감 엔드포인트 Rate Limiting ─────────────────────────────────
 const voteLimiter = rateLimit({
@@ -199,7 +194,15 @@ app.get('*', (req, res, next) => {
 
 // ── 에러 핸들러 ─────────────────────────────────────────────────
 app.use((err, req, res, _next) => {
-  console.error('[ERROR]', err);
+  if (err?.type === 'entity.too.large') {
+    console.warn('[WARN] request body rejected: entity too large');
+    return res.status(413).json({ error: '요청 본문이 허용 크기를 초과했습니다.' });
+  }
+  if (err instanceof SyntaxError && err?.status === 400 && Object.hasOwn(err, 'body')) {
+    console.warn('[WARN] request body rejected: malformed JSON');
+    return res.status(400).json({ error: '잘못된 JSON 요청입니다.' });
+  }
+  console.error('[ERROR]', err?.stack || err);
   res.status(500).json({ error: '서버 내부 오류가 발생했습니다.' });
 });
 

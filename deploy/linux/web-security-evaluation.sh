@@ -46,6 +46,12 @@ require_policy_fragment() {
   [[ "${actual}" == *"${fragment}"* ]] || die "${label}: CSP lacks ${fragment}"
 }
 
+require_json_error() {
+  local label="$1" expected="$2"
+  node -e 'const fs=require("node:fs"); const body=JSON.parse(fs.readFileSync(process.argv[1], "utf8")); if (body.error !== process.argv[2] || Object.keys(body).length !== 1) process.exit(1)' \
+    "${out}/${label}.body" "${expected}" || die "${label}: unexpected error response"
+}
+
 capture root "${base_url}/"
 status_is root 200
 asset_path="$(sed -nE 's/.*src="([^" ]*\/assets\/[^" ]+\.js)".*/\1/p' "${out}/root.body" | sed -n '1p')"
@@ -93,13 +99,36 @@ status_is trustee-share-missing 401
 capture demo-disabled "${base_url}/api/elections/test/live-count"
 status_is demo-disabled 404
 
+capture malformed-json -H 'Content-Type: application/json' --data-binary '{"broken":' \
+  "${base_url}/api/elections"
+status_is malformed-json 400
+require_json_error malformed-json '잘못된 JSON 요청입니다.'
+
+oversized_payload="$(mktemp "${MONGBAS_RUNTIME_DIR}/tmp/web-security-oversized.XXXXXX")"
+trap 'rm -f -- "${oversized_payload}"' EXIT
+node -e 'process.stdout.write(JSON.stringify({payload:"x".repeat(1024*1024)}))' >"${oversized_payload}"
+capture oversized-json -H 'Content-Type: application/json' --data-binary "@${oversized_payload}" \
+  "${base_url}/api/elections"
+status_is oversized-json 413
+require_json_error oversized-json '요청 본문이 허용 크기를 초과했습니다.'
+rm -f -- "${oversized_payload}"
+trap - EXIT
+
+for label in malformed-json oversized-json; do
+  require_header "${label}" X-Content-Type-Options nosniff
+  require_header "${label}" Cache-Control no-store
+  require_header "${label}" Pragma no-cache
+  [ -z "$(header_value "${out}/${label}.headers" X-Powered-By)" ] || die "${label}: framework fingerprint exposed"
+done
+
 node - "${out}" "${base_url}" "${allowed_origin}" <<'NODE'
 const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
 const [out, baseURL, origin] = process.argv.slice(2);
 const labels = ['root', 'asset', 'health', 'credential-public-key', 'cors-allowed', 'cors-denied',
-  'cross-site-denied', 'simple-mutation-denied', 'admin-missing', 'trustee-share-missing', 'demo-disabled'];
+  'cross-site-denied', 'simple-mutation-denied', 'admin-missing', 'trustee-share-missing', 'demo-disabled',
+  'malformed-json', 'oversized-json'];
 const statuses = Object.fromEntries(labels.map(label => [label, Number(fs.readFileSync(path.join(out, `${label}.status`), 'utf8'))]));
 const health = JSON.parse(fs.readFileSync(path.join(out, 'health.body'), 'utf8'));
 const summary = {
@@ -114,8 +143,10 @@ const summary = {
   corsAndRequestShapePassed: true,
   adminAndTrusteeAuthorizationPassed: true,
   sensitiveCachePolicyPassed: true,
+  parserFailurePolicyPassed: statuses['malformed-json'] === 400 && statuses['oversized-json'] === 413,
   securityGatePassed: health.demo?.endpointsEnabled === false && health.benchmark?.rateLimitsDisabled === false,
 };
+summary.securityGatePassed = summary.securityGatePassed && summary.parserFailurePolicyPassed;
 fs.writeFileSync(path.join(out, 'summary.json'), `${JSON.stringify(summary, null, 2)}\n`, { flag: 'wx', mode: 0o600 });
 if (!summary.securityGatePassed) process.exit(1);
 NODE
