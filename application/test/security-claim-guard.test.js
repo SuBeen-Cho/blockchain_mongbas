@@ -113,6 +113,27 @@ test('legacy BatchTimeout runners are quarantined before output or channel mutat
   }
 });
 
+test('superseded credential and concurrency benchmarks fail closed before network access', () => {
+  const runners = [
+    'application/benchmark/http-bench.js',
+    'application/benchmark/idemix-bench.js',
+    'application/benchmark/phase-bc-bench.js',
+    'scripts/measure-concurrent-vote.js',
+    'scripts/generate-bt-report.js',
+  ];
+
+  for (const relative of runners) {
+    const run = spawnSync(process.execPath, [path.join(root, relative)], {
+      encoding: 'utf8',
+      timeout: 5000,
+    });
+    assert.equal(run.status, 2, relative);
+    assert.equal(run.stdout, '', relative);
+    assert.match(run.stderr, /UNSUPPORTED/, relative);
+    assert.doesNotMatch(run.stderr, /결과 저장|완료/, relative);
+  }
+});
+
 test('BBS runtime and Linux build stay on the audited WASM dependency path', () => {
   const bbs = read('application/src/lib/bbs-idemix.js');
   const build = read('deploy/linux/build.sh');

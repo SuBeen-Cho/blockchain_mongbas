@@ -23,6 +23,10 @@
 
 'use strict';
 
+console.error('[UNSUPPORTED] benchmark/phase-bc-bench.js는 4xx와 발급 실패를 최종 verdict에 반영하지 않던 legacy runner입니다.');
+console.error('현재 PS/BBS 비교는 모드별 readiness를 검증하는 benchmark/run-real-idemix.sh를 사용하세요.');
+process.exit(2);
+
 const http = require('http');
 const fs   = require('fs');
 const path = require('path');

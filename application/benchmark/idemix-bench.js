@@ -16,6 +16,10 @@
 
 'use strict';
 
+console.error('[UNSUPPORTED] benchmark/idemix-bench.js는 서로 다른 서버 모드를 한 실행에서 가정하고 4xx를 성공으로 계산하던 legacy runner입니다.');
+console.error('현재 credential 비교는 모드별 readiness를 검증하는 benchmark/run-comparison.sh를 사용하세요.');
+process.exit(2);
+
 const http = require('http');
 const fs   = require('fs');
 const path = require('path');

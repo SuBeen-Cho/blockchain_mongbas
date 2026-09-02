@@ -127,7 +127,7 @@ app.use('/api/vote',       DISABLE_RATE_LIMITS ? noRateLimit : voteLimiter, requ
 
 // ── 벤치마크 전용 엔드포인트 ────────────────────────────────────
 // 인증 레이턴시만 측정하기 위한 엔드포인트 (체인코드 호출 없음)
-// IDEMIX_ENABLED=false/true 전환 후 http-bench.js 로 성능 비교
+// Credential 모드별 성능 비교는 readiness를 검증하는 benchmark/run-comparison.sh 사용
 if (runtimeSecurity.benchEndpoints) {
   app.get('/api/bench/auth', async (req, res) => {
     const result = await measureAuthLatency(req);

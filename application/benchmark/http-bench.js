@@ -18,6 +18,10 @@
 
 'use strict';
 
+console.error('[UNSUPPORTED] benchmark/http-bench.js는 HTTP 오류를 성공 latency로 계산하던 legacy runner입니다.');
+console.error('현재 credential 비교는 benchmark/run-comparison.sh 또는 benchmark/run-real-idemix.sh를 사용하세요.');
+process.exit(2);
+
 const http  = require('http');
 const https = require('https');
 

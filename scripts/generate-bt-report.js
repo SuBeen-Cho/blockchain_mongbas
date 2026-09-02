@@ -5,6 +5,10 @@
  */
 'use strict';
 
+console.error('[UNSUPPORTED] scripts/generate-bt-report.js는 격리된 legacy BatchTimeout 결과를 권고안으로 재생성하므로 사용할 수 없습니다.');
+console.error('엄격한 인증·commit·환경 검사를 갖춘 새 BatchTimeout evaluator 결과만 보고서화해야 합니다.');
+process.exit(2);
+
 const fs   = require('fs');
 const path = require('path');
 

@@ -16,6 +16,10 @@
 
 'use strict';
 
+console.error('[UNSUPPORTED] scripts/measure-concurrent-vote.js는 고정 선거와 credential 이전 nullifier API를 사용하는 legacy workload입니다.');
+console.error('현재 동시성 평가는 application/benchmark/elgamal-concurrency-bench.js와 deploy/linux/concurrency-benchmark.sh를 사용하세요.');
+process.exit(2);
+
 const crypto = require('crypto');
 const API         = 'http://localhost:3000';
 const ELECTION_ID = 'bench-concurrent-1776084981';
