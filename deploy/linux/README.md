@@ -34,7 +34,15 @@ ${EDITOR:-vi} "${HOME}/.local/state/mongbas/secrets/application.env"
 
 기본 runtime은 `${HOME}/.local/state/mongbas`이며 `MONGBAS_RUNTIME_DIR`로 바꿀 수 있다. 기존 서버처럼 `/home/user1/mongbas-runtime`을 쓰려면 해당 변수를 export한다. 기존 `secrets/backend.env`가 있으면 보존하여 자동 선택하며, 다른 파일은 `MONGBAS_ENV_FILE`로 지정할 수 있다. secret 파일은 `0600`, runtime 디렉터리는 `0700`으로 생성되고 Git 저장소에는 들어가지 않는다. 기존 `application/.env`가 일반 파일이면 자동화가 덮어쓰지 않고 중단한다.
 
-Backend는 직접 `npm --prefix application start`로 실행하거나 `systemd/mongbas-backend.service`의 절대 경로·사용자를 설치 환경에 맞춘 뒤 사용할 수 있다. unit 설치와 enable은 시스템 변경이므로 스크립트가 자동 수행하지 않는다.
+Backend는 직접 `npm --prefix application start`로 실행하거나 현재 계정·저장소·runtime·secret env·npm 경로로 systemd unit을 생성해 운영할 수 있다. 기본 명령은 private runtime에 unit을 render·검증만 하며 시스템을 변경하지 않는다.
+
+```bash
+./deploy/linux/install-systemd.sh --render-only
+./deploy/linux/install-systemd.sh --install      # unit 설치만
+./deploy/linux/install-systemd.sh --enable-now   # 설치 + 부팅 자동 시작 + 즉시 시작
+```
+
+`--install`과 `--enable-now`는 `/etc/systemd/system`과 service 상태를 변경하므로 명시적으로만 실행한다. 기본 service는 `NODE_ENV=production`으로 기동하므로 secret env에는 production 검증을 통과하는 asymmetric credential 모드, 관리자 token, 명시적 CORS 설정이 필요하다.
 
 BBS+ 실험 모드는 `@mattrglobal/bbs-signatures` 2.0.0의 WASM 경로만 사용한다. 아카이브된 optional native addon이 취약한 `node-pre-gyp`/`tar` 설치 경로를 끌어오므로 application 의존성은 `npm ci --omit=optional`로 설치한다. `build.sh`는 실제 배포 세트를 `npm audit --omit=optional --audit-level=high`로 검사하며, high/critical 이상이면 실패한다. 해당 BBS 구현은 현재 CFRG draft-10의 완전한 표준 준거를 주장하지 않으며, 최신 구현으로의 마이그레이션은 별도 보안 게이트로 다룬다.
 

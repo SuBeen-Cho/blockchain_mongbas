@@ -1,0 +1,34 @@
+[Unit]
+Description=Mongbas voting backend
+After=docker.service network-online.target
+Wants=network-online.target
+Requires=docker.service
+
+[Service]
+Type=simple
+User=@SERVICE_USER@
+Group=@SERVICE_GROUP@
+WorkingDirectory=@APPLICATION_DIR@
+EnvironmentFile=@ENV_FILE@
+Environment=NODE_ENV=production
+ExecStart=@NPM_PATH@ start
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
+UMask=0077
+NoNewPrivileges=true
+PrivateDevices=true
+PrivateTmp=true
+ProtectClock=true
+ProtectControlGroups=true
+ProtectKernelLogs=true
+ProtectKernelModules=true
+ProtectKernelTunables=true
+ProtectSystem=strict
+RestrictRealtime=true
+RestrictSUIDSGID=true
+LockPersonality=true
+ReadWritePaths=@RUNTIME_DIR@ @WALLET_DIR@
+
+[Install]
+WantedBy=multi-user.target
