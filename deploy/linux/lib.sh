@@ -9,6 +9,10 @@ if [ -x "${MONGBAS_RUNTIME_DIR}/tools/go-current/bin/go" ]; then
   PATH="${MONGBAS_RUNTIME_DIR}/tools/go-current/bin:${PATH}"
   export PATH
 fi
+if [ -x "${MONGBAS_RUNTIME_DIR}/tools/fabric-current/bin/peer" ]; then
+  PATH="${MONGBAS_RUNTIME_DIR}/tools/fabric-current/bin:${PATH}"
+  export PATH
+fi
 
 log() { printf '[mongbas] %s\n' "$*"; }
 die() { printf '[mongbas:error] %s\n' "$*" >&2; exit 1; }

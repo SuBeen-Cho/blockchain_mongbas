@@ -27,6 +27,45 @@ node -e 'const [major,minor]=process.versions.node.split(".").map(Number); if(ma
   || die "Node.js 22.12 or newer is required"
 
 ensure_runtime
+
+# A public clean clone intentionally excludes Fabric binaries and generated
+# config. Install the pinned official release into private runtime. Existing
+# repo-local tools are preserved; network.sh prefers this verified runtime copy.
+fabric_version="2.5.16"
+case "$(uname -m)" in
+  x86_64) fabric_arch=amd64; fabric_sha256=18c91e7f2f11b601e6622cc70454d568af897707ee9adf111e9fa91a233881bf ;;
+  aarch64|arm64) fabric_arch=arm64; fabric_sha256=c3c1809afab1998e9f2dd37ccd7fc5fa97658cdeaaa9ca0de29e896bf6dee029 ;;
+  *) die "automatic Fabric binary install supports amd64/arm64 only" ;;
+esac
+fabric_tools="${MONGBAS_RUNTIME_DIR}/tools"
+fabric_target="${fabric_tools}/fabric-${fabric_version}-linux-${fabric_arch}"
+install -d -m 0700 "${fabric_tools}"
+if [ ! -x "${fabric_target}/bin/peer" ] || [ ! -f "${fabric_target}/config/core.yaml" ]; then
+  [ ! -e "${fabric_target}" ] || die "incomplete Fabric runtime target must be preserved for inspection: ${fabric_target}"
+  fabric_archive="$(mktemp)"
+  trap 'rm -f "${fabric_archive:-}"' EXIT
+  log "installing verified Hyperledger Fabric ${fabric_version} binaries in private runtime"
+  curl --fail --location --retry 5 --silent --show-error \
+    "https://github.com/hyperledger/fabric/releases/download/v${fabric_version}/hyperledger-fabric-linux-${fabric_arch}-${fabric_version}.tar.gz" \
+    -o "${fabric_archive}"
+  printf '%s  %s\n' "${fabric_sha256}" "${fabric_archive}" | sha256sum --check --status \
+    || die "Fabric archive checksum mismatch"
+  fabric_staging="${fabric_tools}/.fabric-${fabric_version}-${fabric_arch}.staging"
+  rm -rf "${fabric_staging}"
+  install -d -m 0700 "${fabric_staging}"
+  tar -C "${fabric_staging}" -xzf "${fabric_archive}"
+  [ -x "${fabric_staging}/bin/peer" ] || die "Fabric archive lacks peer binary"
+  [ -f "${fabric_staging}/config/core.yaml" ] || die "Fabric archive lacks core config"
+  mv "${fabric_staging}" "${fabric_target}"
+fi
+ln -sfn "${fabric_target}" "${fabric_tools}/fabric-current"
+
+PATH="${fabric_tools}/fabric-current/bin:${PATH}"
+export PATH
+for tool in peer cryptogen configtxgen osnadmin; do require_cmd "${tool}"; done
+peer_version="$(peer version 2>/dev/null | awk '/Version:/{print $2; exit}')"
+[ "${peer_version}" = "${fabric_version}" ] || die "Fabric CLI version mismatch: expected ${fabric_version}, found ${peer_version:-unknown}"
+
 go_ok=false
 if command -v go >/dev/null 2>&1; then
   go_version="$(go env GOVERSION 2>/dev/null | sed 's/^go//')"

@@ -21,9 +21,12 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 NETWORK_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 PROJECT_DIR="$(cd "$NETWORK_DIR/.." && pwd)"
 
-# 최신 install-fabric.sh는 프로젝트 루트의 bin/config에 압축을 해제한다.
-# 기존 Mac 환경의 fabric-samples 경로도 하위 호환으로 지원한다.
-if [ -d "${PROJECT_DIR}/bin" ]; then
+# Linux bootstrap이 private runtime에 설치한 검증된 pinned toolset을
+# 최우선한다. 기존 repo-local/Mac fabric-samples 경로는 하위 호환이다.
+if [ -n "${MONGBAS_RUNTIME_DIR:-}" ] && [ -x "${MONGBAS_RUNTIME_DIR}/tools/fabric-current/bin/peer" ]; then
+  FABRIC_BIN="${MONGBAS_RUNTIME_DIR}/tools/fabric-current/bin"
+  PEER_CFG_PATH="${MONGBAS_RUNTIME_DIR}/tools/fabric-current/config"
+elif [ -d "${PROJECT_DIR}/bin" ]; then
   FABRIC_BIN="${PROJECT_DIR}/bin"
   PEER_CFG_PATH="${PROJECT_DIR}/config"
 else

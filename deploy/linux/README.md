@@ -8,7 +8,9 @@
 - Node.js 22.12 이상
 - Go 1.23 이상 (`go.mod` 기준; 부족하면 bootstrap이 검증된 Go 1.26.5를 private runtime에 설치)
 - Docker Engine 29 / Docker Compose v2
-- Hyperledger Fabric CLI 2.5.9
+- Hyperledger Fabric CLI 2.5.16
+
+Clean clone에 Fabric CLI가 없어도 `bootstrap.sh`가 official Fabric v2.5.16 Linux amd64/arm64 archive를 private runtime에 받고 GitHub release SHA-256으로 검증한다. `fabric-current` runtime symlink를 통해 해당 toolset을 사용하며, 기존 repo-local `bin/`·`config/`은 덮어쓰지 않는다. 불완전한 runtime target도 자동 삭제하지 않고 조사를 위해 보존한다.
 
 운영 원칙:
 
