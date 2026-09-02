@@ -72,6 +72,7 @@ N=100 측정은 독립된 loopback 벤치마크 백엔드를 `DISABLE_RATE_LIMIT
 `verifier-evaluation.sh`는 3표의 live vector-v3 선거를 만들고 bundle source를 export한 뒤, 서버를 종료하고 임시 2-of-3 Ed25519 서명을 추가한다. 이후 `npm pack`으로 만든 clean 디렉터리 verifier로 정상 bundle은 exit 0, 15개 변조 bundle은 모두 exit 1임을 검증한다. 임시 private key는 result에 저장하지 않고 서명 후 삭제하며, single-host 임시 서명은 기관 독립성 증거로 해석하지 않는다.
 
 `coercion-evaluation.sh`는 격리 backend에서 opaque normal/panic proof capability를 무작위 균형 순서로 조회한다. target nullifier 노출, byte size, latency를 raw JSONL로 보존하고, 훈련/평가를 분리한 threshold classifier와 Wilson 95% CI를 보고한다. 이 gate는 동일 호스트 API transcript만 평가하며 PDC/backend 공모, 공개 revote pattern, compromised client를 증명하지 않는다.
+`full-e2e-evaluation.sh`는 일반 3000 번 서비스를 건드리지 않고 3006 번의 최신 코드 격리 backend에서 full-election E2E를 실행한다. backend log, stdout/stderr, 종료 코드, Git commit과 SHA-256 inventory를 runtime result에 보존하고 worktree가 dirty하면 시작하지 않는다.
 `supply-chain-evidence.sh`는 application/frontend/verifier의 production dependency CycloneDX 1.5 SBOM, deployed npm audit, vendored Go module/toolchain inventory, Docker image digest inventory를 외부 runtime에 저장한다. strict validator는 중복 component reference나 deployed high/critical npm finding이 있으면 non-zero로 종료한다. npm dev/build dependency는 이 production inventory에 포함되지 않으므로 별도 build-tool SBOM/audit이 필요하다. SBOM 존재는 취약점 부재나 공급망 인증을 의미하지 않으며, Go/container/OS 취약점 scanner와 signed provenance는 별도 gate로 남는다.
 
 ## 안전한 종료
