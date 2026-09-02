@@ -54,6 +54,23 @@ const GATEWAY_TIMEOUTS = {
   commit: timeoutMs('FABRIC_COMMIT_TIMEOUT_MS', 180_000, 600_000),
 };
 
+function grpcMaxMessageBytes(env = process.env) {
+  const parsed = Number(env.FABRIC_GRPC_MAX_MESSAGE_BYTES || 64 * 1024 * 1024);
+  if (!Number.isSafeInteger(parsed) || parsed < 4 * 1024 * 1024 || parsed > 256 * 1024 * 1024) {
+    throw new Error('FABRIC_GRPC_MAX_MESSAGE_BYTES must be an integer from 4 MiB to 256 MiB.');
+  }
+  return parsed;
+}
+
+function grpcClientOptions(hostAlias, env = process.env) {
+  const maximum = grpcMaxMessageBytes(env);
+  return {
+    'grpc.ssl_target_name_override': hostAlias,
+    'grpc.max_receive_message_length': maximum,
+    'grpc.max_send_message_length': maximum,
+  };
+}
+
 function gatewayDeadlineOptions() {
   return {
     evaluateOptions: () => ({ deadline: Date.now() + GATEWAY_TIMEOUTS.evaluate }),
@@ -107,9 +124,7 @@ function readPrivateKey(keystoreDir) {
 function newGrpcClient(tlsCaCert = TLS_CA_CERT, endpoint = PEER_ENDPOINT, hostAlias = PEER_HOST_ALIAS) {
   const tlsCert = fs.readFileSync(tlsCaCert);
   const creds   = grpc.credentials.createSsl(tlsCert);
-  return new grpc.Client(endpoint, creds, {
-    'grpc.ssl_target_name_override': hostAlias,
-  });
+  return new grpc.Client(endpoint, creds, grpcClientOptions(hostAlias));
 }
 
 /**
@@ -231,4 +246,5 @@ async function connectGatewayForShareIndex(shareIndex) {
   return connectGatewayForOrg(mspId);
 }
 
-module.exports = { bindClientLifecycle, connectGateway, connectGatewayAsVoter, connectGatewayForOrg, connectGatewayForShareIndex };
+module.exports = { bindClientLifecycle, grpcMaxMessageBytes, grpcClientOptions, connectGateway, connectGatewayAsVoter,
+  connectGatewayForOrg, connectGatewayForShareIndex };
