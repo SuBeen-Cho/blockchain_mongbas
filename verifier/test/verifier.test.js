@@ -12,7 +12,7 @@ const {
   canonicalize, merkleRoot, modInverse, modPow, sha256Hex, unsignedBundle, verifyBundle, verifyBundleBytes,
 } = require('../src/verify');
 const { buildUnsignedBundle, signBundle } = require('../src/bundle');
-const { TRUST_SCHEMA, checkpointHash, createCheckpoint, parseCanonicalLog, publicKeyDer, verifyCheckpointLog } = require('../src/witness');
+const { TRUST_SCHEMA, checkpointHash, compareCheckpointLogs, createCheckpoint, parseCanonicalLog, publicKeyDer, verifyCheckpointLog } = require('../src/witness');
 const { generateVectorBallot } = require('../../application/src/lib/vectorElgamal');
 
 function scalar(label) {
@@ -465,6 +465,23 @@ test('witness rejects checkpoint mutation, broken hash chain and untrusted key',
   assert.throws(() => verifyCheckpointLog([first, wrongChain], trust), /hash chain/);
   const untrusted = { schema: TRUST_SCHEMA, witnesses: [{ id: 'observer', ed25519PublicKeyDer: other.publicKey.export({ format: 'der', type: 'spki' }).toString('base64') }] };
   assert.throws(() => verifyCheckpointLog([first], untrusted), /untrusted witness key/);
+});
+
+test('witness gossip accepts a consistent prefix and rejects two valid signed forks', () => {
+  const bundle = buildBundle(), verification = verifyBundle(bundle), signer = crypto.generateKeyPairSync('ed25519');
+  const privateKeyPem = signer.privateKey.export({ format: 'pem', type: 'pkcs8' });
+  const trust = { schema: TRUST_SCHEMA, witnesses: [{ id: 'observer', ed25519PublicKeyDer: publicKeyDer(privateKeyPem) }] };
+  const first = createCheckpoint({ bundle, verification, witnessID: 'observer', privateKeyPem, sequence: 1,
+    observedAt: '2026-09-02T00:00:00.000Z' });
+  const second = createCheckpoint({ bundle, verification, witnessID: 'observer', privateKeyPem, sequence: 2,
+    previousCheckpointHash: checkpointHash(first), observedAt: '2026-09-02T00:01:00.000Z' });
+  const fork = createCheckpoint({ bundle, verification, witnessID: 'observer', privateKeyPem, sequence: 2,
+    previousCheckpointHash: checkpointHash(first), observedAt: '2026-09-02T00:02:00.000Z' });
+  assert.equal(verifyCheckpointLog([first, fork], trust).valid, true);
+  assert.deepEqual(compareCheckpointLogs([[first], [first, second]], trust), {
+    valid: true, witnessID: 'observer', logs: 2, checkpoints: 2, latestCheckpointHash: checkpointHash(second),
+  });
+  assert.throws(() => compareCheckpointLogs([[first, second], [first, fork]], trust), /equivocation at sequence 2/);
 });
 
 test('witness log parser requires one canonical checkpoint per line', () => {

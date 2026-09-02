@@ -15,10 +15,14 @@ signed, hash-chained checkpoint without contacting Fabric or the backend:
 node bin/mongbas-witness.js init-trust mac-observer /secure/witness-ed25519.pem witness-trust.json
 node bin/mongbas-witness.js observe election-bundle.signed.json checkpoints.jsonl mac-observer /secure/witness-ed25519.pem
 node bin/mongbas-witness.js verify checkpoints.jsonl witness-trust.json
+node bin/mongbas-witness.js compare witness-trust.json observer-a.jsonl observer-b.jsonl
 ```
 
 `init-trust` derives only the public Ed25519 key, creates the trust document
 with mode `0600`, and refuses to overwrite an existing trust document.
+`compare` verifies every supplied log and rejects two individually valid,
+same-witness histories if they contain different signed checkpoints at the same
+sequence. A shorter log that is an exact prefix of a longer log is accepted.
 
 The trust document pins witness identities to Ed25519 public keys:
 

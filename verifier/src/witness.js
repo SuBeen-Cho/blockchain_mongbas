@@ -101,6 +101,32 @@ function verifyCheckpointLog(lines, trust) {
   return { valid: true, checkpoints: lines.length, latestCheckpointHash: previousHash, latest: lines.at(-1) };
 }
 
+function compareCheckpointLogs(logs, trust) {
+  if (!Array.isArray(logs) || logs.length < 2) throw new Error('at least two checkpoint logs are required');
+  let witnessID = null;
+  let longest = null;
+  const observed = new Map();
+  logs.forEach((lines, logIndex) => {
+    const result = verifyCheckpointLog(lines, trust);
+    const ids = new Set(lines.map(checkpoint => checkpoint.witnessID));
+    if (ids.size !== 1) throw new Error(`checkpoint log ${logIndex + 1}: mixed witness identities`);
+    const currentID = lines[0].witnessID;
+    if (witnessID === null) witnessID = currentID;
+    else if (currentID !== witnessID) throw new Error('checkpoint logs use different witness identities');
+    lines.forEach(checkpoint => {
+      const hash = checkpointHash(checkpoint);
+      const prior = observed.get(checkpoint.sequence);
+      if (prior !== undefined && prior !== hash) {
+        throw new Error(`witness equivocation at sequence ${checkpoint.sequence}`);
+      }
+      observed.set(checkpoint.sequence, hash);
+    });
+    if (!longest || result.checkpoints > longest.checkpoints) longest = result;
+  });
+  return { valid: true, witnessID, logs: logs.length, checkpoints: longest.checkpoints,
+    latestCheckpointHash: longest.latestCheckpointHash };
+}
+
 function parseCanonicalLog(text) {
   const rawLines = String(text).split('\n');
   if (rawLines.at(-1) === '') rawLines.pop();
@@ -117,6 +143,7 @@ module.exports = {
   CHECKPOINT_SCHEMA,
   TRUST_SCHEMA,
   checkpointHash,
+  compareCheckpointLogs,
   createCheckpoint,
   parseCanonicalLog,
   publicKeyDer,

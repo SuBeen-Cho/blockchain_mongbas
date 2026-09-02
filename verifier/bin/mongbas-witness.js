@@ -4,13 +4,14 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const { canonicalize, verifyBundleBytes } = require('../src/verify');
-const { TRUST_SCHEMA, checkpointHash, createCheckpoint, parseCanonicalLog, publicKeyDer, verifyCheckpointLog } = require('../src/witness');
+const { TRUST_SCHEMA, checkpointHash, compareCheckpointLogs, createCheckpoint, parseCanonicalLog, publicKeyDer, verifyCheckpointLog } = require('../src/witness');
 
 function usage(exitCode = 2) {
   console.error('Usage:');
   console.error('  mongbas-witness init-trust <witness-id> <ed25519-private.pem> <witness-trust.json>');
   console.error('  mongbas-witness observe <bundle.json> <checkpoint.jsonl> <witness-id> <ed25519-private.pem>');
   console.error('  mongbas-witness verify <checkpoint.jsonl> <witness-trust.json>');
+  console.error('  mongbas-witness compare <witness-trust.json> <checkpoint-a.jsonl> <checkpoint-b.jsonl> [...]');
   process.exit(exitCode);
 }
 
@@ -84,11 +85,21 @@ function verify(logPath, trustPath) {
   console.log(`latestElectionID=${result.latest.electionID}`);
 }
 
+function compare(trustPath, logPaths) {
+  const trust = JSON.parse(fs.readFileSync(trustPath, 'utf8'));
+  const logs = logPaths.map(logPath => parseCanonicalLog(fs.readFileSync(logPath, 'utf8')));
+  const result = compareCheckpointLogs(logs, trust);
+  console.log(`CONSISTENT: ${result.logs} checkpoint logs for witness ${result.witnessID}`);
+  console.log(`latestCheckpointHash=${result.latestCheckpointHash}`);
+  console.log(`checkpoints=${result.checkpoints}`);
+}
+
 try {
   const [command, ...args] = process.argv.slice(2);
   if (command === 'init-trust' && args.length === 3) initTrust(args[0], path.resolve(args[1]), path.resolve(args[2]));
   else if (command === 'observe' && args.length === 4) observe(path.resolve(args[0]), path.resolve(args[1]), args[2], path.resolve(args[3]));
   else if (command === 'verify' && args.length === 2) verify(...args.map(value => path.resolve(value)));
+  else if (command === 'compare' && args.length >= 3) compare(path.resolve(args[0]), args.slice(1).map(value => path.resolve(value)));
   else if (command === '--help' || command === '-h') usage(0);
   else usage();
 } catch (error) {
