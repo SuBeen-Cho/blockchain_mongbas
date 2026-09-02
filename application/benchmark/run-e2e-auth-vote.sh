@@ -16,12 +16,25 @@ log() { echo "[$(date +%H:%M:%S)] $*"; }
 start_server() {
   local mode="$1"; shift
   local env_vars="$*"
+  local expected_health_mode expected_health_impl
+  case "${mode}" in
+    A-bypass) expected_health_mode=bypass; expected_health_impl=HMAC-SHA256 ;;
+    HMAC) expected_health_mode=idemix-hmac; expected_health_impl=HMAC-SHA256 ;;
+    Ed25519) expected_health_mode=idemix-hmac; expected_health_impl=Ed25519-asymmetric ;;
+    B-PS-BN254) expected_health_mode=idemix-ps; expected_health_impl='PS-BN254 (B단계: 진짜 Idemix CL)' ;;
+    C-BBS) expected_health_mode=idemix-bbs; expected_health_impl='BBS+-BLS12381 (C단계: 개선 Idemix)' ;;
+    *) echo "unknown mode: ${mode}" >&2; exit 1 ;;
+  esac
   log "server start: ${mode}"
   eval "env DISABLE_RATE_LIMITS=true SESSION_SECRET=bench-session-secret CREDENTIAL_SECRET=bench-credential-secret $env_vars node src/app.js > /tmp/mongbas-e2e-server.log 2>&1 &"
   SERVER_PID=$!
   for _ in $(seq 1 50); do
-    if curl -sf http://localhost:3000/health >/dev/null 2>&1; then
-      curl -s http://localhost:3000/health | node -e "const d=JSON.parse(require('fs').readFileSync(0,'utf8')); console.log('  mode:', d.idemix.mode, '| impl:', d.idemix.impl);"
+    if curl --fail --silent --show-error http://localhost:3000/health | \
+      EXPECTED_HEALTH_MODE="${expected_health_mode}" EXPECTED_HEALTH_IMPL="${expected_health_impl}" node -e '
+        const d = JSON.parse(require("node:fs").readFileSync(0, "utf8"));
+        if (d.status !== "ok" || d.idemix?.mode !== process.env.EXPECTED_HEALTH_MODE || d.idemix?.impl !== process.env.EXPECTED_HEALTH_IMPL) process.exit(1);
+        console.log("  mode:", d.idemix.mode, "| impl:", d.idemix.impl);
+      '; then
       return
     fi
     sleep 0.4
