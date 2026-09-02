@@ -77,4 +77,8 @@ printf '{"schema":"mongbas-coercion-evaluation/v1","startedAt":"%s","endedAt":"%
 (cd "${out}" && find . -type f ! -name sha256-inventory.txt -print0 | sort -z | xargs -0 sha256sum) >"${out}/sha256-inventory.txt"
 
 log "coercion evidence saved to ${out}"
-[ "${status}" -eq 0 ] || die "coercion distinguishability gate failed; evidence retained"
+case "${status}" in
+  0) ;;
+  1) die "coercion distinguishability security gate failed; evidence retained" ;;
+  *) die "coercion evaluator failed before producing a security verdict (exit ${status}); evidence retained" ;;
+esac

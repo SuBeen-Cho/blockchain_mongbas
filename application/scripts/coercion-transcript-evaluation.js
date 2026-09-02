@@ -67,8 +67,12 @@ async function main() {
     startTime: now - 10, endTime: now + 3600, encryptionMode: 'aes',
   }) }));
   await ok('activate', requestJson(`/api/elections/${encodeURIComponent(electionID)}/activate`, { method: 'POST', body: '{}' }));
-  const enrollmentID = `coercion-${crypto.randomBytes(12).toString('hex')}`;
-  const enrollmentSecret = crypto.randomBytes(32).toString('hex');
+  // The isolated evaluator deliberately uses the explicit demo registry enabled
+  // by deploy/linux/coercion-evaluation.sh. Arbitrary generated identities are
+  // not registered voters and would only measure a credential-authentication
+  // failure rather than the normal/panic transcript.
+  const enrollmentID = `demo${String(crypto.randomInt(1, 1001)).padStart(3, '0')}`;
+  const enrollmentSecret = `${enrollmentID}pw`;
   const issued = await ok('credential', requestJson('/api/credential/idemix', { method: 'POST', body: JSON.stringify({
     enrollmentID, enrollmentSecret, electionID,
   }) }));
