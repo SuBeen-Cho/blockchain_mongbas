@@ -64,6 +64,7 @@ PATH="${fabric_tools}/fabric-current/bin:${PATH}"
 export PATH
 for tool in peer cryptogen configtxgen osnadmin; do require_cmd "${tool}"; done
 peer_version="$(peer version 2>/dev/null | awk '/Version:/{print $2; exit}')"
+peer_version="${peer_version#v}"
 [ "${peer_version}" = "${fabric_version}" ] || die "Fabric CLI version mismatch: expected ${fabric_version}, found ${peer_version:-unknown}"
 
 go_ok=false
