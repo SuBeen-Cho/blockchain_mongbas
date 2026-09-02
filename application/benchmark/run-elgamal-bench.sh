@@ -4,7 +4,7 @@
 #
 # 사용법:
 #   cd mongbas/application
-#   bash benchmark/run-elgamal-bench.sh [--n 100] [--warmup 10]
+#   bash benchmark/run-elgamal-bench.sh [--n 100] [--warmup 10] [--url http://localhost:3000]
 #
 # 사전 조건:
 #   1. Fabric 네트워크 기동 + 체인코드 배포 완료
@@ -17,9 +17,25 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-N="${1:-100}"
-WARMUP="${2:-10}"
-URL="${3:-http://localhost:3000}"
+N=100
+WARMUP=10
+URL=http://localhost:3000
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --n) [ "$#" -ge 2 ] || { echo "[ERROR] --n requires a value" >&2; exit 2; }; N="$2"; shift 2 ;;
+    --warmup) [ "$#" -ge 2 ] || { echo "[ERROR] --warmup requires a value" >&2; exit 2; }; WARMUP="$2"; shift 2 ;;
+    --url) [ "$#" -ge 2 ] || { echo "[ERROR] --url requires a value" >&2; exit 2; }; URL="$2"; shift 2 ;;
+    --help)
+      printf '%s\n' 'Usage: bash benchmark/run-elgamal-bench.sh [--n 100] [--warmup 10] [--url http://localhost:3000]'
+      exit 0
+      ;;
+    *) echo "[ERROR] unknown argument: $1" >&2; exit 2 ;;
+  esac
+done
+[[ "${N}" =~ ^[1-9][0-9]*$ ]] || { echo "[ERROR] --n must be a positive integer" >&2; exit 2; }
+[[ "${WARMUP}" =~ ^[0-9]+$ ]] || { echo "[ERROR] --warmup must be a non-negative integer" >&2; exit 2; }
+node -e 'const u=new URL(process.argv[1]); if (!["http:", "https:"].includes(u.protocol) || u.username || u.password) process.exit(1)' "${URL}" \
+  || { echo "[ERROR] --url must be credential-free HTTP(S)" >&2; exit 2; }
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 REPORT_DIR="benchmark-reports"
 
@@ -74,7 +90,8 @@ echo "════════════════════════�
 echo ""
 echo " 각 시나리오별로 서버 환경변수를 변경하고 재기동해야 합니다:"
 echo ""
-echo " S1 (Ed25519):  IDEMIX_ENABLED=true IDEMIX_IMPL=ed25519 npm start"
+echo " S1 (Ed25519):  IDEMIX_ENABLED=true ASYM_CRED_ENABLED=true npm start"
+echo " S1b (HMAC):    IDEMIX_ENABLED=true ASYM_CRED_ENABLED=false npm start"
 echo " S2 (PS-BN254): IDEMIX_ENABLED=true IDEMIX_IMPL=ps npm start"
 echo " S3 (BBS+):     IDEMIX_ENABLED=true IDEMIX_IMPL=bbs npm start"
 echo ""
@@ -90,15 +107,18 @@ IMPL=$(curl --fail --silent --show-error "${URL}/health" | node -e "
   if (!i.enabled) console.log('bypass');
   else if (i.idemixImpl === 'ps') console.log('ps');
   else if (i.idemixImpl === 'bbs') console.log('bbs');
-  else console.log('ed25519');
-" 2>/dev/null)
+  else if (i.idemixImpl === 'hmac' && i.asymEnabled === true) console.log('ed25519');
+  else if (i.idemixImpl === 'hmac' && i.asymEnabled === false) console.log('hmac');
+  else process.exit(1);
+")
 
 case "${IMPL}" in
   ps)       run_scenario "S2-PS-BN254" ;;
   bbs)      run_scenario "S3-BBS" ;;
   ed25519)  run_scenario "S1-Ed25519" ;;
+  hmac)     run_scenario "S1b-HMAC" ;;
   bypass)   run_scenario "S0-bypass" ;;
-  *)        run_scenario "unknown-${IMPL}" ;;
+  *)        echo "[ERROR] unsupported server credential mode: ${IMPL}" >&2; exit 1 ;;
 esac
 
 echo ""
