@@ -153,3 +153,11 @@ test('BBS runtime and Linux build stay on the audited WASM dependency path', () 
   assert.match(runGuide, /application[\s\S]{0,100}npm ci --omit=optional/);
   assert.doesNotMatch(runGuide, /cd application[\s\S]{0,100}npm install/);
 });
+
+test('application lock overrides the vulnerable qs 6.15 dependency line', () => {
+  const manifest = JSON.parse(read('application/package.json'));
+  const lock = JSON.parse(read('application/package-lock.json'));
+
+  assert.equal(manifest.overrides?.qs, '6.16.0');
+  assert.equal(lock.packages?.['node_modules/qs']?.version, '6.16.0');
+});
