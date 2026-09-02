@@ -127,7 +127,7 @@ export default function TrackPage({ electionId }) {
                 ))}
               </div>
               <p style={{ color: '#854d0e', fontSize: 13, marginTop: 8 }}>↑ {res.idx + 1}번째 줄이 당신의 표입니다.</p>
-              <p style={{ color: '#94a3b8', fontSize: 11, marginTop: 2 }}>게시판에는 강압 저항을 위한 디코이(decoy) 기록이 섞여 있어 전체 {res.total}건입니다. 실제 집계 표 수는 아래 ④를 보세요.</p>
+              <p style={{ color: '#94a3b8', fontSize: 11, marginTop: 2 }}>이 연구용 게시판에는 decoy 기록이 섞일 수 있어 전체 {res.total}건입니다. 이 기능만으로 강압저항성이 검증되지는 않습니다.</p>
             </div>
 
             {/* 3. Merkle 봉인 */}
@@ -150,10 +150,10 @@ export default function TrackPage({ electionId }) {
 
             {/* 5. 운영자도 못 본다 */}
             <div style={card}>
-              <Step n="5" t="운영자도 못 본다 (이 표의 원장 기록 전부)" />
+              <Step n="5" t="개별 선택 평문을 기록하지 않는 정상 흐름" />
               <Row label="추적번호(단방향 해시)" val={res.full} />
               <Row label="암호문 (c1:c2)" val={res.cipher} />
-              <p style={{ marginTop: 8, fontSize: 13 }}>후보? <b style={{ color: '#b91c1c' }}>❌ 불가</b>　이름? <b style={{ color: '#b91c1c' }}>❌ 불가</b> — 개별 표는 시스템이 절대 복호화하지 않고(합계만), 그 합계도 2-of-3 기관 키조각이 모여야 열립니다.</p>
+              <p style={{ marginTop: 8, fontSize: 13 }}>정상 집계 경로는 개별 표가 아닌 암호화된 합계만 2-of-3 부분복호화합니다. 단일 host root·trustee 공모 한계는 별도 보안 평가 범위입니다.</p>
             </div>
 
             {/* 변조 데모 */}

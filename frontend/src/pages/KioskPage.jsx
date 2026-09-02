@@ -164,7 +164,7 @@ export default function KioskPage({ electionId }) {
     </Shell>
   );
 
-  // 강압 저항 데모 트리거 — 고른 뒤 화면·영수증·검증은 두 모드가 100% 동일
+  // 연구용 panic 트리거 — 제한된 UI/API 경로만 다루며 전체 강압저항성을 의미하지 않음
   if (phase === 'choose') return (
     <Shell>
       <h1 style={{ fontSize: 24, fontWeight: 900, margin: '4px 0 6px', letterSpacing: '-0.04em' }}>{election.title}</h1>

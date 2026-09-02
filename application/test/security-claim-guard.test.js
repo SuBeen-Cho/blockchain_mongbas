@@ -11,6 +11,10 @@ const read = relative => fs.readFileSync(path.join(root, relative), 'utf8');
 test('runtime metadata and UI do not self-certify coercion resistance', () => {
   const chaincode = read('chaincode/voting/voting.go');
   const verifyPage = read('frontend/src/pages/VerifyPage.jsx');
+  const voterPage = read('frontend/src/pages/VoterPage.jsx');
+  const controlPage = read('frontend/src/pages/ControlPage.jsx');
+  const trackPage = read('frontend/src/pages/TrackPage.jsx');
+  const receiptFree = read('frontend/src/components/verify-animations/ReceiptFreeDiagram.jsx');
   const diagram = read('frontend/src/components/verify-animations/DeniableDiagram.jsx');
   const e2e = read('application/scripts/full-election-e2e.js');
 
@@ -18,7 +22,13 @@ test('runtime metadata and UI do not self-certify coercion resistance', () => {
   assert.doesNotMatch(chaincode, /Cleansing-Hiding coercion resistance/);
   assert.match(chaincode, /Property:\s+"Coercion Resistance"[\s\S]{0,120}Status:\s+"unverified"/);
   assert.doesNotMatch(verifyPage, /강압자가 어느 것이 진짜인지 구분할 수 없/);
+  assert.doesNotMatch(verifyPage, /공개된 암호화 키로 모든 투표를 복호화|receipt 생성이 원천 불가/);
+  assert.doesNotMatch(voterPage, /Idemix 익명 자격 증명을 발급|100% 동일/);
+  assert.doesNotMatch(controlPage, /100% 동일|강압자 구별 불가/);
+  assert.doesNotMatch(trackPage, /시스템이 절대 복호화하지 않/);
+  assert.doesNotMatch(receiptFree, /receipt 생성이 원천 불가|강압자에게 누구를 찍었는지 증명할 수 없/);
   assert.doesNotMatch(diagram, /Coercion Resistance —/);
+  assert.doesNotMatch(diagram, /강압자가 구분 불가/);
   assert.doesNotMatch(e2e, /Coercion Resistance E2E Test/);
 });
 

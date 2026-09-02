@@ -5,8 +5,8 @@ const spring = { type: 'spring', stiffness: 260, damping: 22 };
 const items = [
   { key: 'included', label: '포함 여부', status: 'pass', desc: '투표가 집계에 포함되어 있습니다' },
   { key: 'candidate', label: '후보자 정보', status: 'block', desc: '반환하지 않음 — 누구에게 투표했는지 알 수 없음' },
-  { key: 'proof', label: 'Merkle Proof', status: 'block', desc: '반환하지 않음 — 제3자에게 증명 불가' },
-  { key: 'ciphertext', label: '암호문 데이터', status: 'block', desc: '반환하지 않음 — 복호화 시도 불가' },
+  { key: 'proof', label: 'Merkle Proof', status: 'block', desc: '이 API 응답에서 미반환' },
+  { key: 'ciphertext', label: '암호문 데이터', status: 'block', desc: '이 API 응답에서 미반환' },
 ];
 
 export default function ReceiptFreeDiagram({ verifySteps = [], result = null }) {
@@ -23,7 +23,7 @@ export default function ReceiptFreeDiagram({ verifySteps = [], result = null }) 
         </div>
         <div>
           <p className="text-sm font-bold text-slate-800">Receipt-Free 검증 흐름</p>
-          <p className="text-[11px] text-slate-400">강압자에게 "누구를 찍었는지" 증명하는 receipt 생성이 원천 불가</p>
+          <p className="text-[11px] text-slate-400">후보·proof·암호문을 제거한 API 응답 형태 데모</p>
         </div>
       </div>
 
@@ -97,8 +97,8 @@ export default function ReceiptFreeDiagram({ verifySteps = [], result = null }) 
       {done && (
         <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ ...spring, delay: 0.8 }}
           className="bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 space-y-1">
-          <p className="text-xs font-bold text-amber-700">Receipt 생성 불가</p>
-          <p className="text-[11px] text-amber-600">후보자 정보와 증명 데이터가 차단되어, 유권자는 "투표했다"는 사실만 확인 가능합니다. 강압자에게 누구를 찍었는지 증명할 수 없습니다.</p>
+          <p className="text-xs font-bold text-amber-700">제한된 정보 반환</p>
+          <p className="text-[11px] text-amber-600">이 응답은 후보·proof·암호문을 포함하지 않습니다. 다른 API·공개 원장·네트워크·단말 관측을 포함한 receipt-freeness는 별도 미검증입니다.</p>
           {result && (
             <div className="font-mono text-[10px] text-amber-500 bg-amber-100/50 rounded px-3 py-1 mt-1">
               포함: <span className="font-bold">{result.included ? 'YES' : 'NO'}</span> / 총 투표: <span className="font-bold">{result.totalVotes}표</span> / 후보 정보: <span className="font-bold text-red-500">차단됨</span>

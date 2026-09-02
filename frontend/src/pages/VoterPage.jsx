@@ -353,7 +353,7 @@ export default function VoterPage() {
           <div>
             <h2 className="text-xl font-bold text-slate-900">유권자 인증</h2>
             <p className="text-sm text-slate-500 mt-1">
-              Idemix 익명 자격 증명을 발급받습니다. 블록체인에 신원이 기록되지 않습니다.
+              선거에 결합된 자격증명을 발급받습니다. 현재 기본 Ed25519 모드는 완전 익명 credential이 아닙니다.
             </p>
           </div>
 
@@ -382,7 +382,7 @@ export default function VoterPage() {
           </div>
 
           {credStatus === 'ok' && (
-            <Alert variant="success">익명 자격증명이 발급되었습니다.</Alert>
+            <Alert variant="success">선거별 자격증명이 발급되었습니다.</Alert>
           )}
           {credStatus === 'fetching' && (
             <Alert variant="info">자격증명 발급 중...</Alert>
@@ -547,7 +547,7 @@ export default function VoterPage() {
             </summary>
             <div className="px-4 pb-4 space-y-3 border-t border-slate-100 pt-3">
               <p className="text-xs text-slate-500">
-                강압 상황에서 가짜 증명을 제공하는 보호 기능. Normal 비밀번호로는 실제 투표 증명, Panic 비밀번호로는 가짜 증명이 반환됩니다.
+                서로 다른 검증 결과를 반환하는 연구용 데모입니다. 제한된 API 관측 실험만 통과했으며 전체 강압저항성은 미검증입니다.
               </p>
               <input
                 className="w-full h-10 px-3 border border-slate-200 rounded-lg text-sm

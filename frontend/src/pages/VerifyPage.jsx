@@ -274,7 +274,7 @@ export default function VerifyPage() {
 
         {mode === 'bulletin' && (
           <Alert variant="info">
-            선거 종료 후 공개된 암호화 키로 모든 투표를 복호화하고 재집계합니다. 인증 불필요 — 누구나 검증 가능.
+            공개 번들의 암호문·증명·집계·trustee 부분복호화를 독립 verifier로 재검증합니다. 공개 암호화 키만으로 투표를 복호화할 수는 없습니다.
           </Alert>
         )}
 
@@ -286,7 +286,7 @@ export default function VerifyPage() {
 
         {mode === 'receipt-free' && (
           <Alert variant="warning">
-            포함 여부만 확인합니다. 후보자 정보나 증명 데이터가 반환되지 않아 receipt 생성이 불가합니다.
+            포함 여부만 반환하는 제한된 조회입니다. 이 응답 형태만으로 전체 receipt-freeness나 강압저항성이 증명되지는 않습니다.
           </Alert>
         )}
 
@@ -528,11 +528,11 @@ export default function VerifyPage() {
                 <p>1. 서버는 nullifier 존재 여부만 확인 → <span className="font-semibold">포함/미포함</span>만 반환</p>
                 <p>2. 후보자 정보, Merkle proof, 암호문 등 <span className="font-semibold text-red-600">일체 미반환</span></p>
                 <p>3. 따라서 유권자는 <span className="font-semibold">자신이 투표했다는 사실</span>만 확인 가능</p>
-                <p>4. 강압자에게 "누구를 찍었는지" 증명하는 receipt 생성이 <span className="font-semibold text-red-600">원천 불가</span></p>
+                <p>4. 이 API는 후보·Merkle proof·암호문을 반환하지 않음 — <span className="font-semibold text-red-600">전체 coercer 관측면은 별도 미검증</span></p>
               </div>
             </div>
             <Alert variant="info">
-              후보자 정보, Merkle proof 등 증명 데이터는 반환되지 않습니다 — receipt 생성 불가 (Receipt-Free 속성)
+              후보자 정보와 Merkle proof를 반환하지 않는 제한된 API 데모입니다. Receipt-Free 전체 속성은 미검증입니다.
             </Alert>
           </div>
         </div>

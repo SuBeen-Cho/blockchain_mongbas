@@ -478,12 +478,12 @@ function TallyView({ results, decrypted, total, max, busy, votes, shuffled, live
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 16 }}>
             <span style={{ fontSize: 12.5, fontWeight: 900, padding: '6px 11px', background: T.paper2, color: T.blue }}>전체 {Math.max(live || 0, total)}표</span>
             <span style={{ fontSize: 12.5, fontWeight: 900, padding: '6px 11px', background: T.blue, color: '#fff' }}>정상 {total}표 집계</span>
-            {panic > 0 && <span style={{ fontSize: 12.5, fontWeight: 900, padding: '6px 11px', background: T.ink, color: '#fff' }}>🟦 패닉 {panic}표 집계 제외 (강압 저항)</span>}
+            {panic > 0 && <span style={{ fontSize: 12.5, fontWeight: 900, padding: '6px 11px', background: T.ink, color: '#fff' }}>🟦 패닉 {panic}표 집계 제외 (연구 데모)</span>}
           </div>
         )}
         {panic > 0 && decrypted && (
           <div style={{ fontSize: 12.5, fontWeight: 700, color: T.sub, marginBottom: 14, lineHeight: 1.5 }}>
-            패닉 표는 투표·영수증·검증까지 정상 표와 100% 동일하지만(강압자 구별 불가), 결과 집계에서만 제외됩니다.
+            제한된 API 응답 크기·타이밍 실험은 관측된 차이를 줄였지만, PDC 운영자·네트워크·재투표 패턴을 포함한 전체 강압저항성은 미검증입니다.
           </div>
         )}
         {results ? CANDIDATES.map((c, i) => {

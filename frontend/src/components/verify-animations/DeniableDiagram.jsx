@@ -86,7 +86,7 @@ export default function DeniableDiagram({ verifySteps = [], result = null, prevR
           {allDone && (
             <motion.text x="170" y="148" textAnchor="middle" fontSize="7" fontWeight="700" fill="#d97706"
               initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 1 }}
-            >둘 다 "검증 성공" — 강압자가 구분 불가!</motion.text>
+            >둘 다 검증 형태 응답 — 제한된 API 데모</motion.text>
           )}
         </svg>
       </div>
