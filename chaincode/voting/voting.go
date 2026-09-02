@@ -1793,7 +1793,6 @@ func (c *VotingContract) castVoteInternal(
 			return fmt.Errorf("기존 Nullifier 파싱 실패: %w", err)
 		}
 		evictCount = prev.EvictCount + 1
-		log.Printf("[CastVote] Eviction 감지 — nullifier: %s, 재투표 #%d", nullifierHash[:16], evictCount)
 	}
 
 	// ── Step 3: Transient Map에서 비공개 투표 데이터 읽기 ────
@@ -1829,7 +1828,6 @@ func (c *VotingContract) castVoteInternal(
 		ct := strings.TrimSpace(string(ctBytes))
 		if ct == "panic" {
 			vp.CredentialType = "panic"
-			log.Printf("[CastVote] PANIC credential 감지 — nullifier: %s...", nullifierHash[:16])
 		} else {
 			vp.CredentialType = "real"
 		}
@@ -2565,7 +2563,6 @@ func (c *VotingContract) tallyVotesInternal(
 		results[cand] = 0 // 0표도 명시적으로 기록
 	}
 	totalVotes := 0
-	panicFiltered := 0 // [PAPER-12] Cleansing-Hiding: 필터링된 패닉 투표 수 (비공개)
 	var decProofs []DecryptionProof
 
 	// [PAPER-13] 동형 집계를 위한 암호문 누적기 (ElGamal 모드)
@@ -2605,7 +2602,6 @@ func (c *VotingContract) tallyVotesInternal(
 		if vpBytes != nil {
 			var vpCheck VotePrivate
 			if json.Unmarshal(vpBytes, &vpCheck) == nil && vpCheck.CredentialType == "panic" {
-				panicFiltered++
 				continue
 			}
 		}
@@ -2795,9 +2791,9 @@ func (c *VotingContract) tallyVotesInternal(
 		return nil, fmt.Errorf("VoteTally 원장 저장 실패: %w", err)
 	}
 
-	// [PAPER-12] panicFiltered 수는 로그에만 기록 (공개 원장에 포함하지 않음 — CHide 원칙)
-	log.Printf("[TallyVotes] 집계 완료 — election: %s, 유효 투표: %d, 패닉 필터링: %d",
-		electionID, totalVotes, panicFiltered)
+	// Do not log the filtered-transcript count or any per-ballot panic marker.
+	// Either value gives a peer/container-log observer a direct coercion oracle.
+	log.Printf("[TallyVotes] 집계 완료 — election: %s, 유효 투표: %d", electionID, totalVotes)
 	return &tally, nil
 }
 

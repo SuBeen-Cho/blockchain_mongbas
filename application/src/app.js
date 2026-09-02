@@ -209,7 +209,6 @@ app.listen(PORT, '0.0.0.0', HTTP_LISTEN_BACKLOG, () => {
 [INFO] 엔드포인트 목록: http://localhost:${PORT}/
 [INFO] 헬스 체크: http://localhost:${PORT}/health
 [INFO] HTTP listen backlog: ${HTTP_LISTEN_BACKLOG}
-[INFO] Panic Mode 비밀번호: 환경변수 PANIC_PASSWORD 참조
 
 [WARNING] 네트워크가 기동된 상태에서만 정상 동작합니다.
   → cd ../network && ./scripts/network.sh up
