@@ -82,3 +82,15 @@ test('legacy security scenario runner is quarantined before network access', () 
   assert.match(run.stderr, /UNSUPPORTED/);
   assert.doesNotMatch(run.stderr, /측정 완료/);
 });
+
+test('BBS runtime and Linux build stay on the audited WASM dependency path', () => {
+  const bbs = read('application/src/lib/bbs-idemix.js');
+  const build = read('deploy/linux/build.sh');
+  const docs = read('deploy/linux/README.md');
+
+  assert.match(bbs, /process\.env\.BBS_SIGNATURES_MODE\s*=\s*['"]WASM['"]/);
+  assert.match(build, /npm --prefix \"\$\{MONGBAS_REPO_DIR\}\/application\" ci --omit=optional/);
+  assert.match(build, /npm --prefix \"\$\{MONGBAS_REPO_DIR\}\/application\" audit --omit=optional --audit-level=high/);
+  assert.match(docs, /BBS_SIGNATURES_MODE=WASM/);
+  assert.match(docs, /npm ci --omit=optional/);
+});
