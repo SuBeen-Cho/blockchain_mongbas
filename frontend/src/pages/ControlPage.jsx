@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import QRCode from 'qrcode';
 import { computeMerkleRootFromProof } from '../utils/crypto.js';
+import { buildSecureKioskUrl } from '../utils/kioskUrl.js';
 
 /**
  * ControlPage — 발표자 관제판 (Editorial Cobalt 개편)
@@ -25,14 +26,7 @@ const T = {
 const tr = (s, n = 10) => (s ? `${s.slice(0, n)}…${s.slice(-4)}` : '—');
 function kioskURL(electionID) {
   const configured = String(import.meta.env.VITE_PUBLIC_VOTER_ORIGIN || '').trim();
-  let origin = window.location.origin;
-  if (configured) {
-    try {
-      const candidate = new URL(configured);
-      if (candidate.protocol === 'https:' || candidate.protocol === 'http:') origin = candidate.origin;
-    } catch { /* fall back to the dashboard origin */ }
-  }
-  return `${origin}/?app=kiosk&e=${encodeURIComponent(electionID)}`;
+  return buildSecureKioskUrl(electionID, window.location.origin, configured);
 }
 
 async function J(path, opts = {}) {
@@ -107,7 +101,10 @@ export default function ControlPage() {
   const [tallyMath, setTallyMath] = useState(null); // 개표 집계 과정 실제 계산값
   const [narrow, setNarrow] = useState(typeof window !== 'undefined' && window.innerWidth < 860);
   const pollRef = useRef(null); const evRef = useRef(0);
-  const kioskUrl = eid ? kioskURL(eid) : '';
+  let kioskUrl = ''; let kioskUrlError = '';
+  if (eid) {
+    try { kioskUrl = kioskURL(eid); } catch (error) { kioskUrlError = error.message; }
+  }
   useEffect(() => { const f = () => setNarrow(window.innerWidth < 860); window.addEventListener('resize', f); return () => window.removeEventListener('resize', f); }, []);
   const addLog = useCallback((m) => setLog((l) => [`${new Date().toLocaleTimeString()} ${m}`, ...l].slice(0, 10)), []);
 
@@ -327,7 +324,7 @@ export default function ControlPage() {
             <div style={{ display: 'grid', gridTemplateColumns: narrow ? '1fr' : 'minmax(0,1.6fr) minmax(0,1fr)', gap: 18, alignItems: 'start' }}>
               <VoteTable votes={votes} shuffled={shuffled} status={status} />
               <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
-                <QRCard qr={qr} url={kioskUrl} />
+                <QRCard qr={qr} url={kioskUrl} error={kioskUrlError} />
                 <LogCard log={log} />
               </div>
             </div>
@@ -432,13 +429,13 @@ function VoteTable({ votes, shuffled, status }) {
     </section>
   );
 }
-function QRCard({ qr, url }) {
+function QRCard({ qr, url, error }) {
   return (
     <section style={{ ...box, textAlign: 'center' }}>
       <div style={over}>여기 찍고 투표하세요</div>
       <div style={{ marginTop: 14, display: 'flex', justifyContent: 'center' }}>
         {qr ? <img src={qr} alt="QR" style={{ width: 200, height: 200, border: `1.5px solid ${T.line}` }} />
-          : <div style={{ width: 200, height: 200, background: T.paper2, display: 'flex', alignItems: 'center', justifyContent: 'center', color: T.sub, fontSize: 13, fontWeight: 700 }}>새 세션 시작 시 QR 표시</div>}
+          : <div style={{ width: 200, height: 200, padding: 18, boxSizing: 'border-box', background: T.paper2, display: 'flex', alignItems: 'center', justifyContent: 'center', color: error ? '#b42318' : T.sub, fontSize: 13, fontWeight: 700 }}>{error || '새 세션 시작 시 QR 표시'}</div>}
       </div>
       {url && <div style={{ marginTop: 10, fontSize: 10.5, color: T.sub, wordBreak: 'break-all', fontFamily: 'monospace' }}>{url}</div>}
     </section>

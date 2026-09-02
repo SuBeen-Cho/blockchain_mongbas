@@ -10,6 +10,7 @@ require_cmd go
 log "installing reproducible Node dependencies"
 npm --prefix "${MONGBAS_REPO_DIR}/application" ci --omit=optional
 npm --prefix "${MONGBAS_REPO_DIR}/frontend" ci
+npm --prefix "${MONGBAS_REPO_DIR}/frontend" test
 log "running chaincode unit/property tests"
 (cd "${MONGBAS_REPO_DIR}/chaincode/voting" && go test ./...)
 

@@ -6,6 +6,7 @@ import {
   generateBallotValidityProof,
   generateVectorBallotV3,
 } from '../utils/crypto.js';
+import { browserCryptoReady } from '../utils/kioskUrl.js';
 
 /**
  * KioskPage — 부스 시연용 폰 투표 (Editorial Cobalt · 라이트)
@@ -56,6 +57,7 @@ export default function KioskPage({ electionId }) {
   useEffect(() => {
     (async () => {
       if (!electionId) { setErr('선거 ID가 없습니다. QR을 다시 스캔하세요.'); setPhase('error'); return; }
+      if (!browserCryptoReady(window)) { setErr('이 투표 화면은 HTTPS 보안 연결과 Web Crypto가 필요합니다. QR URL을 확인하세요.'); setPhase('error'); return; }
       try {
         const el = await J(`/elections/${encodeURIComponent(electionId)}`);
         if (el.status !== 'ACTIVE') { setErr('투표가 마감되었거나 아직 시작되지 않았습니다.'); setPhase('error'); return; }
