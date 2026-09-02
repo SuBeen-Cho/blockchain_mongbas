@@ -31,6 +31,12 @@ fi
 [ ! -s "${out}/git-status.txt" ] || die "DKG live evaluation requires a clean worktree"
 cp "${dkg_public}/transcript.json" "${out}/transcript.json"
 
+partial_audit_log=""
+if [ -n "${MONGBAS_DKG_PARTIAL_HELPER:-}" ]; then
+  partial_audit_log="${out}/os-trustee-executions.jsonl"
+  install -m 0600 /dev/null "${partial_audit_log}"
+fi
+
 curl -fsS --max-time 10 http://127.0.0.1:3000/health >"${out}/backend-health.json"
 
 count_shared_pdc() {
@@ -60,6 +66,7 @@ set +e
 MONGBAS_DKG_TRANSCRIPT="${dkg_public}/transcript.json" \
 MONGBAS_DKG_SECRET_ROOT="${dkg_secret}" \
 MONGBAS_DKG_PARTIAL_HELPER="${MONGBAS_DKG_PARTIAL_HELPER:-}" \
+MONGBAS_DKG_PARTIAL_AUDIT_LOG="${partial_audit_log}" \
 MONGBAS_DKG_BASE_URL="http://127.0.0.1:3000" \
 node "${MONGBAS_REPO_DIR}/application/scripts/dkg-election-e2e.js" \
   >"${out}/evaluation.json" 2>"${out}/evaluation.stderr.log"
@@ -79,6 +86,19 @@ try { result = JSON.parse(fs.readFileSync(path.join(root, 'evaluation.json'), 'u
 const before = fs.readFileSync(path.join(root, 'pdc-before.jsonl'), 'utf8').trim().split('\n').map(JSON.parse);
 const after = fs.readFileSync(path.join(root, 'pdc-after.jsonl'), 'utf8').trim().split('\n').map(JSON.parse);
 const sharedPDCUnchanged = JSON.stringify(before) === JSON.stringify(after);
+let trusteeExecutions = [];
+const trusteeAuditFile = path.join(root, 'os-trustee-executions.jsonl');
+if (fs.existsSync(trusteeAuditFile)) {
+  trusteeExecutions = fs.readFileSync(trusteeAuditFile, 'utf8').trim().split('\n').filter(Boolean).map(JSON.parse);
+}
+const expectedExecutions = [
+  { mspID: 'ElectionCommissionMSP', index: '1', effectiveUser: 'mongbas-ec' },
+  { mspID: 'PartyObserverMSP', index: '2', effectiveUser: 'mongbas-party' },
+];
+const trusteeExecutionIdentitiesVerified = trusteeExecutions.length === expectedExecutions.length &&
+  expectedExecutions.every((expected, position) => Object.entries(expected).every(
+    ([key, value]) => trusteeExecutions[position]?.[key] === value
+  )) && trusteeExecutions.every(value => value.shareOwner === value.effectiveUser && value.outputOwner === value.effectiveUser);
 const summary = {
   schema: 'mongbas-dkg-live-evaluation/v1',
   evaluationExitStatus: status,
@@ -89,10 +109,13 @@ const summary = {
   partialGenerationMode: result.partialGenerationMode,
   sharedPDCShareDocumentCountsUnchanged: sharedPDCUnchanged,
   privateScalarRecordedInEvidence: false,
+  trusteeExecutions,
+  trusteeExecutionIdentitiesVerified,
 };
 summary.securityGatePassed = status === 0 && summary.exactTally && summary.approvals === 3 &&
   summary.externalPartialDecryptions === 2 && ['external-helper', 'in-process-secret-file'].includes(summary.partialGenerationMode) &&
-  sharedPDCUnchanged && summary.rejectedAttackGates.length === 5;
+  sharedPDCUnchanged && summary.rejectedAttackGates.length === 5 &&
+  (summary.partialGenerationMode !== 'external-helper' || trusteeExecutionIdentitiesVerified);
 process.stdout.write(`${JSON.stringify(summary, null, 2)}\n`);
 if (!summary.securityGatePassed) process.exitCode = 1;
 NODE

@@ -5,12 +5,17 @@ set -Eeuo pipefail
 [ "$#" -eq 5 ] || { echo "usage: helper MSP_ID INDEX ELECTION AGGREGATE OUTPUT" >&2; exit 2; }
 msp="$1"; index="$2"; election="$3"; aggregate="$4"; output="$5"
 run_id="${MONGBAS_OS_CUSTODY_RUN_ID:-}"
+audit_log="${MONGBAS_DKG_PARTIAL_AUDIT_LOG:-}"
 [[ "${run_id}" =~ ^[0-9]{8}T[0-9]{6}Z$ ]] || { echo "invalid custody run ID" >&2; exit 1; }
 [[ "${election}" =~ ^[A-Za-z0-9._-]{1,256}$ ]] || { echo "invalid election ID" >&2; exit 1; }
 [[ "${aggregate}" =~ ^/tmp/mongbas-dkg-aggregate-[0-9a-f]{32}\.json$ ]] || { echo "invalid aggregate path" >&2; exit 1; }
 [[ "${output}" =~ ^/tmp/mongbas-dkg-partial-[0-9a-f]{32}\.json$ ]] || { echo "invalid output path" >&2; exit 1; }
 [ -f "${aggregate}" ] && [ ! -L "${aggregate}" ] && [ "$(stat -c %U "${aggregate}")" = root ] || { echo "unsafe aggregate input" >&2; exit 1; }
 [ ! -e "${output}" ] && [ ! -L "${output}" ] || { echo "partial output already exists" >&2; exit 1; }
+[ -n "${audit_log}" ] && [ -f "${audit_log}" ] && [ ! -L "${audit_log}" ] \
+  && [ "$(stat -c %U:%a "${audit_log}")" = "root:600" ] || {
+  echo "protected partial-decryption audit log missing or misowned" >&2; exit 1;
+}
 
 case "${msp}:${index}" in
   ElectionCommissionMSP:1) user=mongbas-ec ;;
@@ -24,4 +29,8 @@ share="/var/lib/mongbas-trustees/${user}/${run_id}/trustee-share.json"
 }
 runuser -u "${user}" -- node /opt/mongbas-trustee/current/bin/mongbas-trustee.js partial \
   --election "${election}" --private-share "${share}" --aggregate "${aggregate}" --out "${output}"
+[ "$(stat -c %U "${output}")" = "${user}" ] || { echo "partial output owner mismatch" >&2; exit 1; }
+printf '{"mspID":"%s","index":"%s","effectiveUser":"%s","effectiveUid":%s,"shareOwner":"%s","outputOwner":"%s"}\n' \
+  "${msp}" "${index}" "${user}" "$(id -u "${user}")" "$(stat -c %U "${share}")" "$(stat -c %U "${output}")" \
+  >>"${audit_log}"
 chmod 0644 "${output}"
