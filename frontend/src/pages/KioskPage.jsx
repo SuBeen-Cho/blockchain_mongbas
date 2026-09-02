@@ -114,7 +114,8 @@ export default function KioskPage({ electionId }) {
   // 대시보드(관제판)에 실제 검증 화면을 띄움
   async function verifyOnDashboard() {
     try {
-      await J(`/elections/${encodeURIComponent(electionId)}/demo-event`, { method: 'POST', body: JSON.stringify({ type: 'verify', payload: { code: receipt.nh } }) });
+      await J('/vote/demo-event', { method: 'POST', headers: { 'x-idemix-credential': cred },
+        body: JSON.stringify({ electionID: electionId, nullifierHash: receipt.nh }) });
       setSent(true);
     } catch (e) { setErr(e.message); }
   }

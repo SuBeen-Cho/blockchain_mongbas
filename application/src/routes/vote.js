@@ -33,11 +33,44 @@ const { fabricConcurrencyGate } = require('../lib/fabricConcurrencyGate');
 const { submitTransactionAndWait } = require('../lib/submitTransaction');
 const liveCount = require('../lib/liveCount');  // [부스 시연] 라이브 투표 카운터
 const demoLive  = require('../lib/demoLive');   // [부스 시연] 라이브 암호문 표 + 셔플 + 이벤트 버스
-const { demoEndpointsEnabled } = require('../lib/demoFeatures');
+const { demoEndpointsEnabled, requireDemoEndpoint } = require('../lib/demoFeatures');
 const { isCanonicalToken } = require('../lib/deniableProof');
 const { classifyFabricVoteRejection } = require('../lib/fabricRejection');
+const { voterOwnsDemoEvent } = require('../lib/demoVerificationEvent');
 
 const router = express.Router();
+
+// The demo dashboard event is accepted only for a committed vote owned by the
+// authenticated credential. This endpoint is unavailable outside demo mode.
+router.post('/demo-event', requireDemoEndpoint, async (req, res) => {
+  const { electionID, nullifierHash } = req.body || {};
+  if (typeof electionID !== 'string' || electionID.length === 0 || electionID.length > 128 ||
+      !/^[0-9a-f]{64}$/.test(nullifierHash || '')) {
+    return res.status(400).json({ error: 'Invalid request format.' });
+  }
+
+  let gateway;
+  try {
+    const connection = await connectGateway();
+    gateway = connection.gateway;
+    const [blindingBytes, nullifierBytes] = await Promise.all([
+      connection.contract.evaluateTransaction('GetBlindingFactor', electionID),
+      connection.contract.evaluateTransaction('GetNullifier', nullifierHash),
+    ]);
+    const blindingFactor = Buffer.from(blindingBytes).toString('utf8').replace(/^"|"$/g, '');
+    const ledgerNullifier = JSON.parse(Buffer.from(nullifierBytes).toString('utf8'));
+    if (!voterOwnsDemoEvent({ voter: req.voter, electionID, nullifierHash, blindingFactor, ledgerNullifier })) {
+      return res.status(403).json({ error: 'Verification event rejected.' });
+    }
+    demoLive.pushEvent(electionID, 'verify', { code: nullifierHash });
+    return res.json({ ok: true });
+  } catch (_) {
+    console.warn('[vote] demo verification event rejected');
+    return res.status(403).json({ error: 'Verification event rejected.' });
+  } finally {
+    if (gateway) gateway.close();
+  }
+});
 
 function buildCredentialTransient(req, electionID) {
   const credentialVerification = {

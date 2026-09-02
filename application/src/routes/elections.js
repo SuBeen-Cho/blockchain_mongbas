@@ -292,7 +292,7 @@ router.get('/:id/live-votes', requireDemoEndpoint, (req, res) => {
 
 // ── POST /:id/demo-event ───────────────────────────────────────
 // [부스 시연] 모바일 → 대시보드 이벤트 (예: 검증하기 누름). Body: { type, payload }
-router.post('/:id/demo-event', requireDemoEndpoint, (req, res) => {
+router.post('/:id/legacy-demo-event-disabled', requireDemoEndpoint, (req, res) => {
   const { type, payload } = req.body || {};
   if (!type) return res.status(400).json({ error: 'type 필요' });
   demoLive.pushEvent(req.params.id, String(type), payload || {});
