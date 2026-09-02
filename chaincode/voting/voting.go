@@ -4975,10 +4975,10 @@ func (c *VotingContract) PublishAuditData(
 	// linearly and exceed the orderer's block limit. Persist only the publication
 	// manifest; GetBulletinBoard reconstructs the public artifact arrays.
 	published := bb
-	published.EncryptedBallots = nil
-	published.DecryptionProofs = nil
-	published.VectorBallotReceipts = nil
-	published.VectorAuditDisclosures = nil
+	published.EncryptedBallots = make([]EncryptedBallot, 0)
+	published.DecryptionProofs = make([]DecryptionProof, 0)
+	published.VectorBallotReceipts = make([]VectorBallotReceipt, 0)
+	published.VectorAuditDisclosures = make([]VectorAuditDisclosure, 0)
 	b, err := json.Marshal(published)
 	if err != nil {
 		return nil, fmt.Errorf("BulletinBoard 직렬화 실패: %w", err)
