@@ -5,7 +5,7 @@
 # 전제 조건:
 #   1. cd ../network && ./scripts/network.sh up
 #   2. ./scripts/network.sh deploy
-#   3. cd ../caliper && npm install
+#   3. cd ../caliper && npm ci
 #   4. npx caliper bind --caliper-bind-sut fabric:2.5
 #
 # 실행:
@@ -40,7 +40,7 @@ check_prereqs() {
 
   if [ ! -d "${WORKSPACE}/node_modules/@hyperledger/caliper-core" ]; then
     echo "❌ Caliper가 설치되지 않았습니다."
-    echo "   → cd caliper && npm install && npx caliper bind --caliper-bind-sut fabric:2.4"
+    echo "   → cd caliper && npm ci && npx caliper bind --caliper-bind-sut fabric:2.4"
     exit 1
   fi
 
