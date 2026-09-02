@@ -3,6 +3,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const { writeJsonEvidenceExclusive } = require('./evidence-contract');
 
 const [roundDirectory, outputFile, metadataFile] = process.argv.slice(2);
 if (!roundDirectory || !outputFile || !metadataFile) {
@@ -63,7 +64,7 @@ const result = {
 result.success = result.actualDurationSeconds >= result.targetDurationSeconds &&
   result.failedVotes === 0 && result.strictRoundPasses === result.roundCount;
 
-fs.writeFileSync(outputFile, `${JSON.stringify(result, null, 2)}\n`, { mode: 0o600 });
+writeJsonEvidenceExclusive(outputFile, result);
 if (!result.success) {
   throw new Error(`longevity validation failed: duration=${result.actualDurationSeconds}/${result.targetDurationSeconds}, failedVotes=${result.failedVotes}, strictPasses=${result.strictRoundPasses}/${result.roundCount}`);
 }

@@ -82,6 +82,13 @@ test('supported ElGamal benchmarks publish an explicit validity verdict without 
   }
 });
 
+test('Linux evidence summarizers refuse to overwrite an existing result', () => {
+  for (const name of ['summarize-longevity.js', 'summarize-rate.js', 'summarize-state-growth.js', 'validate-supply-chain.js']) {
+    const source = fs.readFileSync(path.join(__dirname, '..', 'benchmark', name), 'utf8');
+    assert.match(source, /writeJsonEvidenceExclusive\(/, name);
+  }
+});
+
 test('benchmark exact-success gate rejects empty, partial and failed evidence', () => {
   assert.doesNotThrow(() => requireExactSuccess('issuance', 50, 50, 0));
   assert.throws(() => requireExactSuccess('issuance', 50, 49, 1), /incomplete evidence/);

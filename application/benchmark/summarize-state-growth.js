@@ -2,6 +2,7 @@
 'use strict';
 
 const fs = require('node:fs');
+const { writeJsonEvidenceExclusive } = require('./evidence-contract');
 
 function parseSnapshot(text) {
   const result = new Map();
@@ -48,7 +49,7 @@ if (require.main === module) {
   const [beforePath, afterPath, ballotsText, outputPath] = process.argv.slice(2);
   if (!beforePath || !afterPath || !outputPath) throw new Error('usage: summarize-state-growth.js BEFORE AFTER BALLOTS OUTPUT');
   const value = summarize(fs.readFileSync(beforePath, 'utf8'), fs.readFileSync(afterPath, 'utf8'), Number(ballotsText));
-  fs.writeFileSync(outputPath, `${JSON.stringify(value, null, 2)}\n`, { mode: 0o600 });
+  writeJsonEvidenceExclusive(outputPath, value);
 }
 
 module.exports = { parseSnapshot, summarize };

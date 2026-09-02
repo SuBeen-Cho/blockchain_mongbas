@@ -2,6 +2,7 @@
 'use strict';
 
 const fs = require('fs');
+const { writeJsonEvidenceExclusive } = require('./evidence-contract');
 
 function validateCycloneDx(document, label) {
   if (document?.bomFormat !== 'CycloneDX' || document?.specVersion !== '1.5') throw new Error(`${label}: expected CycloneDX 1.5`);
@@ -39,7 +40,7 @@ if (require.main === module) {
     const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
     const readMap = entries => Object.fromEntries(Object.entries(entries || {}).map(([label, file]) => [label, JSON.parse(fs.readFileSync(file, 'utf8'))]));
     const result = buildSummary(readMap(manifest.sboms), readMap(manifest.audits));
-    fs.writeFileSync(outputPath, `${JSON.stringify(result, null, 2)}\n`, { mode: 0o600 });
+    writeJsonEvidenceExclusive(outputPath, result);
     console.log(JSON.stringify(result));
   } catch (error) {
     console.error(error.message);

@@ -2,6 +2,7 @@
 'use strict';
 
 const fs = require('fs');
+const { writeJsonEvidenceExclusive } = require('./evidence-contract');
 
 const T95 = [null, 12.706, 4.303, 3.182, 2.776, 2.571, 2.447, 2.365, 2.306, 2.262,
   2.228, 2.201, 2.179, 2.16, 2.145, 2.131, 2.12, 2.11, 2.101, 2.093, 2.086, 2.08, 2.074,
@@ -110,7 +111,7 @@ if (require.main === module) {
   }
   try {
     const summary = summarize(JSON.parse(fs.readFileSync(input, 'utf8')));
-    fs.writeFileSync(output, `${JSON.stringify(summary, null, 2)}\n`, { mode: 0o600 });
+    writeJsonEvidenceExclusive(output, summary);
     console.log(JSON.stringify(summary.totals));
   } catch (error) {
     console.error(error.message);
