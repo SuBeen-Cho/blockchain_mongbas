@@ -38,6 +38,7 @@ const participants = files.map(file => JSON.parse(fs.readFileSync(file)))
 fs.writeFileSync(output, `${JSON.stringify(participants, null, 2)}\n`, { flag: 'wx', mode: 0o640 });
 NODE
 chown root:mongbas-trustees "${public}/participants.json"
+chmod 0640 "${public}/participants.json"
 
 for offset in 0 1 2; do
   user="${users[$offset]}"; id="${ids[$offset]}"; private="${custody_root}/${user}/${run_id}"
