@@ -50,6 +50,12 @@ try {
 		'dkg-bundle-share-changed': value => { value.trusteePublicShares[0].publicKeyY = value.trusteePublicShares[1].publicKeyY; },
 	  });
 	}
+	if (!Array.isArray(bundle.vectorAuditDisclosures) || bundle.vectorAuditDisclosures.length === 0) {
+	  delete mutations['audit-disclosure-deleted'];
+	  delete mutations['audit-nonce-changed'];
+	  delete mutations['audit-randomness-changed'];
+	  delete mutations['audited-ciphertext-changed'];
+	}
   fs.mkdirSync(path.resolve(outputDirectory), { recursive: true, mode: 0o700 });
   const manifest = [];
   for (const [name, mutate] of Object.entries(mutations)) {

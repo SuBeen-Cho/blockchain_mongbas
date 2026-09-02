@@ -92,6 +92,28 @@ async function main() {
   if (pubKey.y !== transcript.electionPublicKeyY) throw new Error('ledger public key differs from DKG transcript');
   const blinding = requireSuccess(await get(`/api/elections/${electionID}/blinding-factor`), 'blinding factor').blindingFactor;
 
+  // Preserve a public audit-or-cast disclosure in the same DKG election so
+  // bundle v5 proves both the key ceremony and cast-as-intended audit path.
+  const auditEnrollmentID = 'demo004';
+  const auditCredential = requireSuccess(await post('/api/credential/idemix', {
+    enrollmentID: auditEnrollmentID, enrollmentSecret: `${auditEnrollmentID}pw`, electionID,
+  }), 'audit credential');
+  const auditNullifierHash = crypto.createHash('sha256').update(auditCredential.nullifierMaterial + electionID + blinding).digest('hex');
+  const auditBallot = generateVectorBallot(pubKey, 0, CANDIDATES.length);
+  const auditNonce = crypto.randomBytes(32).toString('hex');
+  const auditHeaders = { 'x-idemix-credential': auditCredential.credential };
+  const auditPrepared = requireSuccess(await post('/api/vote/prepare-vector', {
+    electionID, nullifierHash: auditNullifierHash,
+    clientNonceHash: crypto.createHash('sha256').update(auditNonce).digest('hex'),
+    encryptedCandidateVector: auditBallot.encryptedCandidateVector,
+    vectorBallotValidityProof: auditBallot.vectorBallotValidityProof,
+  }, auditHeaders), 'prepare audited DKG ballot');
+  const auditDisclosure = requireSuccess(await post('/api/vote/audit-vector', {
+    electionID, ballotID: auditPrepared.ballotID, nullifierHash: auditNullifierHash,
+    selectedIndex: 0, clientNonce: auditNonce, randomness: auditBallot._auditWitness.randomness,
+  }, auditHeaders), 'audit DKG ballot');
+  if (auditDisclosure.status !== 'audited' || auditDisclosure.selectedIndex !== 0) throw new Error('DKG audit disclosure mismatch');
+
   for (let index = 0; index < CANDIDATES.length; index += 1) {
     const enrollmentID = `demo${String(index + 1).padStart(3, '0')}`;
     const issued = requireSuccess(await post('/api/credential/idemix', {
@@ -145,11 +167,12 @@ async function main() {
     CANDIDATES.every(candidate => tally.results?.[candidate] === 1) &&
     Array.isArray(tally.vectorPartialDecryptions) && tally.vectorPartialDecryptions.length === 2;
   if (!exact) throw new Error(`exact DKG tally mismatch: ${JSON.stringify(tally)}`);
+  requireSuccess(await post(`/api/elections/${electionID}/publish-audit`, {}), 'publish DKG audit data');
   process.stdout.write(`${JSON.stringify({
     success: true, electionID, keyCeremonyMode: 'dkg-v1', transcriptHash: transcript.transcriptHash,
     approvals: 3, rejected: ['pre-approval-activation', 'wrong-transcript-hash', 'shared-pdc-partial', 'tampered-partial', 'duplicate-partial'],
     totalVotes: tally.totalVotes, results: tally.results,
-    externalPartialDecryptions: tally.vectorPartialDecryptions.length,
+    externalPartialDecryptions: tally.vectorPartialDecryptions.length, auditedBallots: 1, auditPublished: true,
   })}\n`);
 }
 
