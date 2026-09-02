@@ -28,6 +28,7 @@ test('public showcase and credential labels do not claim unverified equivalence'
   const psPrototype = read('application/src/lib/ps-idemix.js');
 
   assert.doesNotMatch(showcase, /7\/7 보안 속성/);
+  assert.doesNotMatch(showcase, /7<b>\/7<\/b>|7\/7[^\n]{0,80}전부 충족|학술 보안속성 전부 충족/);
   assert.doesNotMatch(showcase, /하나도 빠짐없이 달성한 첫 사례/);
   assert.match(showcase, /현재 7\/7 완전 검증을 주장하지 않습니다/);
   assert.doesNotMatch(auth, /진짜 Idemix|Fabric Idemix와 동일/);

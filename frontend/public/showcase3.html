@@ -286,7 +286,7 @@
   <!-- 7대 보안 속성 (블루 블록) -->
   <section id="props"><div class="wrap">
     <div class="kick reveal">7 Security Properties</div>
-    <h2 class="stmt reveal" style="margin-top:14px">7가지 보안 속성, <span class="mark">하나도 빠짐없이.</span></h2>
+    <h2 class="stmt reveal" style="margin-top:14px">7가지 보안 속성, <span class="mark">속성별로 검증.</span></h2>
     <div class="propband reveal" style="margin-top:40px"><div class="pgrid" id="pgrid"></div></div>
   </div></section>
 
@@ -475,7 +475,7 @@ const PROPS=[
 ];
 const FILL=['b','w','b','w','w','b','w']; // 4열 체커보드
 let pgridHTML=PROPS.map((p,i)=>`<div class="pitem ${FILL[i]}"><div class="pn">${p.n} / 07</div><div class="pi"><img src="/icons/free-icon-${p.img}.png" alt=""></div><h3>${p.t}</h3><div class="pen">${p.en}</div><p>${p.d}</p></div>`).join('');
-pgridHTML+=`<div class="pitem sum"><div class="big">7<b>/7</b></div><div class="st">학술 보안속성 전부 충족 ✓</div><div class="sd">전자투표 7대 보안 속성을<br>하나도 빠짐없이.</div></div>`;
+pgridHTML+=`<div class="pitem sum"><div class="big">7<b>개</b></div><div class="st">속성별 검증 프레임워크</div><div class="sd">구현·공격 시험·독립 증거를<br>계속 보완 중입니다.</div></div>`;
 document.getElementById('pgrid').innerHTML=pgridHTML;
 
 // Three.js — 블루 와이어프레임, 스크롤 따라 가장자리 이동
