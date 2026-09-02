@@ -121,7 +121,7 @@ services:
   ##############################################################################
   orderer1.orderer.voting.example.com:
     container_name: orderer1.orderer.voting.example.com
-    image: hyperledger/fabric-orderer:2.5
+    image: hyperledger/fabric-orderer:2.5.16@sha256:e322c57331d37e0a35ffae3cb3d3265a0e852211c0f801f2514cc15b964ffc93
     environment:
       - FABRIC_LOGGING_SPEC=INFO
       - ORDERER_GENERAL_LISTENADDRESS=0.0.0.0
@@ -158,7 +158,7 @@ services:
 
   orderer2.orderer.voting.example.com:
     container_name: orderer2.orderer.voting.example.com
-    image: hyperledger/fabric-orderer:2.5
+    image: hyperledger/fabric-orderer:2.5.16@sha256:e322c57331d37e0a35ffae3cb3d3265a0e852211c0f801f2514cc15b964ffc93
     environment:
       - FABRIC_LOGGING_SPEC=INFO
       - ORDERER_GENERAL_LISTENADDRESS=0.0.0.0
@@ -195,7 +195,7 @@ services:
 
   orderer3.orderer.voting.example.com:
     container_name: orderer3.orderer.voting.example.com
-    image: hyperledger/fabric-orderer:2.5
+    image: hyperledger/fabric-orderer:2.5.16@sha256:e322c57331d37e0a35ffae3cb3d3265a0e852211c0f801f2514cc15b964ffc93
     environment:
       - FABRIC_LOGGING_SPEC=INFO
       - ORDERER_GENERAL_LISTENADDRESS=0.0.0.0
@@ -232,7 +232,7 @@ services:
 
   orderer4.orderer.voting.example.com:
     container_name: orderer4.orderer.voting.example.com
-    image: hyperledger/fabric-orderer:2.5
+    image: hyperledger/fabric-orderer:2.5.16@sha256:e322c57331d37e0a35ffae3cb3d3265a0e852211c0f801f2514cc15b964ffc93
     environment:
       - FABRIC_LOGGING_SPEC=INFO
       - ORDERER_GENERAL_LISTENADDRESS=0.0.0.0
@@ -351,7 +351,7 @@ services:
   ##############################################################################
   peer0.ec.voting.example.com:
     container_name: peer0.ec.voting.example.com
-    image: hyperledger/fabric-peer:2.5
+    image: hyperledger/fabric-peer:2.5.16@sha256:09ee75042de9983bfde31ca88a5bf033386351f10a990e4c48264ee50172dee0
     environment:
       - FABRIC_CFG_PATH=/etc/hyperledger/fabric
       - CORE_VM_ENDPOINT=unix:///host/var/run/docker.sock
@@ -397,7 +397,7 @@ services:
 
   peer1.ec.voting.example.com:
     container_name: peer1.ec.voting.example.com
-    image: hyperledger/fabric-peer:2.5
+    image: hyperledger/fabric-peer:2.5.16@sha256:09ee75042de9983bfde31ca88a5bf033386351f10a990e4c48264ee50172dee0
     environment:
       - FABRIC_CFG_PATH=/etc/hyperledger/fabric
       - CORE_VM_ENDPOINT=unix:///host/var/run/docker.sock
@@ -445,7 +445,7 @@ services:
   ##############################################################################
   peer0.party.voting.example.com:
     container_name: peer0.party.voting.example.com
-    image: hyperledger/fabric-peer:2.5
+    image: hyperledger/fabric-peer:2.5.16@sha256:09ee75042de9983bfde31ca88a5bf033386351f10a990e4c48264ee50172dee0
     environment:
       - FABRIC_CFG_PATH=/etc/hyperledger/fabric
       - CORE_VM_ENDPOINT=unix:///host/var/run/docker.sock
@@ -493,7 +493,7 @@ services:
   ##############################################################################
   peer0.civil.voting.example.com:
     container_name: peer0.civil.voting.example.com
-    image: hyperledger/fabric-peer:2.5
+    image: hyperledger/fabric-peer:2.5.16@sha256:09ee75042de9983bfde31ca88a5bf033386351f10a990e4c48264ee50172dee0
     environment:
       - FABRIC_CFG_PATH=/etc/hyperledger/fabric
       - CORE_VM_ENDPOINT=unix:///host/var/run/docker.sock
@@ -542,7 +542,7 @@ services:
   ##############################################################################
   cli:
     container_name: cli
-    image: hyperledger/fabric-tools:2.5
+    image: hyperledger/fabric-tools:2.5.16@sha256:1d163b2513453637c2eb8ffe00bfb367f6edb2fb824604818f30646f552c9f42
     tty: true
     stdin_open: true
     environment:
