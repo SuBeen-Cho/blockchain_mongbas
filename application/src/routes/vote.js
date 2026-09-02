@@ -35,6 +35,7 @@ const liveCount = require('../lib/liveCount');  // [부스 시연] 라이브 투
 const demoLive  = require('../lib/demoLive');   // [부스 시연] 라이브 암호문 표 + 셔플 + 이벤트 버스
 const { demoEndpointsEnabled } = require('../lib/demoFeatures');
 const { isCanonicalToken } = require('../lib/deniableProof');
+const { classifyFabricVoteRejection } = require('../lib/fabricRejection');
 
 const router = express.Router();
 
@@ -233,6 +234,8 @@ router.post('/', async (req, res) => {
       return res.status(409).json({ error: '이미 투표한 선거입니다.',
         ...((normalLookupToken && panicLookupToken) ? {} : { nullifierHash }) });
     }
+    const rejection = classifyFabricVoteRejection(err);
+    if (rejection) return res.status(rejection.status).json(rejection.body);
     console.error('[vote] CastVote error:', err.message);
     res.status(500).json({ error: '투표 처리 중 오류가 발생했습니다.' });
   } finally {
@@ -267,6 +270,8 @@ router.post('/prepare-vector', async (req, res) => {
     if (err.code === 'FABRIC_QUEUE_FULL' || err.code === 'FABRIC_QUEUE_TIMEOUT') {
       return res.status(503).json({ error: '투표 요청이 많습니다. 잠시 후 다시 시도해 주세요.' });
     }
+    const rejection = classifyFabricVoteRejection(err);
+    if (rejection) return res.status(rejection.status).json(rejection.body);
     console.error('[vote] PrepareVectorBallot error:', err.message);
     res.status(500).json({ error: 'vector-v3 투표 준비 중 오류가 발생했습니다.' });
   } finally {

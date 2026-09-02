@@ -42,6 +42,7 @@ async function assertOk(label, promise) {
 async function assertRejected(label, promise) {
   const res = await promise;
   if (res.ok) throw new Error(`${label} unexpectedly succeeded: ${JSON.stringify(res.body)}`);
+  if (res.status >= 500) throw new Error(`${label} produced a server failure instead of an explicit rejection: HTTP ${res.status}`);
   console.log(`[OK] ${label} rejected with HTTP ${res.status}`);
   return res.body;
 }
