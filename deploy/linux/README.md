@@ -42,7 +42,13 @@ Backend는 직접 `npm --prefix application start`로 실행하거나 현재 계
 ./deploy/linux/install-systemd.sh --enable-now   # 설치 + 부팅 자동 시작 + 즉시 시작
 ```
 
-`--install`과 `--enable-now`는 `/etc/systemd/system`과 service 상태를 변경하므로 명시적으로만 실행한다. 기본 service는 `NODE_ENV=production`으로 기동하므로 secret env에는 production 검증을 통과하는 asymmetric credential 모드, 관리자 token, 명시적 CORS 설정이 필요하다.
+`--install`과 `--enable-now`는 `/etc/systemd/system`과 service 상태를 변경하므로 명시적으로만 실행한다. 기본 `MONGBAS_PROFILE=demo`는 발표·재현용 development runtime으로 render한다. 운영 유사 검증은 다음처럼 분리하며, 스크립트가 unsafe flag·CORS·비대칭 credential·관리자 token을 설치 전에 fail closed로 점검한다.
+
+```bash
+MONGBAS_SERVICE_PROFILE=production-like ./deploy/linux/install-systemd.sh --render-only
+```
+
+Demo unit을 production evidence로 사용하거나 benchmark/rate-limit-off backend를 장기 systemd service로 설치하지 않는다.
 
 BBS+ 실험 모드는 `@mattrglobal/bbs-signatures` 2.0.0의 WASM 경로만 사용한다. 아카이브된 optional native addon이 취약한 `node-pre-gyp`/`tar` 설치 경로를 끌어오므로 application 의존성은 `npm ci --omit=optional`로 설치한다. `build.sh`는 실제 배포 세트를 `npm audit --omit=optional --audit-level=high`로 검사하며, high/critical 이상이면 실패한다. 해당 BBS 구현은 현재 CFRG draft-10의 완전한 표준 준거를 주장하지 않으며, 최신 구현으로의 마이그레이션은 별도 보안 게이트로 다룬다.
 

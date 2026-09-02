@@ -10,7 +10,7 @@ User=@SERVICE_USER@
 Group=@SERVICE_GROUP@
 WorkingDirectory=@APPLICATION_DIR@
 EnvironmentFile=@ENV_FILE@
-Environment=NODE_ENV=production
+Environment=NODE_ENV=@NODE_ENV@
 ExecStart=@NPM_PATH@ start
 Restart=on-failure
 RestartSec=5

@@ -15,6 +15,12 @@ esac
 
 service_user="${MONGBAS_SERVICE_USER:-$(id -un)}"
 service_group="${MONGBAS_SERVICE_GROUP:-$(id -gn)}"
+service_profile="${MONGBAS_SERVICE_PROFILE:-${MONGBAS_PROFILE}}"
+case "${service_profile}" in
+  demo) node_env=development ;;
+  production-like) node_env=production ;;
+  *) die "MONGBAS_SERVICE_PROFILE must be demo or production-like" ;;
+esac
 application_dir="${MONGBAS_REPO_DIR}/application"
 wallet_dir="${application_dir}/wallet"
 npm_path="$(command -v npm)"
@@ -26,12 +32,27 @@ rendered="${render_dir}/mongbas-backend.service"
 [ -d "${application_dir}" ] || die "application directory missing: ${application_dir}"
 [ -x "${npm_path}" ] || die "npm is not executable: ${npm_path}"
 [ "$(stat -c '%a' "${MONGBAS_ENV_FILE}")" = 600 ] || die "secret env must have mode 0600"
+
+if [ "${node_env}" = production ]; then
+  NODE_ENV=production node - "${application_dir}" <<'NODE'
+const applicationDir = process.argv[2];
+const { validateRuntimeSecurity } = require(`${applicationDir}/src/lib/runtimeSecurity`);
+const { validateAdminConfiguration } = require(`${applicationDir}/src/middleware/admin`);
+validateRuntimeSecurity(process.env);
+validateAdminConfiguration();
+if (process.env.IDEMIX_ENABLED !== 'true') {
+  throw new Error('production-like service requires IDEMIX_ENABLED=true');
+}
+NODE
+  log "production-like environment passed startup security preflight"
+fi
 install -d -m 0700 "${render_dir}" "${wallet_dir}"
 
 escape_sed() { printf '%s' "$1" | sed 's/[&|]/\\&/g'; }
 sed \
   -e "s|@SERVICE_USER@|$(escape_sed "${service_user}")|g" \
   -e "s|@SERVICE_GROUP@|$(escape_sed "${service_group}")|g" \
+  -e "s|@NODE_ENV@|$(escape_sed "${node_env}")|g" \
   -e "s|@APPLICATION_DIR@|$(escape_sed "${application_dir}")|g" \
   -e "s|@ENV_FILE@|$(escape_sed "${MONGBAS_ENV_FILE}")|g" \
   -e "s|@NPM_PATH@|$(escape_sed "${npm_path}")|g" \
