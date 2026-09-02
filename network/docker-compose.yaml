@@ -582,6 +582,12 @@ services:
     build:
       context: ../chaincode/voting
     pull_policy: never
+    user: "65532:65532"
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
     environment:
       - CHAINCODE_SERVER_ADDRESS=0.0.0.0:7052
       - CHAINCODE_ID=voting_1.0   # deploy 후 실제 패키지 ID로 교체 필요

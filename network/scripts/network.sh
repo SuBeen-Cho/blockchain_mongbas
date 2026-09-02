@@ -334,6 +334,10 @@ EOF
   docker run -d \
     --name voting-chaincode \
     --network voting-net \
+    --user 65532:65532 \
+    --read-only \
+    --cap-drop ALL \
+    --security-opt no-new-privileges \
     -e CHAINCODE_SERVER_ADDRESS=0.0.0.0:7052 \
     -e CHAINCODE_ID="${PACKAGE_ID}" \
     -e CREDENTIAL_SECRET="${CREDENTIAL_SECRET}" \

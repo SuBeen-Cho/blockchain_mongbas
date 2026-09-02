@@ -3,10 +3,11 @@ FROM golang:1.25-alpine@sha256:1ae0735f00daffa3aaf1363a5184c0d2dc55c78e3db4ec702
 WORKDIR /app
 COPY . .
 
-RUN go build -mod=vendor -v -o /chaincode .
+RUN CGO_ENABLED=0 go build -mod=vendor -trimpath -ldflags='-s -w' -o /chaincode .
 
-FROM alpine:latest@sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b
+FROM scratch
 COPY --from=build /chaincode /chaincode
 
+USER 65532:65532
 EXPOSE 7052
-CMD ["/chaincode"]
+ENTRYPOINT ["/chaincode"]
