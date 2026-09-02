@@ -61,6 +61,7 @@ MONGBAS_PROFILE=benchmark MONGBAS_LONGEVITY_KIND=steady ./deploy/linux/longevity
 MONGBAS_PROFILE=benchmark MONGBAS_LONGEVITY_KIND=soak ./deploy/linux/longevity-evaluation.sh
 MONGBAS_PROFILE=benchmark ./deploy/linux/verifier-evaluation.sh
 ./deploy/linux/supply-chain-evidence.sh
+./deploy/linux/web-security-evaluation.sh
 ```
 
 `extended-vulnerability-evidence.sh`는 활성 컨테이너의 고유 image를 모두
@@ -99,6 +100,7 @@ N=100 측정은 독립된 loopback 벤치마크 백엔드를 `DISABLE_RATE_LIMIT
 `coercion-evaluation.sh`는 격리 backend에서 opaque normal/panic proof capability를 무작위 균형 순서로 조회한다. target nullifier 노출, byte size, latency를 raw JSONL로 보존하고, 훈련/평가를 분리한 threshold classifier와 Wilson 95% CI를 보고한다. 이 gate는 동일 호스트 API transcript만 평가하며 PDC/backend 공모, 공개 revote pattern, compromised client를 증명하지 않는다.
 `full-e2e-evaluation.sh`는 일반 3000 번 서비스를 건드리지 않고 3006 번의 최신 코드 격리 backend에서 full-election E2E를 실행한다. backend log, stdout/stderr, 종료 코드, Git commit과 SHA-256 inventory를 runtime result에 보존하고 worktree가 dirty하면 시작하지 않는다.
 `supply-chain-evidence.sh`는 application/frontend/verifier의 production dependency CycloneDX 1.5 SBOM, deployed npm audit, vendored Go module/toolchain inventory, Docker image digest inventory를 외부 runtime에 저장한다. strict validator는 중복 component reference나 deployed high/critical npm finding이 있으면 non-zero로 종료한다. npm dev/build dependency는 이 production inventory에 포함되지 않으므로 별도 build-tool SBOM/audit이 필요하다. SBOM 존재는 취약점 부재나 공급망 인증을 의미하지 않으며, Go/container/OS 취약점 scanner와 signed provenance는 별도 gate로 남는다.
+`web-security-evaluation.sh`는 일반 backend에서 정적 UI/asset/API의 CSP·frame·nosniff·referrer header, Express 지문 부재, sensitive no-store, allowed/denied CORS, cross-site/`text/plain` mutation 거부, admin/trustee authorization과 demo endpoint 비활성화를 fail closed로 검사한다. 터널 TLS/HSTS/cipher 검증은 이 loopback gate의 범위가 아니다.
 
 ## 안전한 종료
 

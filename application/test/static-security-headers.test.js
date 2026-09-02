@@ -49,6 +49,7 @@ test('static voter UI and assets receive the complete security-header policy', a
   for (const resource of ['/', `/assets/${asset}`]) {
     const response = await fetch(`${baseURL}${resource}`);
     assert.equal(response.status, 200, resource);
+    assert.equal(response.headers.get('x-powered-by'), null, resource);
     assert.equal(response.headers.get('x-content-type-options'), 'nosniff', resource);
     assert.equal(response.headers.get('x-frame-options'), 'DENY', resource);
     assert.equal(response.headers.get('referrer-policy'), 'no-referrer', resource);

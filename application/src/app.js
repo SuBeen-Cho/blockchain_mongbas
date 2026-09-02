@@ -33,6 +33,7 @@ const { demoEndpointsEnabled } = require('./lib/demoFeatures');
 const { validateRuntimeSecurity, apiRequestShapeGuard } = require('./lib/runtimeSecurity');
 
 const app  = express();
+app.disable('x-powered-by');
 const PORT = process.env.PORT || 3000;
 const DISABLE_RATE_LIMITS = process.env.DISABLE_RATE_LIMITS === 'true';
 const noRateLimit = (_req, _res, next) => next();
