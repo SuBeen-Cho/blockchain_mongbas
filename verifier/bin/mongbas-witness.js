@@ -43,8 +43,10 @@ function withLogLock(logPath, action) {
     lock = fs.openSync(lockPath, 'wx', 0o600);
     return action();
   } finally {
-    if (lock !== undefined) fs.closeSync(lock);
-    try { fs.unlinkSync(lockPath); } catch (error) { if (error.code !== 'ENOENT') throw error; }
+    if (lock !== undefined) {
+      fs.closeSync(lock);
+      try { fs.unlinkSync(lockPath); } catch (error) { if (error.code !== 'ENOENT') throw error; }
+    }
   }
 }
 

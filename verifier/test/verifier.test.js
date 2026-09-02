@@ -552,6 +552,12 @@ test('history checkpoint v2 proves ballot-prefix growth without changing bundle 
   const replacedPrefix = buildBundle([1, 0, 0], organizationKeys);
   assert.throws(() => createHistoryCheckpoint({ bundle: replacedPrefix, verification: verifyBundle(replacedPrefix), witnessID: 'observer',
     privateKeyPem, previousCheckpoint: first }), /not an append-only extension/);
+
+  const legacy = createCheckpoint({ bundle: firstBundle, verification: verifyBundle(firstBundle), witnessID: 'observer',
+    privateKeyPem, sequence: 1, observedAt: '2026-09-02T00:00:00.000Z' });
+  assert.throws(() => createHistoryCheckpoint({ bundle: secondBundle, verification: verifyBundle(secondBundle), witnessID: 'observer',
+    privateKeyPem, previousCheckpoint: legacy, migrationFromV1: true, observedAt: '2026-09-03T00:00:00.000Z' }),
+  /exact previously witnessed bundle snapshot/);
 });
 
 test('history checkpoint v2 rejects downgrade and timestamp rollback while v1 remains valid', () => {
@@ -625,6 +631,12 @@ test('witness CLI observes and independently verifies a bundle', () => {
     const duplicate = spawnSync(process.execPath, [cli, 'init-trust', 'mac-observer', keyPath, trustPath], { encoding: 'utf8' });
     assert.equal(duplicate.status, 1);
     assert.match(duplicate.stderr, /EEXIST/);
+    const lockPath = `${logPath}.lock`;
+    fs.writeFileSync(lockPath, 'held-by-another-observer', { mode: 0o600 });
+    const contended = spawnSync(process.execPath, [cli, 'observe', bundlePath, logPath, 'mac-observer', keyPath], { encoding: 'utf8' });
+    assert.equal(contended.status, 1);
+    assert.equal(fs.readFileSync(lockPath, 'utf8'), 'held-by-another-observer');
+    fs.unlinkSync(lockPath);
     const observed = spawnSync(process.execPath, [cli, 'observe', bundlePath, logPath, 'mac-observer', keyPath], { encoding: 'utf8' });
     assert.equal(observed.status, 0, observed.stderr);
     const verified = spawnSync(process.execPath, [cli, 'verify', logPath, trustPath], { encoding: 'utf8' });

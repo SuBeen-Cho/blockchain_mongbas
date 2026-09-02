@@ -126,6 +126,11 @@ function createHistoryCheckpoint({ bundle, verification, witnessID, privateKeyPe
     if (previousCheckpoint.schema === CHECKPOINT_V2_SCHEMA && history.previousRootHash !== previousCheckpoint.history.rootHash) {
       throw new Error('bundle is not an append-only extension of prior history');
     }
+    if (previousCheckpoint.schema === CHECKPOINT_SCHEMA &&
+        (previousCheckpoint.bundleHash !== verification.bundleHash || previousCheckpoint.bulletinBoardRoot !== bundle.bulletinBoard.root ||
+         previousCheckpoint.ballotCount !== verification.ballots || previousCheckpoint.publishedAt !== bundle.bulletinBoard.publishedAt)) {
+      throw new Error('v1 migration requires the exact previously witnessed bundle snapshot');
+    }
   }
   const checkpoint = {
     schema: CHECKPOINT_V2_SCHEMA,
