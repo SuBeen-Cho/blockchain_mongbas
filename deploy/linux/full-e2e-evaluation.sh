@@ -13,6 +13,8 @@ require_cmd ss
 
 [ "${ENABLE_DEMO_CREDENTIALS:-false}" = true ] || die "full E2E requires explicit demo credentials"
 port="${MONGBAS_FULL_E2E_PORT:-3006}"
+demo_endpoints="${MONGBAS_FULL_E2E_DEMO_ENDPOINTS:-false}"
+case "${demo_endpoints}" in true|false) ;; *) die "MONGBAS_FULL_E2E_DEMO_ENDPOINTS must be true or false" ;; esac
 [[ "${port}" =~ ^[0-9]+$ ]] && [ "${port}" -ge 1024 ] && [ "${port}" -le 65535 ] || die "port must be 1024..65535"
 base_url="http://127.0.0.1:${port}"
 ss -H -ltn "sport = :${port}" | grep -q . && die "full E2E port ${port} is already in use"
@@ -39,16 +41,16 @@ git -C "${MONGBAS_REPO_DIR}" rev-parse HEAD >"${out}/git-commit.txt"
 
 (
   cd "${MONGBAS_REPO_DIR}/application"
-  exec env PORT="${port}" DISABLE_RATE_LIMITS=true ENABLE_DEMO_ENDPOINTS=false node src/app.js
+  exec env PORT="${port}" DISABLE_RATE_LIMITS=true ENABLE_DEMO_ENDPOINTS="${demo_endpoints}" node src/app.js
 ) >"${out}/evaluation-backend.log" 2>&1 &
 backend_pid=$!
 
 ready=0
 for _ in $(seq 1 60); do
-  if curl --silent --fail --max-time 10 "${base_url}/health" | node -e '
+  if curl --silent --fail --max-time 10 "${base_url}/health" | EXPECT_DEMO="${demo_endpoints}" node -e '
     const v=JSON.parse(require("fs").readFileSync(0,"utf8"));
     process.exit(v.status === "ok" && v.benchmark?.rateLimitsDisabled === true &&
-      v.demo?.endpointsEnabled === false && v.idemix?.enabled === true ? 0 : 1);
+      v.demo?.endpointsEnabled === (process.env.EXPECT_DEMO === "true") && v.idemix?.enabled === true ? 0 : 1);
   ' >/dev/null 2>&1; then ready=1; break; fi
   kill -0 "${backend_pid}" 2>/dev/null || break
   sleep 1
@@ -66,8 +68,8 @@ printf '%s\n' "${status}" >"${out}/evaluation.exit-status.txt"
 
 stop_backend
 ss -H -ltn "sport = :${port}" | grep -q . && die "isolated full E2E backend still owns port ${port} after cleanup"
-printf '{"schema":"mongbas-full-e2e-evaluation/v1","startedAt":"%s","endedAt":"%s","baseURL":"%s","exitStatus":%d,"gitCommit":"%s"}\n' \
-  "${started_at}" "${ended_at}" "${base_url}" "${status}" "$(cat "${out}/git-commit.txt")" >"${out}/metadata.json"
+printf '{"schema":"mongbas-full-e2e-evaluation/v1","startedAt":"%s","endedAt":"%s","baseURL":"%s","demoEndpoints":%s,"exitStatus":%d,"gitCommit":"%s"}\n' \
+  "${started_at}" "${ended_at}" "${base_url}" "${demo_endpoints}" "${status}" "$(cat "${out}/git-commit.txt")" >"${out}/metadata.json"
 (cd "${out}" && find . -type f ! -name sha256-inventory.txt -print0 | sort -z | xargs -0 sha256sum) >"${out}/sha256-inventory.txt"
 
 log "full E2E evidence saved to ${out}"

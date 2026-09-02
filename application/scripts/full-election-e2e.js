@@ -225,6 +225,35 @@ async function main() {
     nullifiers.push(nh);
   }
 
+  if (health.demo?.endpointsEnabled === true) {
+    console.log('\n-- Phase 5a: Authenticated Demo Dashboard Event --');
+    await assertOk('committed voter emits verification event', requestJson('/api/vote/demo-event', {
+      method: 'POST',
+      headers: { 'x-idemix-credential': credentials[0] },
+      body: JSON.stringify({ electionID: ELECTION_ID, nullifierHash: nullifiers[0] }),
+    }));
+    const events = await assertOk('dashboard receives verification event',
+      requestJson(`/api/elections/${encodeURIComponent(ELECTION_ID)}/demo-events?since=0`));
+    const verification = events.events?.find((event) => event.type === 'verify');
+    if (!verification || verification.payload?.code !== nullifiers[0]) {
+      throw new Error('dashboard verification event is missing or not bound to the committed nullifier');
+    }
+    await assertRejected('different credential cannot emit event for another voter',
+      requestJson('/api/vote/demo-event', {
+        method: 'POST', headers: { 'x-idemix-credential': credentials[1] },
+        body: JSON.stringify({ electionID: ELECTION_ID, nullifierHash: nullifiers[0] }),
+      }));
+    await assertRejected('uncommitted nullifier cannot emit verification event',
+      requestJson('/api/vote/demo-event', {
+        method: 'POST', headers: { 'x-idemix-credential': credentials[0] },
+        body: JSON.stringify({ electionID: ELECTION_ID, nullifierHash: arbitraryNullifier('demo-event') }),
+      }));
+    await assertRejected('legacy arbitrary dashboard event endpoint is unavailable',
+      requestJson(`/api/elections/${encodeURIComponent(ELECTION_ID)}/demo-event`, {
+        method: 'POST', body: JSON.stringify({ type: 'verify', payload: { code: nullifiers[0] } }),
+      }));
+  }
+
   // 동일 유권자/선거 credential을 재발급해도 material과 nullifier가 같고,
   // 새 표가 아니라 Last-Vote-Wins 재투표로 처리되어야 한다.
   const reissued = await assertOk('reissue credential (voter1)', requestJson('/api/credential/idemix', {
