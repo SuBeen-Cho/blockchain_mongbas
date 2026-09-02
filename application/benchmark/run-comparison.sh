@@ -85,6 +85,7 @@ log "=== A단계 시작: bypass (IDEMIX_ENABLED=false) ==="
 start_server "A단계" IDEMIX_ENABLED=false
 
 node benchmark/full-comparison-bench.js \
+  --scenario A \
   --out "${REPORTS_DIR}/phase-A-${TIMESTAMP}.json" \
   2>&1 | tee "${REPORTS_DIR}/phase-A-${TIMESTAMP}.log"
 
@@ -99,6 +100,7 @@ log "=== B단계 시작: PS-BN254 Idemix (IDEMIX_IMPL=ps) ==="
 start_server "B단계" IDEMIX_ENABLED=true IDEMIX_IMPL=ps IDEMIX_CACHE_ENABLED=false
 
 node benchmark/full-comparison-bench.js \
+  --scenario B \
   --out "${REPORTS_DIR}/phase-B-${TIMESTAMP}.json" \
   2>&1 | tee "${REPORTS_DIR}/phase-B-${TIMESTAMP}.log"
 
@@ -112,6 +114,7 @@ log "=== C단계 시작: BBS+-BLS12381 (IDEMIX_IMPL=bbs) ==="
 start_server "C단계" IDEMIX_ENABLED=true IDEMIX_IMPL=bbs IDEMIX_CACHE_ENABLED=false
 
 node benchmark/full-comparison-bench.js \
+  --scenario C \
   --out "${REPORTS_DIR}/phase-C-${TIMESTAMP}.json" \
   2>&1 | tee "${REPORTS_DIR}/phase-C-${TIMESTAMP}.log"
 

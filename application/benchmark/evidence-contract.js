@@ -3,6 +3,14 @@
 const fs = require('fs');
 const path = require('path');
 
+const BENCHMARK_SCENARIOS = Object.freeze({
+  A: Object.freeze({ enabled: false, mode: 'bypass', impl: 'HMAC-SHA256', idemixImpl: 'hmac', asymEnabled: false }),
+  HMAC: Object.freeze({ enabled: true, mode: 'idemix-hmac', impl: 'HMAC-SHA256', idemixImpl: 'hmac', asymEnabled: false }),
+  Ed25519: Object.freeze({ enabled: true, mode: 'idemix-hmac', impl: 'Ed25519-asymmetric', idemixImpl: 'hmac', asymEnabled: true }),
+  B: Object.freeze({ enabled: true, mode: 'idemix-ps', impl: 'PS-BN254 credential prototype', idemixImpl: 'ps', asymEnabled: false }),
+  C: Object.freeze({ enabled: true, mode: 'idemix-bbs', impl: 'BBS+-BLS12381 (C단계: 개선 Idemix)', idemixImpl: 'bbs', asymEnabled: false }),
+});
+
 function isSuccessfulHttpStatus(status) {
   return Number.isInteger(status) && status >= 200 && status < 300;
 }
@@ -49,6 +57,20 @@ function requireRequestSeries(label, series) {
   }
 }
 
+function requireBenchmarkHealth(health, scenarioName) {
+  const expected = BENCHMARK_SCENARIOS[scenarioName];
+  if (!expected) throw new Error(`unknown benchmark scenario: ${scenarioName}`);
+  const actual = health?.idemix;
+  const identityMatches = actual && Object.entries(expected).every(([key, value]) => actual[key] === value);
+  if (health?.status !== 'ok' || !identityMatches ||
+      health?.benchmark?.authEndpointEnabled !== true ||
+      health?.benchmark?.rateLimitsDisabled !== true ||
+      health?.benchmark?.demoCredentialsEnabled !== true) {
+    throw new Error(`benchmark readiness mismatch for scenario ${scenarioName}`);
+  }
+  return health;
+}
+
 function writeJsonEvidenceExclusive(targetPath, value) {
   const resolved = path.resolve(targetPath);
   const directory = path.dirname(resolved);
@@ -73,11 +95,13 @@ function writeJsonEvidenceExclusive(targetPath, value) {
 }
 
 module.exports = {
+  BENCHMARK_SCENARIOS,
   isSuccessfulHttpStatus,
   requireHttpSuccess,
   isAcceptedAuth,
   requireAcceptedAuth,
   requireExactSuccess,
   requireRequestSeries,
+  requireBenchmarkHealth,
   writeJsonEvidenceExclusive,
 };

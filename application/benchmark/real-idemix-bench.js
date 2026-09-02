@@ -22,6 +22,7 @@ const {
   isAcceptedAuth,
   requireExactSuccess,
   requireRequestSeries,
+  requireBenchmarkHealth,
   writeJsonEvidenceExclusive,
 } = require('./evidence-contract');
 
@@ -33,6 +34,8 @@ process.argv.slice(2).forEach((a, i, arr) => {
 const BASE_URL = args.url || 'http://localhost:3000';
 const OUT_FILE = args.out || null;
 const STEP_SEC = parseInt(args.sec || '8', 10);
+const EXPECTED_SCENARIO = args.scenario || null;
+if (OUT_FILE && !EXPECTED_SCENARIO) throw new Error('--out requires --scenario A|HMAC|Ed25519|B|C');
 
 // ── HTTP 헬퍼 ──────────────────────────────────────────────────
 function rawRequest(opts, body = null) {
@@ -198,10 +201,12 @@ async function waitForServer() {
   for (let i = 0; i < 30; i++) {
     try {
       const r = await get(`${BASE_URL}/health`);
-      if (r.status === 200 && r.body?.status === 'ok' &&
-          r.body?.benchmark?.authEndpointEnabled === true &&
-          r.body?.benchmark?.rateLimitsDisabled === true &&
-          r.body?.benchmark?.demoCredentialsEnabled === true) return r.body;
+      if (r.status === 200) {
+        if (EXPECTED_SCENARIO) return requireBenchmarkHealth(r.body, EXPECTED_SCENARIO);
+        if (r.body?.status === 'ok' && r.body?.benchmark?.authEndpointEnabled === true &&
+            r.body?.benchmark?.rateLimitsDisabled === true &&
+            r.body?.benchmark?.demoCredentialsEnabled === true) return r.body;
+      }
     } catch { /* retry */ }
     await new Promise(r => setTimeout(r, 500));
   }
@@ -369,6 +374,9 @@ async function main() {
   }
 
   const phaseResult = await runPhase(phaseName, note);
+  if (EXPECTED_SCENARIO && phaseName !== EXPECTED_SCENARIO) {
+    throw new Error(`benchmark scenario drift: expected ${EXPECTED_SCENARIO}, detected ${phaseName}`);
+  }
   printSummary([phaseResult]);
 
   if (OUT_FILE) {

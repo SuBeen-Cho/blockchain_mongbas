@@ -6,14 +6,24 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const {
+  BENCHMARK_SCENARIOS,
   isSuccessfulHttpStatus,
   requireHttpSuccess,
   isAcceptedAuth,
   requireAcceptedAuth,
   requireExactSuccess,
   requireRequestSeries,
+  requireBenchmarkHealth,
   writeJsonEvidenceExclusive,
 } = require('../benchmark/evidence-contract');
+
+function healthyScenario(name) {
+  return {
+    status: 'ok',
+    idemix: { ...BENCHMARK_SCENARIOS[name] },
+    benchmark: { authEndpointEnabled: true, rateLimitsDisabled: true, demoCredentialsEnabled: true },
+  };
+}
 
 test('benchmark HTTP success accepts only 2xx', () => {
   assert.equal(isSuccessfulHttpStatus(200), true);
@@ -26,6 +36,15 @@ test('benchmark HTTP success accepts only 2xx', () => {
   assert.equal(isAcceptedAuth({ status: 200, body: { eligible: false } }), false);
   assert.equal(isAcceptedAuth({ status: 403, body: { eligible: true } }), false);
   assert.throws(() => requireAcceptedAuth({ status: 200, body: { eligible: false } }, 'auth'), /expected accepted authentication/);
+});
+
+test('benchmark readiness is bound to the exact requested scenario and unsafe flags', () => {
+  assert.doesNotThrow(() => requireBenchmarkHealth(healthyScenario('B'), 'B'));
+  assert.throws(() => requireBenchmarkHealth(healthyScenario('B'), 'C'), /readiness mismatch/);
+  const missingEndpoint = healthyScenario('A');
+  missingEndpoint.benchmark.authEndpointEnabled = false;
+  assert.throws(() => requireBenchmarkHealth(missingEndpoint, 'A'), /readiness mismatch/);
+  assert.throws(() => requireBenchmarkHealth(healthyScenario('A'), 'unknown'), /unknown benchmark scenario/);
 });
 
 test('evidence publication is atomic and never overwrites an existing result', t => {
@@ -47,6 +66,7 @@ test('benchmark runners explicitly enable their isolated test surface and never 
     assert.match(source, /ENABLE_DEMO_CREDENTIALS=true/);
     assert.match(source, /authEndpointEnabled === true/);
     assert.match(source, /demoCredentialsEnabled === true/);
+    assert.match(source, /--scenario/);
     assert.doesNotMatch(source, /\beval\b/);
     assert.doesNotMatch(source, /xargs\s+kill|kill\s+-9/);
   }

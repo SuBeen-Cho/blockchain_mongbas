@@ -95,6 +95,7 @@ log "========== A단계: bypass =========="
 start_server "A단계" IDEMIX_ENABLED=false
 
 node benchmark/real-idemix-bench.js \
+  --scenario A \
   --out "${REPORTS_DIR}/real-A-${TIMESTAMP}.json" \
   --sec "${BENCH_STEP_SEC:-5}" \
   2>&1 | tee "${REPORTS_DIR}/real-A-${TIMESTAMP}.log"
@@ -107,6 +108,7 @@ log "========== HMAC: HMAC-SHA256 credential =========="
 start_server "HMAC" IDEMIX_ENABLED=true ASYM_CRED_ENABLED=false IDEMIX_CACHE_ENABLED=false
 
 node benchmark/real-idemix-bench.js \
+  --scenario HMAC \
   --out "${REPORTS_DIR}/real-HMAC-${TIMESTAMP}.json" \
   --sec "${BENCH_STEP_SEC:-5}" \
   2>&1 | tee "${REPORTS_DIR}/real-HMAC-${TIMESTAMP}.log"
@@ -119,6 +121,7 @@ log "========== Ed25519: 체인코드 직접 검증 기준선 =========="
 start_server "Ed25519" IDEMIX_ENABLED=true ASYM_CRED_ENABLED=true IDEMIX_CACHE_ENABLED=false
 
 node benchmark/real-idemix-bench.js \
+  --scenario Ed25519 \
   --out "${REPORTS_DIR}/real-Ed25519-${TIMESTAMP}.json" \
   --sec "${BENCH_STEP_SEC:-5}" \
   2>&1 | tee "${REPORTS_DIR}/real-Ed25519-${TIMESTAMP}.log"
@@ -139,6 +142,7 @@ log "========== B단계: PS-BN254 credential prototype =========="
 start_server "B단계" IDEMIX_ENABLED=true IDEMIX_IMPL=ps IDEMIX_CACHE_ENABLED=false
 
 node benchmark/real-idemix-bench.js \
+  --scenario B \
   --out "${REPORTS_DIR}/real-B-${TIMESTAMP}.json" \
   --sec "${BENCH_STEP_SEC:-5}" \
   2>&1 | tee "${REPORTS_DIR}/real-B-${TIMESTAMP}.log"
@@ -158,6 +162,7 @@ log "========== C단계: BBS+-BLS12381 (개선 Idemix) =========="
 start_server "C단계" IDEMIX_ENABLED=true IDEMIX_IMPL=bbs IDEMIX_CACHE_ENABLED=false
 
 node benchmark/real-idemix-bench.js \
+  --scenario C \
   --out "${REPORTS_DIR}/real-C-${TIMESTAMP}.json" \
   --sec "${BENCH_STEP_SEC:-5}" \
   2>&1 | tee "${REPORTS_DIR}/real-C-${TIMESTAMP}.log"
