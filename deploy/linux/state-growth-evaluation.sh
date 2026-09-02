@@ -9,6 +9,7 @@ require_cmd df
 require_cmd git
 require_cmd node
 require_cmd sha256sum
+require_cmd setsid
 [ "${MONGBAS_PROFILE}" = benchmark ] || die "set MONGBAS_PROFILE=benchmark for state-growth evaluation"
 
 ballots="${MONGBAS_STATE_GROWTH_BALLOTS:-1000}"
@@ -49,6 +50,14 @@ printf '%s\t%s\t%s\t%s\t%s\t%s\n' "${ballots}" "${estimated_bytes_per_ballot}" "
 [ "${available_bytes}" -ge "${required_available_bytes}" ] || \
   die "insufficient disk headroom: require ${required_available_bytes} bytes, have ${available_bytes}; evidence retained in ${out}"
 
+disk_sample_seconds="${MONGBAS_STATE_GROWTH_DISK_SAMPLE_SECONDS:-30}"
+minimum_free_bytes="${MONGBAS_STATE_GROWTH_MIN_FREE_BYTES:-${estimated_growth_bytes}}"
+[[ "${disk_sample_seconds}" =~ ^[0-9]+$ ]] && [ "${disk_sample_seconds}" -ge 5 ] && \
+  [ "${disk_sample_seconds}" -le 300 ] || die "disk sample seconds must be 5..300"
+[[ "${minimum_free_bytes}" =~ ^[0-9]+$ ]] && [ "${minimum_free_bytes}" -ge 5000000000 ] && \
+  [ "${minimum_free_bytes}" -le "${available_bytes}" ] || die "minimum free bytes must be at least 5000000000 and no greater than current availability"
+printf 'timestampUtc\tavailableBytes\tminimumFreeBytes\tevent\n' >"${out}/disk-monitor.tsv"
+
 targets=(
   'peer0.civil.voting.example.com|ledger|/var/hyperledger/production'
   'peer0.ec.voting.example.com|ledger|/var/hyperledger/production'
@@ -78,12 +87,48 @@ snapshot() {
 
 snapshot "${out}/storage-before.tsv"
 docker ps --no-trunc --size >"${out}/containers-before.txt"
-set +e
-MONGBAS_RATE_RESULT_ROOT="${out}/workload-results" MONGBAS_RATE_LEVELS="${rate}" \
+workload_pid=""
+stop_workload() {
+  if [ -n "${workload_pid}" ] && kill -0 "${workload_pid}" 2>/dev/null; then
+    kill -TERM -- "-${workload_pid}" 2>/dev/null || true
+    for _ in 1 2 3 4 5; do
+      kill -0 "${workload_pid}" 2>/dev/null || return 0
+      sleep 1
+    done
+    kill -KILL -- "-${workload_pid}" 2>/dev/null || true
+  fi
+}
+trap 'stop_workload' EXIT INT TERM
+
+setsid env MONGBAS_RATE_RESULT_ROOT="${out}/workload-results" MONGBAS_RATE_LEVELS="${rate}" \
   MONGBAS_RATE_DURATION_SECONDS="${duration}" MONGBAS_RATE_REPEATS=1 \
-  "${LINUX_DEPLOY_DIR}/rate-evaluation.sh" >"${out}/workload.stdout.log" 2>"${out}/workload.stderr.log"
+  "${LINUX_DEPLOY_DIR}/rate-evaluation.sh" >"${out}/workload.stdout.log" 2>"${out}/workload.stderr.log" &
+workload_pid=$!
+disk_abort=0
+while kill -0 "${workload_pid}" 2>/dev/null; do
+  current_available_bytes="$(df -B1 --output=avail "${MONGBAS_RUNTIME_DIR}" | awk 'NR == 2 { gsub(/[[:space:]]/, "", $0); print }')"
+  [[ "${current_available_bytes}" =~ ^[0-9]+$ ]] || die "could not measure available bytes while workload is running"
+  printf '%s\t%s\t%s\trunning\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+    "${current_available_bytes}" "${minimum_free_bytes}" >>"${out}/disk-monitor.tsv"
+  if [ "${current_available_bytes}" -lt "${minimum_free_bytes}" ]; then
+    printf '%s\t%s\t%s\tthreshold-breached\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+      "${current_available_bytes}" "${minimum_free_bytes}" >>"${out}/disk-monitor.tsv"
+    disk_abort=1
+    stop_workload
+    break
+  fi
+  sleep "${disk_sample_seconds}"
+done
+set +e
+wait "${workload_pid}"
 workload_status=$?
 set -e
+workload_pid=""
+trap - EXIT INT TERM
+if [ "${disk_abort}" -eq 1 ]; then
+  workload_status=75
+  printf '%s\n' 'disk safety threshold breached; workload process group terminated' >>"${out}/workload.stderr.log"
+fi
 printf '%s\n' "${workload_status}" >"${out}/workload.exit-status.txt"
 snapshot "${out}/storage-after.tsv"
 docker ps --no-trunc --size >"${out}/containers-after.txt"
