@@ -95,6 +95,24 @@ test('legacy step 4-5 benchmark is quarantined before network access', () => {
   assert.doesNotMatch(run.stderr, /벤치마크 완료/);
 });
 
+test('legacy BatchTimeout runners are quarantined before output or channel mutation', () => {
+  const javascriptRun = spawnSync(process.execPath, [path.join(root, 'scripts/batchtimeout-bench.js')], {
+    encoding: 'utf8',
+    timeout: 5000,
+  });
+  const shellRun = spawnSync('bash', [path.join(root, 'scripts/run-batchtimeout-all.sh')], {
+    encoding: 'utf8',
+    timeout: 5000,
+  });
+
+  for (const run of [javascriptRun, shellRun]) {
+    assert.equal(run.status, 2);
+    assert.equal(run.stdout, '');
+    assert.match(run.stderr, /UNSUPPORTED/);
+    assert.doesNotMatch(run.stderr, /전체 BatchTimeout 벤치마크 완료|결과 저장/);
+  }
+});
+
 test('BBS runtime and Linux build stay on the audited WASM dependency path', () => {
   const bbs = read('application/src/lib/bbs-idemix.js');
   const build = read('deploy/linux/build.sh');

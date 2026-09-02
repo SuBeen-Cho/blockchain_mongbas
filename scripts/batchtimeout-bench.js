@@ -24,6 +24,11 @@
 
 'use strict';
 
+console.error('[UNSUPPORTED] scripts/batchtimeout-bench.js는 credential-bound vector-v3 경로 이전의 legacy workload입니다.');
+console.error('현재 BatchTimeout 평가는 엄격한 인증·commit·정확성 검사를 갖춘 새 evaluator를 구현한 뒤 수행해야 합니다.');
+console.error('이 파일은 실패 라운드를 결과에 포함하고도 성공 종료하던 이력 때문에 증거 생성이 금지됩니다.');
+process.exit(2);
+
 const http   = require('http');
 const crypto = require('crypto');
 const fs     = require('fs');

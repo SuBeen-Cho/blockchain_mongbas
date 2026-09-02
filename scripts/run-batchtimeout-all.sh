@@ -12,6 +12,10 @@
 
 set -euo pipefail
 
+echo "[UNSUPPORTED] scripts/run-batchtimeout-all.sh는 legacy batchtimeout workload를 실행하므로 현재 평가에 사용할 수 없습니다." >&2
+echo "구형 workload가 채널 설정을 변경하기 전에 종료합니다. 엄격한 현행 evaluator가 추가될 때까지 증거 생성이 금지됩니다." >&2
+exit 2
+
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
