@@ -85,6 +85,23 @@ if [ -z "${election_id}" ]; then
 else
   [[ "${election_id}" =~ ^[A-Za-z0-9._-]+$ ]] || die "MONGBAS_VERIFIER_ELECTION_ID is invalid"
   printf '{"electionID":"%s","source":"pre-existing"}\n' "${election_id}" >"${out}/live-election.json"
+  if [ "${MONGBAS_VERIFIER_PUBLISH_EXISTING_AUDIT:-false}" = true ]; then
+    BUNDLE_BASE_URL="http://127.0.0.1:${port}" BUNDLE_ELECTION_ID="${election_id}" node -e '
+      const base = process.env.BUNDLE_BASE_URL;
+      const election = encodeURIComponent(process.env.BUNDLE_ELECTION_ID);
+      const token = process.env.ADMIN_API_TOKEN;
+      fetch(`${base}/api/elections/${election}/publish-audit`, {
+        method: "POST", headers: { authorization: `Bearer ${token}`, "content-type": "application/json" }, body: "{}",
+      }).then(async response => {
+        const text = await response.text();
+        if (!response.ok) throw new Error(`publish-audit failed: HTTP ${response.status}`);
+        process.stdout.write(text);
+      }).catch(error => { console.error(error.message); process.exit(1); });
+    ' >"${out}/publish-existing-audit.json" 2>"${out}/publish-existing-audit.stderr.log" \
+      || die "existing election audit publication failed"
+  elif [ "${MONGBAS_VERIFIER_PUBLISH_EXISTING_AUDIT:-false}" != false ]; then
+    die "MONGBAS_VERIFIER_PUBLISH_EXISTING_AUDIT must be true or false"
+  fi
 fi
 curl --silent --show-error --fail "http://127.0.0.1:${port}/api/elections/${election_id}/election-bundle-source" \
   >"${out}/bundle-source.json"
