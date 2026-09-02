@@ -5,6 +5,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const {
   generateTransportKeyPair, createContribution, finalizeTrusteeShare, finalizeTranscript,
+  createVectorPartialDecryption,
 } = require('../src/dkg');
 
 function usage() {
@@ -13,6 +14,7 @@ function usage() {
   mongbas-trustee contribute --ceremony ID --id ID --private FILE --participants FILE --out FILE
   mongbas-trustee finalize-share --ceremony ID --id ID --private FILE --participants FILE --contributions-dir DIR --private-out FILE --public-out FILE
   mongbas-trustee finalize-transcript --ceremony ID --participants FILE --contributions-dir DIR --public-shares-dir DIR --out FILE
+  mongbas-trustee partial --election ID --private-share FILE --aggregate FILE --out FILE
 `);
 }
 
@@ -106,6 +108,17 @@ function main() {
     });
     writeExclusive(requireArg(parsed, 'out'), transcript, 0o644);
     process.stdout.write(`FINALIZED_TRANSCRIPT: ${transcript.transcriptHash}\n`);
+    return;
+  }
+  if (command === 'partial') {
+    const aggregate = readJson(requireArg(parsed, 'aggregate'));
+    const encryptedAggregateVector = Array.isArray(aggregate) ? aggregate : aggregate.encAggVector;
+    const partial = createVectorPartialDecryption({
+      privateShare: readJson(requireArg(parsed, 'private-share'), { privateFile: true }),
+      electionID: requireArg(parsed, 'election'), encryptedAggregateVector,
+    });
+    writeExclusive(requireArg(parsed, 'out'), partial, 0o644);
+    process.stdout.write(`CREATED_PARTIAL: ${partial.mspID} index=${partial.index} proofs=${partial.proofs.length}\n`);
     return;
   }
   throw new Error(`unknown command: ${command}`);

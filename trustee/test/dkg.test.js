@@ -5,6 +5,7 @@ const assert = require('node:assert/strict');
 const {
   P, G, Q, modPow, generateTransportKeyPair, createContribution,
   finalizeTrusteeShare, finalizeTranscript,
+  createVectorPartialDecryption,
 } = require('../src/dkg');
 
 function ceremony() {
@@ -141,4 +142,27 @@ test('transcript rejects forged or relabelled public trustee shares', () => {
     ceremonyID: value.ceremonyID, participants: value.participants,
     contributions: value.contributions, publicShares,
   }), /aggregate public share mismatch/);
+});
+
+test('external vector partial proofs satisfy both Chaum-Pedersen equations', () => {
+  const value = ceremony();
+  const privateShare = value.finalized[0].privateShare;
+  const aggregates = [3n, 5n].map(exponent => ({
+    c1: modPow(G, exponent, P).toString(16),
+    c2: modPow(G, exponent + 7n, P).toString(16),
+  }));
+  const partial = createVectorPartialDecryption({
+    privateShare, electionID: 'dkg-election', encryptedAggregateVector: aggregates,
+  });
+  assert.equal(partial.values.length, 2);
+  partial.proofs.forEach((proof, index) => {
+    const y = BigInt(`0x${partial.publicKeyY}`);
+    const c1 = BigInt(`0x${proof.c1}`);
+    const valueElement = BigInt(`0x${proof.c2}`);
+    const a1 = BigInt(`0x${proof.a1}`), a2 = BigInt(`0x${proof.a2}`);
+    const challenge = BigInt(`0x${proof.e}`), response = BigInt(`0x${proof.z}`);
+    assert.equal(modPow(G, response, P), a1 * modPow(y, challenge, P) % P);
+    assert.equal(modPow(c1, response, P), a2 * modPow(valueElement, challenge, P) % P);
+    assert.equal(proof.nullifierHash, `vector-threshold-partial:1:${index}`);
+  });
 });

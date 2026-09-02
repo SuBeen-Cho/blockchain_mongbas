@@ -293,7 +293,64 @@ function finalizeTranscript({ ceremonyID, participants, contributions, publicSha
   return { ...transcriptCore, transcriptHash: crypto.createHash('sha256').update(canonicalize(transcriptCore)).digest('hex') };
 }
 
+function scalarBytes(value) {
+  let encoded = value.toString(16);
+  if (encoded.length % 2) encoded = `0${encoded}`;
+  return Buffer.from(encoded, 'hex');
+}
+
+function createVectorPartialDecryption({ privateShare, electionID, encryptedAggregateVector }) {
+  if (!privateShare || privateShare.schema !== 'mongbas-dkg-trustee-share/v1' ||
+      typeof privateShare.ceremonyID !== 'string' || privateShare.ceremonyID.length === 0 || typeof privateShare.trusteeID !== 'string' ||
+      !Number.isSafeInteger(privateShare.trusteeIndex) || privateShare.trusteeIndex < 1 || privateShare.trusteeIndex > TOTAL ||
+      typeof electionID !== 'string' || !/^[A-Za-z0-9._-]{1,256}$/.test(electionID) ||
+      !Array.isArray(encryptedAggregateVector) || encryptedAggregateVector.length < 2) {
+    throw new Error('invalid trustee share or vector aggregate');
+  }
+  const secret = parseScalar(privateShare.scalar, 'trustee scalar');
+  const publicKeyY = modPow(G, secret, P).toString(16);
+  const values = [];
+  const proofs = [];
+  encryptedAggregateVector.forEach((aggregate, candidateIndex) => {
+    const c1 = parseElement(aggregate?.c1, `aggregate c1 ${candidateIndex}`);
+    parseElement(aggregate?.c2, `aggregate c2 ${candidateIndex}`);
+    const value = modPow(c1, secret, P);
+    const c1Hex = c1.toString(16);
+    const valueHex = value.toString(16);
+    const domain = `vector-threshold-partial:${privateShare.trusteeIndex}:${candidateIndex}`;
+    const nonceInput = Buffer.concat([
+      scalarBytes(secret), Buffer.from(`${c1Hex}${valueHex}${electionID}${domain}`),
+    ]);
+    let nonce = BigInt(`0x${crypto.createHash('sha256').update(nonceInput).digest('hex')}`) % Q;
+    if (nonce === 0n) nonce = 1n;
+    const a1 = modPow(G, nonce, P);
+    const a2 = modPow(c1, nonce, P);
+    const transcript = `${G.toString(16)}|${publicKeyY}|${c1Hex}|${valueHex}|${a1.toString(16)}|${a2.toString(16)}`;
+    const challenge = BigInt(`0x${crypto.createHash('sha256').update(transcript).digest('hex')}`) % Q;
+    const response = (nonce + challenge * secret) % Q;
+    values.push(valueHex);
+    proofs.push({
+      nullifierHash: domain,
+      c1: c1Hex,
+      c2: valueHex,
+      decryptedHash: '',
+      a1: a1.toString(16),
+      a2: a2.toString(16),
+      e: challenge.toString(16),
+      z: response.toString(16),
+    });
+  });
+  return {
+    index: privateShare.trusteeIndex,
+    mspID: privateShare.trusteeID,
+    publicKeyY,
+    values,
+    proofs,
+  };
+}
+
 module.exports = {
   P_HEX, P, G, Q, THRESHOLD, TOTAL, canonicalize, modPow,
   generateTransportKeyPair, createContribution, finalizeTrusteeShare, finalizeTranscript,
+  createVectorPartialDecryption,
 };

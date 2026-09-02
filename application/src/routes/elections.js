@@ -214,7 +214,7 @@ router.get('/:id', async (req, res) => {
 // Body: { electionID, title, description, candidates: [], startTime, endTime }
 // startTime, endTime: Unix timestamp (초), startTime 생략 시 현재 시각 사용
 router.post('/', async (req, res) => {
-  const { electionID, title, description, candidates, startTime, endTime, encryptionMode } = req.body;
+  const { electionID, title, description, candidates, startTime, endTime, encryptionMode, dkgTranscript } = req.body;
 
   if (!electionID || !title || !candidates || !Array.isArray(candidates) || !endTime) {
     return res.status(400).json({
@@ -235,6 +235,10 @@ router.post('/', async (req, res) => {
   if (!['aes', 'elgamal', 'elgamal-vector-v3'].includes(mode)) {
     return res.status(400).json({ error: 'encryptionMode는 "aes", "elgamal", "elgamal-vector-v3" 중 하나여야 합니다.' });
   }
+  if (dkgTranscript != null && (mode !== 'elgamal-vector-v3' || typeof dkgTranscript !== 'object' || Array.isArray(dkgTranscript) ||
+      dkgTranscript.schema !== 'mongbas-feldman-dkg-transcript/v1')) {
+    return res.status(400).json({ error: 'dkgTranscript는 elgamal-vector-v3의 정상적인 Feldman DKG transcript여야 합니다.' });
+  }
 
   const actualStartTime = startTime || Math.floor(Date.now() / 1000);
 
@@ -247,10 +251,12 @@ router.post('/', async (req, res) => {
       // [P2 보안] ElGamal 키를 공개 txID가 아닌 "비밀 seed"로 유도하도록 masterSeed를 transient로 전달.
       //   transient는 오더러/원장에 기록되지 않으므로 키가 공개 데이터로 재계산되지 않는다.
       //   서버는 seed를 저장/로깅하지 않고 즉시 폐기한다(trusted dealer 가정).
-      proposalOpts.transientData = {
-        encryptionMode: Buffer.from(mode),
-        masterSeed: crypto.randomBytes(32),
-      };
+      proposalOpts.transientData = { encryptionMode: Buffer.from(mode) };
+      if (dkgTranscript) {
+        proposalOpts.transientData.dkgTranscript = Buffer.from(JSON.stringify(dkgTranscript));
+      } else {
+        proposalOpts.transientData.masterSeed = crypto.randomBytes(32);
+      }
     }
     const proposal = contract.newProposal('CreateElection', proposalOpts);
     const transaction = await proposal.endorse();
@@ -262,7 +268,8 @@ router.post('/', async (req, res) => {
     if (demoEndpointsEnabled()) {
       try { liveCount.reset(electionID); demoLive.reset(electionID); } catch (_) { /* 리셋 실패 무시 */ }
     }
-    res.status(201).json({ message: '선거가 생성되었습니다.', electionID, encryptionMode: mode });
+    res.status(201).json({ message: '선거가 생성되었습니다.', electionID, encryptionMode: mode,
+      keyCeremonyMode: dkgTranscript ? 'dkg-v1' : 'dealer-assisted' });
   } catch (err) {
     console.error('[elections] CreateElection error:', err.message);
     res.status(500).json({ error: sanitizeError(err) });
@@ -636,6 +643,60 @@ router.post('/:id/partial-decryptions', async (req, res) => {
     res.json(JSON.parse(Buffer.from(result).toString('utf8')));
   } catch (err) {
     console.error('[elections] SubmitPartialDecryption error:', err.message, err.details || '');
+    res.status(500).json({ error: sanitizeError(err) });
+  } finally {
+    gateway.close();
+  }
+});
+
+// Bind one Fabric MSP to the exact public DKG transcript. All three approvals
+// are required by chaincode before the election can become ACTIVE.
+router.post('/:id/dkg-approvals', async (req, res) => {
+  const { id } = req.params;
+  const { shareIndex, transcriptHash } = req.body;
+  if (!['1', '2', '3'].includes(String(shareIndex)) || !/^[0-9a-f]{64}$/.test(String(transcriptHash || ''))) {
+    return res.status(400).json({ error: 'shareIndex 1..3과 64자 lowercase transcriptHash가 필요합니다.' });
+  }
+  const { gateway, contract } = await connectGatewayForShareIndex(String(shareIndex));
+  try {
+    const proposal = contract.newProposal('ApproveDKGTranscript', {
+      arguments: [id, String(shareIndex), transcriptHash],
+    });
+    const tx = await proposal.endorse();
+    const submitted = await tx.submit();
+    const status = await submitted.getStatus();
+    if (!status.successful) throw new Error(`트랜잭션 커밋 실패 (code: ${status.code})`);
+    const result = await contract.evaluateTransaction('GetElection', id);
+    res.json(JSON.parse(Buffer.from(result).toString('utf8')));
+  } catch (err) {
+    console.error('[elections] ApproveDKGTranscript error:', err.message);
+    res.status(500).json({ error: sanitizeError(err) });
+  } finally {
+    gateway.close();
+  }
+});
+
+// DKG trustee-generated public contribution. The body contains no scalar
+// share; chaincode verifies every Chaum-Pedersen proof and caller MSP binding.
+router.post('/:id/external-partial-decryptions', async (req, res) => {
+  const { id } = req.params;
+  const { shareIndex, partial } = req.body;
+  if (!['1', '2', '3'].includes(String(shareIndex)) || !partial || typeof partial !== 'object' || Array.isArray(partial)) {
+    return res.status(400).json({ error: 'shareIndex 1..3과 public partial object가 필요합니다.' });
+  }
+  const { gateway, contract } = await connectGatewayForShareIndex(String(shareIndex));
+  try {
+    const proposal = contract.newProposal('SubmitExternalPartialDecryption', {
+      arguments: [id, String(shareIndex), JSON.stringify(partial)],
+    });
+    const tx = await proposal.endorse();
+    const submitted = await tx.submit();
+    const status = await submitted.getStatus();
+    if (!status.successful) throw new Error(`트랜잭션 커밋 실패 (code: ${status.code})`);
+    const result = await contract.evaluateTransaction('GetKeyDecryptionStatus', id);
+    res.json(JSON.parse(Buffer.from(result).toString('utf8')));
+  } catch (err) {
+    console.error('[elections] SubmitExternalPartialDecryption error:', err.message);
     res.status(500).json({ error: sanitizeError(err) });
   } finally {
     gateway.close();

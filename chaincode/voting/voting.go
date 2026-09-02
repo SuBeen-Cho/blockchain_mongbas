@@ -148,6 +148,10 @@ type Election struct {
 	// ThresholdPublicShares are trustee verification keys y_i=g^x_i. They are
 	// sufficient to verify partial decryptions but reveal no trustee secret.
 	ThresholdPublicShares []ThresholdPublicShare `json:"thresholdPublicShares,omitempty" metadata:",optional"`
+	KeyCeremonyMode       string                 `json:"keyCeremonyMode,omitempty" metadata:",optional"`
+	DKGCeremonyID         string                 `json:"dkgCeremonyID,omitempty" metadata:",optional"`
+	DKGTranscriptHash     string                 `json:"dkgTranscriptHash,omitempty" metadata:",optional"`
+	DKGApprovals          []string               `json:"dkgApprovals,omitempty" metadata:",optional"`
 }
 
 // Nullifier 익명 투표 증명 (공개 원장)
@@ -1254,7 +1258,8 @@ func (c *VotingContract) CreateElection(
 
 	// [PAPER-11] 암호화 모드 결정: transient "encryptionMode" 키가 있으면 사용, 없으면 "aes"
 	encryptionMode := "aes"
-	if transient, tErr := ctx.GetStub().GetTransient(); tErr == nil {
+	transient, _ := ctx.GetStub().GetTransient()
+	if transient != nil {
 		if modeBytes, ok := transient["encryptionMode"]; ok {
 			mode := strings.TrimSpace(string(modeBytes))
 			if mode == "elgamal" || mode == "elgamal-vector-v3" {
@@ -1266,6 +1271,20 @@ func (c *VotingContract) CreateElection(
 	var elgamalPubKey *ElGamalPublicKey
 	var thresholdPublicShares []ThresholdPublicShare
 	var masterSeed []byte
+	var dkg *dkgTranscript
+	keyCeremonyMode := ""
+	if raw, ok := transient["dkgTranscript"]; ok {
+		if encryptionMode != "elgamal-vector-v3" {
+			return fmt.Errorf("DKG transcript is supported only for elgamal-vector-v3 elections")
+		}
+		parsed, publicShares, parseErr := parseAndValidateDKGTranscript(raw)
+		if parseErr != nil {
+			return parseErr
+		}
+		dkg, thresholdPublicShares = parsed, publicShares
+		elgamalPubKey = &ElGamalPublicKey{P: elgamalP.Text(16), G: elgamalG.Text(16), Y: parsed.ElectionPublicKeyY}
+		keyCeremonyMode = "dkg-v1"
+	}
 
 	// [P2 보안] AES 마스터 키 생성 — 비밀 seed(transient) 기반.
 	//   기존: 공개 txID 해시 → 원장을 읽는 누구나 키 재계산 가능(취약점).
@@ -1273,8 +1292,8 @@ func (c *VotingContract) CreateElection(
 	//         transient는 오더러/원장에 기록되지 않으므로 키가 공개 데이터로 재계산 불가.
 	//         seed 미제공 시에만 하위호환으로 txID 기반 사용(주의: 그 경우 재계산 가능).
 	var ekRaw [32]byte
-	if tr, tErr := ctx.GetStub().GetTransient(); tErr == nil {
-		if ms, ok := tr["masterSeed"]; ok && len(ms) >= 16 {
+	if transient != nil {
+		if ms, ok := transient["masterSeed"]; ok && len(ms) >= 16 {
 			masterSeed = append([]byte(nil), ms...)
 			ekRaw = sha256.Sum256(append([]byte("ENCRYPTION::"), ms...))
 		} else {
@@ -1285,41 +1304,46 @@ func (c *VotingContract) CreateElection(
 	}
 	ekKey := "ENCRYPTION_KEY_" + electionID
 	ekHexStr := hex.EncodeToString(ekRaw[:])
-	if pdcErr := ctx.GetStub().PutPrivateData(VotePrivatePDC, ekKey, []byte(ekHexStr)); pdcErr != nil {
-		return fmt.Errorf("암호화 키 PDC 저장 실패: %w", pdcErr)
+	if dkg == nil {
+		if pdcErr := ctx.GetStub().PutPrivateData(VotePrivatePDC, ekKey, []byte(ekHexStr)); pdcErr != nil {
+			return fmt.Errorf("암호화 키 PDC 저장 실패: %w", pdcErr)
+		}
 	}
 
 	if encryptionMode == "elgamal" || encryptionMode == "elgamal-vector-v3" {
-		if len(masterSeed) < 16 {
+		if dkg != nil {
+			log.Printf("[CreateElection] externally generated 2-of-3 DKG public key accepted — transcript: %s", dkg.TranscriptHash)
+		} else if len(masterSeed) < 16 {
 			return fmt.Errorf("ElGamal 선거는 transient masterSeed(16바이트 이상)가 필수입니다")
-		}
-		// Dealer-assisted 2-of-3 threshold key generation. The full secret exists
-		// only during endorsement and is never persisted. Trustees later publish
-		// verifiable partial decryptions, never their scalar shares.
-		privKey, pubKey := elgamalGenerateKeyPair(append([]byte("THRESHOLD-ELGAMAL::"), masterSeed...))
-		elgamalPubKey = pubKey
-		coeffHash := sha256.Sum256(append([]byte("THRESHOLD-COEFF::"), masterSeed...))
-		coefficient := new(big.Int).SetBytes(coeffHash[:])
-		coefficient.Mod(coefficient, elgamalQ)
-		if coefficient.Sign() == 0 {
-			coefficient.SetInt64(1)
-		}
-		shares, shareErr := deriveThresholdShares(privKey, coefficient, ShamirTotalShares)
-		if shareErr != nil {
-			return fmt.Errorf("ElGamal threshold share 생성 실패: %w", shareErr)
-		}
-		for i, share := range shares {
-			index := i + 1
-			shareKey := fmt.Sprintf("ELGAMAL_THRESHOLD_SHARE_%s_%d", electionID, index)
-			if pdcErr := ctx.GetStub().PutPrivateData(VotePrivatePDC, shareKey, []byte(share.Text(16))); pdcErr != nil {
-				return fmt.Errorf("ElGamal threshold share %d PDC 저장 실패: %w", index, pdcErr)
+		} else {
+			// Dealer-assisted 2-of-3 threshold key generation. The full secret exists
+			// only during endorsement and is never persisted. Trustees later publish
+			// verifiable partial decryptions, never their scalar shares.
+			privKey, pubKey := elgamalGenerateKeyPair(append([]byte("THRESHOLD-ELGAMAL::"), masterSeed...))
+			elgamalPubKey = pubKey
+			coeffHash := sha256.Sum256(append([]byte("THRESHOLD-COEFF::"), masterSeed...))
+			coefficient := new(big.Int).SetBytes(coeffHash[:])
+			coefficient.Mod(coefficient, elgamalQ)
+			if coefficient.Sign() == 0 {
+				coefficient.SetInt64(1)
 			}
-			thresholdPublicShares = append(thresholdPublicShares, ThresholdPublicShare{
-				Index: index, MSPID: shareIndexMSP[strconv.Itoa(index)],
-				PublicKeyY: new(big.Int).Exp(elgamalG, share, elgamalP).Text(16),
-			})
+			shares, shareErr := deriveThresholdShares(privKey, coefficient, ShamirTotalShares)
+			if shareErr != nil {
+				return fmt.Errorf("ElGamal threshold share 생성 실패: %w", shareErr)
+			}
+			for i, share := range shares {
+				index := i + 1
+				shareKey := fmt.Sprintf("ELGAMAL_THRESHOLD_SHARE_%s_%d", electionID, index)
+				if pdcErr := ctx.GetStub().PutPrivateData(VotePrivatePDC, shareKey, []byte(share.Text(16))); pdcErr != nil {
+					return fmt.Errorf("ElGamal threshold share %d PDC 저장 실패: %w", index, pdcErr)
+				}
+				thresholdPublicShares = append(thresholdPublicShares, ThresholdPublicShare{
+					Index: index, MSPID: shareIndexMSP[strconv.Itoa(index)],
+					PublicKeyY: new(big.Int).Exp(elgamalG, share, elgamalP).Text(16),
+				})
+			}
+			log.Printf("[CreateElection] ElGamal 2-of-3 threshold 키 생성 완료 — pubKey.Y: %s...", pubKey.Y[:16])
 		}
-		log.Printf("[CreateElection] ElGamal 2-of-3 threshold 키 생성 완료 — pubKey.Y: %s...", pubKey.Y[:16])
 	} else {
 		log.Printf("[CreateElection] AES 암호화 키 생성 완료 — PDC key: %s, hex: %s...", ekKey, ekHexStr[:16])
 	}
@@ -1338,6 +1362,12 @@ func (c *VotingContract) CreateElection(
 		EncryptionMode:        encryptionMode,
 		ElGamalPubKey:         elgamalPubKey,
 		ThresholdPublicShares: thresholdPublicShares,
+		KeyCeremonyMode:       keyCeremonyMode,
+	}
+	if dkg != nil {
+		election.DKGCeremonyID = dkg.CeremonyID
+		election.DKGTranscriptHash = dkg.TranscriptHash
+		election.DKGApprovals = []string{}
 	}
 
 	b, err := json.Marshal(election)
@@ -3369,6 +3399,10 @@ func (c *VotingContract) ActivateElection(
 	if election.Status != "CREATED" {
 		return fmt.Errorf("CREATED 상태의 선거만 활성화할 수 있습니다 (현재 상태: %s)", election.Status)
 	}
+	if election.KeyCeremonyMode == "dkg-v1" && len(election.DKGApprovals) != ShamirTotalShares {
+		return fmt.Errorf("DKG 선거는 세 trustee MSP의 transcript 승인 후에만 활성화할 수 있습니다 (현재: %d/%d)",
+			len(election.DKGApprovals), ShamirTotalShares)
+	}
 	election.Status = "ACTIVE"
 	b, err := json.Marshal(election)
 	if err != nil {
@@ -3812,6 +3846,9 @@ func (c *VotingContract) SubmitPartialDecryption(
 	if err != nil {
 		return nil, err
 	}
+	if election.KeyCeremonyMode == "dkg-v1" {
+		return nil, fmt.Errorf("DKG 선거는 shared-PDC partial decryption을 금지합니다. SubmitExternalPartialDecryption을 사용하세요")
+	}
 	if (election.EncryptionMode != "elgamal" && election.EncryptionMode != "elgamal-vector-v3") || len(election.ThresholdPublicShares) != ShamirTotalShares {
 		return nil, fmt.Errorf("partial decryption-v2 선거가 아닙니다")
 	}
@@ -3963,6 +4000,81 @@ func (c *VotingContract) SubmitPartialDecryption(
 	return &status, nil
 }
 
+// SubmitExternalPartialDecryption accepts only public c1^x_i values and
+// Chaum-Pedersen proofs produced by an independently operated DKG trustee.
+// The scalar share never enters Fabric transient data, chaincode memory or a
+// peer private-data collection.
+func (c *VotingContract) SubmitExternalPartialDecryption(
+	ctx contractapi.TransactionContextInterface, electionID, shareIndex, partialJSON string,
+) (*KeySharingStatus, error) {
+	if err := requireShareOwner(ctx, shareIndex); err != nil {
+		return nil, err
+	}
+	index, err := strconv.Atoi(shareIndex)
+	if err != nil {
+		return nil, fmt.Errorf("shareIndex 파싱 실패: %w", err)
+	}
+	election, err := c.GetElection(ctx, electionID)
+	if err != nil {
+		return nil, err
+	}
+	if election.KeyCeremonyMode != "dkg-v1" || election.EncryptionMode != "elgamal-vector-v3" ||
+		len(election.ThresholdPublicShares) != ShamirTotalShares || index < 1 || index > ShamirTotalShares {
+		return nil, fmt.Errorf("external partial decryption is allowed only for a valid DKG vector election")
+	}
+	statusKey := "KEYSHARING_" + electionID
+	statusBytes, err := ctx.GetStub().GetState(statusKey)
+	if err != nil || statusBytes == nil {
+		return nil, fmt.Errorf("키 분산 상태가 없습니다")
+	}
+	var status KeySharingStatus
+	if err := json.Unmarshal(statusBytes, &status); err != nil || status.Mode != "partial-decryption-v2" {
+		return nil, fmt.Errorf("invalid DKG partial-decryption status")
+	}
+	if status.IsDecrypted {
+		return &status, nil
+	}
+	for _, submitted := range status.SubmittedBy {
+		if submitted == shareIndex {
+			return nil, fmt.Errorf("이미 제출된 partial decryption 인덱스입니다: %s", shareIndex)
+		}
+	}
+	tallyKey := "TALLY_" + electionID
+	tallyBytes, err := ctx.GetStub().GetState(tallyKey)
+	if err != nil || tallyBytes == nil {
+		return nil, fmt.Errorf("복호화 대기 집계가 없습니다")
+	}
+	var tally VoteTally
+	if err := json.Unmarshal(tallyBytes, &tally); err != nil || tally.Decrypted ||
+		len(tally.EncAggVector) == 0 || len(tally.EncAggVector) != len(election.Candidates) {
+		return nil, fmt.Errorf("invalid vector aggregate for external partial decryption")
+	}
+	var partial VectorPartialDecryption
+	decoder := json.NewDecoder(strings.NewReader(partialJSON))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&partial); err != nil {
+		return nil, fmt.Errorf("external partial parse failed: %w", err)
+	}
+	publicShare := election.ThresholdPublicShares[index-1]
+	if partial.Index != index || partial.MSPID != shareIndexMSP[shareIndex] || partial.MSPID != publicShare.MSPID ||
+		partial.PublicKeyY != publicShare.PublicKeyY || len(partial.Values) != len(tally.EncAggVector) ||
+		len(partial.Proofs) != len(tally.EncAggVector) {
+		return nil, fmt.Errorf("external partial identity or vector shape mismatch")
+	}
+	partialPub := &ElGamalPublicKey{P: elgamalP.Text(16), G: elgamalG.Text(16), Y: publicShare.PublicKeyY}
+	for candidateIndex, valueHex := range partial.Values {
+		_, valid := parseSubgroupElement(valueHex)
+		proof := partial.Proofs[candidateIndex]
+		expectedDomain := fmt.Sprintf("vector-threshold-partial:%d:%d", index, candidateIndex)
+		if !valid || proof == nil || proof.NullifierHash != expectedDomain || proof.DecryptedHash != "" ||
+			proof.C1 != tally.EncAggVector[candidateIndex].C1 || proof.C2 != valueHex ||
+			!chaumPedersenVerifyRaw(partialPub, proof, big.NewInt(1)) {
+			return nil, fmt.Errorf("external vector partial proof %d invalid", candidateIndex)
+		}
+	}
+	return c.applyVectorPartialDecryption(ctx, election, index, shareIndex, statusKey, tallyKey, &status, &tally, partial)
+}
+
 func (c *VotingContract) submitVectorPartialDecryption(
 	ctx contractapi.TransactionContextInterface, election *Election, index int, shareIndex, statusKey, tallyKey string,
 	status *KeySharingStatus, tally *VoteTally,
@@ -4003,6 +4115,13 @@ func (c *VotingContract) submitVectorPartialDecryption(
 		}
 		partial.Values[candidateIndex], partial.Proofs[candidateIndex] = value.Text(16), proof
 	}
+	return c.applyVectorPartialDecryption(ctx, election, index, shareIndex, statusKey, tallyKey, status, tally, partial)
+}
+
+func (c *VotingContract) applyVectorPartialDecryption(
+	ctx contractapi.TransactionContextInterface, election *Election, index int, shareIndex, statusKey, tallyKey string,
+	status *KeySharingStatus, tally *VoteTally, partial VectorPartialDecryption,
+) (*KeySharingStatus, error) {
 	partialBytes, err := json.Marshal(partial)
 	if err != nil {
 		return nil, err
