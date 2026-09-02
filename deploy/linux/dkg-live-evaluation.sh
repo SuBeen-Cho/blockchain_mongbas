@@ -22,8 +22,12 @@ else
   [ -d "${dkg_secret}" ] || die "DKG secret directory missing: ${dkg_secret}"
 fi
 
-git -C "${MONGBAS_REPO_DIR}" rev-parse HEAD >"${out}/git-commit.txt"
-git -C "${MONGBAS_REPO_DIR}" status --porcelain=v1 >"${out}/git-status.txt"
+git_command=(git)
+if [ "${EUID}" -eq 0 ] && [ -n "${SUDO_USER:-}" ]; then
+  git_command=(runuser -u "${SUDO_USER}" -- git)
+fi
+"${git_command[@]}" -C "${MONGBAS_REPO_DIR}" rev-parse HEAD >"${out}/git-commit.txt"
+"${git_command[@]}" -C "${MONGBAS_REPO_DIR}" status --porcelain=v1 >"${out}/git-status.txt"
 [ ! -s "${out}/git-status.txt" ] || die "DKG live evaluation requires a clean worktree"
 cp "${dkg_public}/transcript.json" "${out}/transcript.json"
 

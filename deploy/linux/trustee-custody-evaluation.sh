@@ -64,8 +64,8 @@ node "${cli}" finalize-transcript --ceremony "${ceremony}" --participants "${pub
   --out "${public}/transcript.json" >>"${out}/ceremony.log"
 
 cp -a "${public}" "${out}/public"
-git -C "${repo}" rev-parse HEAD >"${out}/git-commit.txt"
-git -C "${repo}" status --porcelain=v1 >"${out}/git-status.txt"
+runuser -u "${operator}" -- git -C "${repo}" rev-parse HEAD >"${out}/git-commit.txt"
+runuser -u "${operator}" -- git -C "${repo}" status --porcelain=v1 >"${out}/git-status.txt"
 [ ! -s "${out}/git-status.txt" ] || { echo "dirty worktree" >&2; exit 1; }
 
 readable=0
