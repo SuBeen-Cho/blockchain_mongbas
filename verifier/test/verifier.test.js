@@ -486,8 +486,16 @@ test('witness CLI observes and independently verifies a bundle', () => {
     const privateKeyPem = signer.privateKey.export({ format: 'pem', type: 'pkcs8' });
     fs.writeFileSync(bundlePath, canonicalize(buildBundle()));
     fs.writeFileSync(keyPath, privateKeyPem, { mode: 0o600 });
-    fs.writeFileSync(trustPath, JSON.stringify({ schema: TRUST_SCHEMA, witnesses: [{ id: 'mac-observer', ed25519PublicKeyDer: publicKeyDer(privateKeyPem) }] }));
     const cli = path.join(__dirname, '../bin/mongbas-witness.js');
+    const initialized = spawnSync(process.execPath, [cli, 'init-trust', 'mac-observer', keyPath, trustPath], { encoding: 'utf8' });
+    assert.equal(initialized.status, 0, initialized.stderr);
+    assert.equal(fs.statSync(trustPath).mode & 0o777, 0o600);
+    assert.deepEqual(JSON.parse(fs.readFileSync(trustPath)), {
+      schema: TRUST_SCHEMA, witnesses: [{ id: 'mac-observer', ed25519PublicKeyDer: publicKeyDer(privateKeyPem) }],
+    });
+    const duplicate = spawnSync(process.execPath, [cli, 'init-trust', 'mac-observer', keyPath, trustPath], { encoding: 'utf8' });
+    assert.equal(duplicate.status, 1);
+    assert.match(duplicate.stderr, /EEXIST/);
     const observed = spawnSync(process.execPath, [cli, 'observe', bundlePath, logPath, 'mac-observer', keyPath], { encoding: 'utf8' });
     assert.equal(observed.status, 0, observed.stderr);
     const verified = spawnSync(process.execPath, [cli, 'verify', logPath, trustPath], { encoding: 'utf8' });

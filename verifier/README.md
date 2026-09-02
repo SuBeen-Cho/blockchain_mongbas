@@ -12,9 +12,13 @@ An independently controlled observer can verify a signed bundle and append a
 signed, hash-chained checkpoint without contacting Fabric or the backend:
 
 ```bash
+node bin/mongbas-witness.js init-trust mac-observer /secure/witness-ed25519.pem witness-trust.json
 node bin/mongbas-witness.js observe election-bundle.signed.json checkpoints.jsonl mac-observer /secure/witness-ed25519.pem
 node bin/mongbas-witness.js verify checkpoints.jsonl witness-trust.json
 ```
+
+`init-trust` derives only the public Ed25519 key, creates the trust document
+with mode `0600`, and refuses to overwrite an existing trust document.
 
 The trust document pins witness identities to Ed25519 public keys:
 

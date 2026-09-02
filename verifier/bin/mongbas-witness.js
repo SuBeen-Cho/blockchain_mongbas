@@ -8,9 +8,27 @@ const { TRUST_SCHEMA, checkpointHash, createCheckpoint, parseCanonicalLog, publi
 
 function usage(exitCode = 2) {
   console.error('Usage:');
+  console.error('  mongbas-witness init-trust <witness-id> <ed25519-private.pem> <witness-trust.json>');
   console.error('  mongbas-witness observe <bundle.json> <checkpoint.jsonl> <witness-id> <ed25519-private.pem>');
   console.error('  mongbas-witness verify <checkpoint.jsonl> <witness-trust.json>');
   process.exit(exitCode);
+}
+
+function initTrust(witnessID, keyPath, trustPath) {
+  if (!/^[A-Za-z0-9_.-]{1,128}$/.test(witnessID || '')) throw new Error('invalid witnessID');
+  const encodedPublicKey = publicKeyDer(fs.readFileSync(keyPath));
+  const trust = { schema: TRUST_SCHEMA, witnesses: [{ id: witnessID, ed25519PublicKeyDer: encodedPublicKey }] };
+  const resolvedTrust = path.resolve(trustPath);
+  fs.mkdirSync(path.dirname(resolvedTrust), { recursive: true, mode: 0o700 });
+  const fd = fs.openSync(resolvedTrust, 'wx', 0o600);
+  try {
+    fs.writeSync(fd, `${canonicalize(trust)}\n`);
+    fs.fsyncSync(fd);
+  } finally {
+    fs.closeSync(fd);
+  }
+  console.log(`TRUST INITIALIZED: witnessID=${witnessID}`);
+  console.log(`trustPath=${resolvedTrust}`);
 }
 
 function withLogLock(logPath, action) {
@@ -68,7 +86,8 @@ function verify(logPath, trustPath) {
 
 try {
   const [command, ...args] = process.argv.slice(2);
-  if (command === 'observe' && args.length === 4) observe(path.resolve(args[0]), path.resolve(args[1]), args[2], path.resolve(args[3]));
+  if (command === 'init-trust' && args.length === 3) initTrust(args[0], path.resolve(args[1]), path.resolve(args[2]));
+  else if (command === 'observe' && args.length === 4) observe(path.resolve(args[0]), path.resolve(args[1]), args[2], path.resolve(args[3]));
   else if (command === 'verify' && args.length === 2) verify(...args.map(value => path.resolve(value)));
   else if (command === '--help' || command === '-h') usage(0);
   else usage();
