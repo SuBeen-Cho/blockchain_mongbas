@@ -1,0 +1,17 @@
+{
+  "name": "mongbas-threshold-trustee",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Offline 2-of-3 Feldman DKG and trustee-share custody tools",
+  "type": "commonjs",
+  "bin": {
+    "mongbas-trustee": "bin/mongbas-trustee.js"
+  },
+  "scripts": {
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "license": "Apache-2.0"
+}

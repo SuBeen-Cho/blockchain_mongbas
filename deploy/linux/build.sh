@@ -12,6 +12,10 @@ npm --prefix "${MONGBAS_REPO_DIR}/application" ci --omit=optional
 npm --prefix "${MONGBAS_REPO_DIR}/frontend" ci
 log "running chaincode unit/property tests"
 (cd "${MONGBAS_REPO_DIR}/chaincode/voting" && go test ./...)
+
+log "running offline DKG/trustee custody tests"
+npm --prefix "${MONGBAS_REPO_DIR}/trustee" ci
+npm --prefix "${MONGBAS_REPO_DIR}/trustee" test
 log "running standalone verifier tests"
 npm --prefix "${MONGBAS_REPO_DIR}/verifier" ci
 npm --prefix "${MONGBAS_REPO_DIR}/verifier" test
