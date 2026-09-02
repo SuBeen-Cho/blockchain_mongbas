@@ -2,11 +2,62 @@ package main
 
 import (
 	"crypto/sha256"
+	"encoding/base64"
 	"fmt"
 	"math/big"
 	"strings"
 	"testing"
+
+	bn256 "github.com/ethereum/go-ethereum/crypto/bn256/cloudflare"
 )
+
+func TestPSCredentialPairingSerializationAndTamper(t *testing.T) {
+	x := big.NewInt(17)
+	ys := []*big.Int{big.NewInt(19), big.NewInt(23), big.NewInt(29), big.NewInt(31)}
+	attrs := []string{"1", "ps-known-answer", "2000000000000", "fixed-nullifier-material"}
+	h := new(bn256.G1).ScalarBaseMult(big.NewInt(37))
+	exponent := new(big.Int).Set(x)
+	for index, attr := range attrs {
+		term := new(big.Int).Mul(ys[index], psMsgToScalar(attr))
+		exponent.Add(exponent, term).Mod(exponent, bn256.Order)
+	}
+	sigma := new(bn256.G1).ScalarMult(h, exponent)
+	X := new(bn256.G2).ScalarBaseMult(x)
+	Ys := make([]*bn256.G2, len(ys))
+	for index, y := range ys {
+		Ys[index] = new(bn256.G2).ScalarBaseMult(y)
+	}
+
+	hEncoded := base64.RawURLEncoding.EncodeToString(h.Marshal())
+	sigmaEncoded := base64.RawURLEncoding.EncodeToString(sigma.Marshal())
+	hDecoded, err := decodePSG1(hEncoded)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sigmaDecoded, err := decodePSG1(sigmaEncoded)
+	if err != nil {
+		t.Fatal(err)
+	}
+	aggregate := new(bn256.G2).Set(X)
+	for index, attr := range attrs {
+		aggregate.Add(aggregate, new(bn256.G2).ScalarMult(Ys[index], psMsgToScalar(attr)))
+	}
+	if !bn256.PairingCheck([]*bn256.G1{hDecoded, new(bn256.G1).Neg(sigmaDecoded)},
+		[]*bn256.G2{aggregate, new(bn256.G2).ScalarBaseMult(big.NewInt(1))}) {
+		t.Fatal("valid deterministic PS credential rejected after dependency upgrade")
+	}
+
+	tamperedAggregate := new(bn256.G2).Set(X)
+	tamperedAttrs := append([]string(nil), attrs...)
+	tamperedAttrs[1] = "different-election"
+	for index, attr := range tamperedAttrs {
+		tamperedAggregate.Add(tamperedAggregate, new(bn256.G2).ScalarMult(Ys[index], psMsgToScalar(attr)))
+	}
+	if bn256.PairingCheck([]*bn256.G1{hDecoded, new(bn256.G1).Neg(sigmaDecoded)},
+		[]*bn256.G2{tamperedAggregate, new(bn256.G2).ScalarBaseMult(big.NewInt(1))}) {
+		t.Fatal("PS credential with a changed election attribute was accepted")
+	}
+}
 
 func encryptExponentialForTest(x *big.Int, candidateIndex int, nonce int64) (string, string) {
 	r := big.NewInt(nonce)
