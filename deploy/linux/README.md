@@ -78,7 +78,10 @@ MONGBAS_PROFILE=benchmark MONGBAS_LONGEVITY_KIND=soak ./deploy/linux/longevity-e
 MONGBAS_PROFILE=benchmark ./deploy/linux/verifier-evaluation.sh
 ./deploy/linux/supply-chain-evidence.sh
 ./deploy/linux/web-security-evaluation.sh
+./deploy/linux/clean-clone-build-evaluation.sh
 ```
+
+`clean-clone-build-evaluation.sh`는 GitHub remote head를 새 private workspace에 clone하고, 빈 runtime에서 pinned tool bootstrap·secret 준비·전체 dependency audit/test·frontend·chaincode image build를 실행한다. 성공·실패 workspace를 임의로 삭제하지 않고 raw log·commit·image ID·SHA-256 inventory를 보존한다. 기존 원장을 보호하기 위해 fresh Fabric ledger 생성·container 기동·E2E는 이 gate의 범위가 아니며, 그 검증과 혼동해서는 안 된다.
 
 `extended-vulnerability-evidence.sh`는 활성 컨테이너의 고유 image를 모두
 스캔한다. 실행 중인 컨테이너를 교체하지 않고 pull한 canary image를
