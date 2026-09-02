@@ -9,7 +9,7 @@ require_cmd npm
 run_id="$(timestamp_utc)"
 out="${MONGBAS_RESULT_DIR}/dkg-${run_id}"
 secret_root="${MONGBAS_SECRET_DIR}/dkg-${run_id}"
-install -d -m 0700 "${out}" "${out}/public-keys" "${out}/contributions" "${out}/public-shares"
+install -d -m 0700 "${out}" "${out}/public-keys" "${out}/contributions" "${out}/public-shares" "${out}/complaints"
 install -d -m 0700 "${secret_root}"
 
 git -C "${MONGBAS_REPO_DIR}" rev-parse HEAD >"${out}/git-commit.txt"
@@ -63,6 +63,36 @@ node "${cli}" finalize-transcript --ceremony "${ceremony}" \
   --contributions-dir "${out}/contributions" \
   --public-shares-dir "${out}/public-shares" \
   --out "${out}/transcript.json" >>"${out}/ceremony.log"
+
+# An authenticated complaint is public attribution/evidence and must abort the
+# current 3-party/threshold-2 ceremony. It never silently changes the dealer set.
+contribution_hash="$(sha256sum "${out}/contributions/${ids[1]}.json" | awk '{print $1}')"
+evidence_hash="$(printf '%s' 'redacted-local-feldman-evidence' | sha256sum | awk '{print $1}')"
+node "${cli}" complain --ceremony "${ceremony}" --id "${ids[0]}" --dealer "${ids[1]}" \
+  --reason feldman-equation-failed --contribution-hash "${contribution_hash}" --evidence-hash "${evidence_hash}" \
+  --private "${secret_root}/${ids[0]}/transport-private.json" --participants "${out}/participants.json" \
+  --out "${out}/complaints/${ids[0]}-against-${ids[1]}.json" >>"${out}/ceremony.log"
+set +e
+node "${cli}" finalize-transcript --ceremony "${ceremony}" \
+  --participants "${out}/participants.json" --contributions-dir "${out}/contributions" \
+  --public-shares-dir "${out}/public-shares" --complaints-dir "${out}/complaints" \
+  --out "${out}/aborted-transcript.json" >"${out}/complaint-finalize.stdout.log" 2>"${out}/complaint-finalize.stderr.log"
+complaint_status=$?
+set -e
+printf '%s\n' "${complaint_status}" >"${out}/complaint-finalize.exit-status.txt"
+[ "${complaint_status}" -eq 1 ] || die "authenticated complaint did not exit exactly 1"
+[ ! -e "${out}/aborted-transcript.json" ] || die "complained ceremony emitted a transcript"
+grep -q 'aborted by authenticated complaint' "${out}/complaint-finalize.stderr.log" || die "complaint abort reason missing"
+node - "${out}/complaints/${ids[0]}-against-${ids[1]}.json" >"${out}/complaint-summary.json" <<'NODE'
+const complaint = require(process.argv[2]);
+const text = JSON.stringify(complaint);
+const result = { schema: 'mongbas-dkg-complaint-evaluation/v1', complaintID: complaint.complaintID,
+  reason: complaint.reason, attributed: complaint.complainerID === 'ElectionCommissionMSP' && complaint.dealerID === 'PartyObserverMSP',
+  privateMaterialExposed: /scalar|privateKey|privateShare/i.test(text), finalizeExitStatus: 1 };
+result.securityGatePassed = result.attributed && !result.privateMaterialExposed;
+process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+if (!result.securityGatePassed) process.exitCode = 1;
+NODE
 
 node - "${out}" "${secret_root}" >"${out}/custody-summary.json" <<'NODE'
 const fs = require('node:fs');
