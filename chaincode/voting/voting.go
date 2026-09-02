@@ -4970,7 +4970,16 @@ func (c *VotingContract) PublishAuditData(
 		bb.EncryptionMode = "aes"
 	}
 
-	b, err := json.Marshal(bb)
+	// Ballots and vector receipts already exist as immutable public ledger
+	// records. Repeating them in one BULLETIN value makes the transaction grow
+	// linearly and exceed the orderer's block limit. Persist only the publication
+	// manifest; GetBulletinBoard reconstructs the public artifact arrays.
+	published := bb
+	published.EncryptedBallots = nil
+	published.DecryptionProofs = nil
+	published.VectorBallotReceipts = nil
+	published.VectorAuditDisclosures = nil
+	b, err := json.Marshal(published)
 	if err != nil {
 		return nil, fmt.Errorf("BulletinBoard 직렬화 실패: %w", err)
 	}
@@ -4983,7 +4992,121 @@ func (c *VotingContract) PublishAuditData(
 	} else {
 		log.Printf("[PublishAuditData] 게시 완료 — election: %s, ballots: %d, mode: aes (키 공개)", electionID, len(ballots))
 	}
-	return &bb, nil
+	return &published, nil
+}
+
+func (c *VotingContract) hydrateBulletinBoard(
+	ctx contractapi.TransactionContextInterface,
+	bb *BulletinBoard,
+) error {
+	election, err := c.GetElection(ctx, bb.ElectionID)
+	if err != nil {
+		return fmt.Errorf("BulletinBoard election lookup failed: %w", err)
+	}
+	queryString := fmt.Sprintf(
+		`{"selector":{"docType":"nullifier","electionID":"%s"},"use_index":["_design/indexElection","electionIndex"]}`,
+		bb.ElectionID,
+	)
+	iterator, err := ctx.GetStub().GetQueryResult(queryString)
+	if err != nil {
+		return fmt.Errorf("BulletinBoard ballot lookup failed: %w", err)
+	}
+	defer iterator.Close()
+	ballots := make([]EncryptedBallot, 0, bb.TotalVotes)
+	for iterator.HasNext() {
+		entry, err := iterator.Next()
+		if err != nil {
+			return fmt.Errorf("BulletinBoard ballot iteration failed: %w", err)
+		}
+		var nul Nullifier
+		if err := json.Unmarshal(entry.Value, &nul); err != nil {
+			return fmt.Errorf("BulletinBoard ballot decode failed: %w", err)
+		}
+		if nul.IsPadding {
+			continue
+		}
+		ballots = append(ballots, EncryptedBallot{
+			NullifierHash: nul.NullifierHash, EncryptedCandidateID: nul.EncryptedCandidateID,
+			CandidateCommitment: nul.CandidateCommitment, BallotValidityProof: nul.BallotValidityProof,
+			EncryptedCandidateVector:  nul.EncryptedCandidateVector,
+			VectorBallotValidityProof: nul.VectorBallotValidityProof, PreparedBallotID: nul.PreparedBallotID,
+		})
+	}
+	if len(ballots) != bb.TotalVotes {
+		return fmt.Errorf("BulletinBoard ballot count mismatch: got=%d want=%d", len(ballots), bb.TotalVotes)
+	}
+	tally, err := c.GetTally(ctx, bb.ElectionID)
+	if err != nil {
+		return fmt.Errorf("BulletinBoard tally lookup failed: %w", err)
+	}
+	seed, err := hex.DecodeString(bb.ShuffleSeed)
+	if err != nil || len(seed) != sha256.Size {
+		return fmt.Errorf("BulletinBoard shuffle seed is invalid")
+	}
+	shuffled, proofs := deterministicShuffle(ballots, tally.DecryptionProofs, seed)
+	if computeShuffleProofHash(ballots, shuffled) != bb.ShuffleProofHash {
+		return fmt.Errorf("BulletinBoard reconstructed shuffle proof mismatch")
+	}
+	bb.EncryptedBallots = shuffled
+	bb.DecryptionProofs = proofs
+
+	if election.EncryptionMode != "elgamal-vector-v3" {
+		return nil
+	}
+	receipts, err := ctx.GetStub().GetStateByRange("VECTOR_PREP_", "VECTOR_PREP_￿")
+	if err != nil {
+		return fmt.Errorf("BulletinBoard vector receipt lookup failed: %w", err)
+	}
+	defer receipts.Close()
+	castArtifacts := make(map[string]string)
+	for receipts.HasNext() {
+		entry, err := receipts.Next()
+		if err != nil {
+			return fmt.Errorf("BulletinBoard vector receipt iteration failed: %w", err)
+		}
+		var receipt VectorBallotReceipt
+		if err := json.Unmarshal(entry.Value, &receipt); err != nil {
+			return fmt.Errorf("BulletinBoard vector receipt decode failed: %w", err)
+		}
+		if receipt.ElectionID != bb.ElectionID {
+			continue
+		}
+		if receipt.Status == "cast" {
+			castArtifacts[receipt.BallotID] = receipt.ArtifactHash
+		}
+		bb.VectorBallotReceipts = append(bb.VectorBallotReceipts, receipt)
+		if receipt.Status == "audited" {
+			disclosureBytes, err := ctx.GetStub().GetState("VECTOR_AUDIT_" + receipt.BallotID)
+			if err != nil || disclosureBytes == nil {
+				return fmt.Errorf("BulletinBoard audited disclosure missing: %s", receipt.BallotID)
+			}
+			var disclosure VectorAuditDisclosure
+			if err := json.Unmarshal(disclosureBytes, &disclosure); err != nil ||
+				disclosure.BallotID != receipt.BallotID || disclosure.ElectionID != bb.ElectionID ||
+				disclosure.ArtifactHash != receipt.ArtifactHash || disclosure.Status != "audited" {
+				return fmt.Errorf("BulletinBoard audit disclosure is invalid: %s", receipt.BallotID)
+			}
+			bb.VectorAuditDisclosures = append(bb.VectorAuditDisclosures, disclosure)
+		}
+	}
+	if len(castArtifacts) != len(ballots) {
+		return fmt.Errorf("BulletinBoard cast receipt count mismatch: got=%d want=%d", len(castArtifacts), len(ballots))
+	}
+	for _, ballot := range ballots {
+		receiptHash, exists := castArtifacts[ballot.PreparedBallotID]
+		artifactHash, hashErr := computeVectorAuditArtifactHash(bb.ElectionID, election.Candidates,
+			ballot.EncryptedCandidateVector, ballot.VectorBallotValidityProof)
+		if !exists || hashErr != nil || subtle.ConstantTimeCompare([]byte(receiptHash), []byte(artifactHash)) != 1 {
+			return fmt.Errorf("BulletinBoard cast receipt artifact mismatch: %s", ballot.PreparedBallotID)
+		}
+	}
+	sort.Slice(bb.VectorBallotReceipts, func(i, j int) bool {
+		return bb.VectorBallotReceipts[i].BallotID < bb.VectorBallotReceipts[j].BallotID
+	})
+	sort.Slice(bb.VectorAuditDisclosures, func(i, j int) bool {
+		return bb.VectorAuditDisclosures[i].BallotID < bb.VectorAuditDisclosures[j].BallotID
+	})
+	return nil
 }
 
 // GetBulletinBoard [PAPER-6] 공개 감사 데이터를 조회합니다 (인증 불필요).
@@ -5002,6 +5125,11 @@ func (c *VotingContract) GetBulletinBoard(
 	var bb BulletinBoard
 	if err := json.Unmarshal(b, &bb); err != nil {
 		return nil, fmt.Errorf("BulletinBoard 역직렬화 실패: %w", err)
+	}
+	if len(bb.EncryptedBallots) == 0 && bb.TotalVotes > 0 {
+		if err := c.hydrateBulletinBoard(ctx, &bb); err != nil {
+			return nil, err
+		}
 	}
 	return &bb, nil
 }
