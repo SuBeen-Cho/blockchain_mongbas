@@ -943,7 +943,7 @@ async function main() {
   console.log(`  ReceiptFree:  ${receiptFreeOk} (PAPER-8)`);
   console.log('  Security:     self-declared metadata inspected (not a 7/7 verification)');
   console.log(`  ElGamal ZKP:  ${elgamalZkpOk} (Chaum-Pedersen, PAPER-11)`);
-  console.log(`  Coercion:     panic_filter=${panicFilterOk} (Deniable Credential Duality, PAPER-12)`);
+  console.log(`  Panic filter: ${panicFilterOk} (limited mechanism test; not coercion-resistance verification)`);
   console.log('═══════════════════════════════════════════════════');
   console.log('[DONE] Full Election E2E Integration Test completed (15 phases)');
 }
