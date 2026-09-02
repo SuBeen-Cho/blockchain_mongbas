@@ -4,6 +4,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const { spawnSync } = require('node:child_process');
 
 const root = path.resolve(__dirname, '../..');
 const read = relative => fs.readFileSync(path.join(root, relative), 'utf8');
@@ -56,4 +57,16 @@ test('legacy security scenario does not mislabel missing-election rejection as e
   assert.doesNotMatch(scenarios, /코드 레벨 추가 검증 없이도 정책이 보장/);
   assert.match(scenarios, /cannot measure or prove an endorsement-policy rejection/);
   assert.match(scenarios, /2-of-3 endorsement 차단 증거가 아닙니다/);
+});
+
+test('legacy extended security runner is quarantined before state mutation', () => {
+  const run = spawnSync(process.execPath, [path.join(root, 'scripts/security-scenarios-extended.js')], {
+    encoding: 'utf8',
+    timeout: 5000,
+  });
+
+  assert.equal(run.status, 2);
+  assert.equal(run.stdout, '');
+  assert.match(run.stderr, /UNSUPPORTED/);
+  assert.doesNotMatch(run.stderr, /측정 완료/);
 });

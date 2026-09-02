@@ -20,6 +20,12 @@
  *
  * 출력: docs/security-eval/extended/EXTENDED-RESULTS.json
  *       docs/security-eval/extended/EXTENDED-RESULTS.md
+ *
+ * HISTORICAL ONLY: this runner uses superseded plaintext/legacy API paths,
+ * catches per-scenario failures, and cannot provide current vector-v3 or
+ * identity-controlled Fabric evidence. main() fails closed before mutation.
+ * Use deploy/linux/{critical-fault,fault,coercion,vector-audit-or-cast,
+ * extended-vulnerability}-evaluation.sh instead.
  */
 
 'use strict';
@@ -911,6 +917,11 @@ Root Hash 덮어쓰기가 거부되는지 확인합니다.
 // 메인
 // ══════════════════════════════════════════════════════════════════
 async function main() {
+  console.error('UNSUPPORTED: historical extended scenario runner cannot produce current security evidence.');
+  console.error('Use the strict deploy/linux/*-evaluation.sh security and fault evaluators.');
+  process.exitCode = 2;
+  return;
+
   console.log('=== 보안 위협 시나리오 추가 측정 시작 ===');
   console.log(`출력 경로: ${OUT_DIR}`);
 
