@@ -66,6 +66,21 @@ app.use(cors({
 }));
 app.use('/api', apiRequestShapeGuard(runtimeSecurity.allowedOrigins));
 
+// Security headers must precede static-file handling. Express static ends the
+// middleware chain for an existing asset, so placing this block afterwards
+// would leave the voter UI, scripts and styles without the declared policy.
+app.use((_req, res, next) => {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'DENY');
+  res.setHeader('Referrer-Policy', 'no-referrer');
+  res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=(), payment=(), usb=()');
+  res.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
+  res.setHeader('Content-Security-Policy',
+    "default-src 'self'; base-uri 'none'; object-src 'none'; frame-ancestors 'none'; form-action 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self'; img-src 'self' data:; font-src 'self'");
+  if (runtimeSecurity.hsts) res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+  next();
+});
+
 // ── 정적 프론트엔드 서빙 (부스 시연: 단일 오리진 + cloudflared 터널) ──
 // 빌드된 SPA(frontend/dist)를 백엔드가 직접 서빙 → 폰/API 동일 출처라 CORS 무관, 터널 1개로 충분.
 // 정적 파일이 없으면 next()로 통과 → 아래 API 라우터/핸들러가 처리.
@@ -83,19 +98,6 @@ const globalLimiter = rateLimit({
 if (!DISABLE_RATE_LIMITS) {
   app.use(globalLimiter);
 }
-
-// 보안 헤더
-app.use((_req, res, next) => {
-  res.setHeader('X-Content-Type-Options', 'nosniff');
-  res.setHeader('X-Frame-Options', 'DENY');
-  res.setHeader('Referrer-Policy', 'no-referrer');
-  res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=(), payment=(), usb=()');
-  res.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
-  res.setHeader('Content-Security-Policy',
-    "default-src 'self'; base-uri 'none'; object-src 'none'; frame-ancestors 'none'; form-action 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self'; img-src 'self' data:; font-src 'self'");
-  if (runtimeSecurity.hsts) res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
-  next();
-});
 
 // Credentials, administrative responses and vote submissions must not be
 // retained by browsers or shared intermediary caches.
