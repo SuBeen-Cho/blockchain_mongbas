@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mongbas.example/schema/election-bundle-v5.schema.json",
+  "title": "Mongbas DKG Vector Election Bundle v5",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "algorithms", "configuration", "provenance", "publicKey", "trusteePublicShares", "keyCeremony", "ballots", "bulletinBoard", "aggregateCiphertextVector", "tally", "vectorPartialDecryptions", "vectorBallotReceipts", "vectorAuditDisclosures", "signatures"],
+  "properties": {
+    "schema": { "const": "mongbas-election-bundle/v5" },
+    "algorithms": { "$ref": "election-bundle-v4.schema.json#/properties/algorithms" },
+    "configuration": { "$ref": "election-bundle-v4.schema.json#/properties/configuration" },
+    "provenance": { "$ref": "election-bundle-v4.schema.json#/properties/provenance" },
+    "publicKey": { "$ref": "election-bundle-v4.schema.json#/properties/publicKey" },
+    "trusteePublicShares": { "$ref": "election-bundle-v4.schema.json#/properties/trusteePublicShares" },
+    "keyCeremony": { "$ref": "#/$defs/keyCeremony" },
+    "ballots": { "$ref": "election-bundle-v4.schema.json#/properties/ballots" },
+    "bulletinBoard": { "$ref": "election-bundle-v4.schema.json#/properties/bulletinBoard" },
+    "aggregateCiphertextVector": { "$ref": "election-bundle-v4.schema.json#/properties/aggregateCiphertextVector" },
+    "tally": { "$ref": "election-bundle-v4.schema.json#/properties/tally" },
+    "vectorPartialDecryptions": { "$ref": "election-bundle-v4.schema.json#/properties/vectorPartialDecryptions" },
+    "vectorBallotReceipts": { "$ref": "election-bundle-v4.schema.json#/properties/vectorBallotReceipts" },
+    "vectorAuditDisclosures": { "$ref": "election-bundle-v4.schema.json#/properties/vectorAuditDisclosures" },
+    "signatures": { "$ref": "election-bundle-v4.schema.json#/properties/signatures" }
+  },
+  "$defs": {
+    "hash": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "hex": { "type": "string", "pattern": "^[1-9a-f][0-9a-f]*$" },
+    "keyCeremony": {
+      "type": "object", "additionalProperties": false,
+      "required": ["mode", "transcript", "transcriptHash", "approvals"],
+      "properties": {
+        "mode": { "const": "dkg-v1" },
+        "transcriptHash": { "$ref": "#/$defs/hash" },
+        "approvals": { "type": "array", "minItems": 3, "maxItems": 3, "uniqueItems": true, "items": { "enum": ["ElectionCommissionMSP", "PartyObserverMSP", "CivilSocietyMSP"] } },
+        "transcript": { "$ref": "#/$defs/transcript" }
+      }
+    },
+    "transcript": {
+      "type": "object", "additionalProperties": false,
+      "required": ["schema", "ceremonyID", "threshold", "totalTrustees", "group", "participants", "contributions", "publicShares", "electionPublicKeyY", "transcriptHash"],
+      "properties": {
+        "schema": { "const": "mongbas-feldman-dkg-transcript/v1" },
+        "ceremonyID": { "type": "string", "minLength": 1 },
+        "threshold": { "const": 2 }, "totalTrustees": { "const": 3 },
+        "group": { "type": "object", "additionalProperties": false, "required": ["p", "g", "q"], "properties": { "p": { "$ref": "#/$defs/hex" }, "g": { "const": "2" }, "q": { "$ref": "#/$defs/hex" } } },
+        "participants": { "type": "array", "minItems": 3, "maxItems": 3, "items": { "type": "object", "additionalProperties": false, "required": ["id", "index", "transportPublicKeyDer", "signingPublicKeyDer"], "properties": { "id": { "type": "string" }, "index": { "type": "integer", "minimum": 1, "maximum": 3 }, "transportPublicKeyDer": { "type": "string" }, "signingPublicKeyDer": { "type": "string" } } } },
+        "contributions": { "type": "array", "minItems": 3, "maxItems": 3, "items": { "type": "object", "additionalProperties": false, "required": ["dealerID", "commitments", "contributionHash"], "properties": { "dealerID": { "type": "string" }, "commitments": { "type": "object", "additionalProperties": false, "required": ["constant", "linear"], "properties": { "constant": { "$ref": "#/$defs/hex" }, "linear": { "$ref": "#/$defs/hex" } } }, "contributionHash": { "$ref": "#/$defs/hash" } } } },
+        "publicShares": { "type": "array", "minItems": 3, "maxItems": 3, "items": { "type": "object", "additionalProperties": false, "required": ["schema", "ceremonyID", "trusteeID", "trusteeIndex", "publicKeyY"], "properties": { "schema": { "const": "mongbas-dkg-public-share/v1" }, "ceremonyID": { "type": "string" }, "trusteeID": { "type": "string" }, "trusteeIndex": { "type": "integer", "minimum": 1, "maximum": 3 }, "publicKeyY": { "$ref": "#/$defs/hex" } } } },
+        "electionPublicKeyY": { "$ref": "#/$defs/hex" }, "transcriptHash": { "$ref": "#/$defs/hash" }
+      }
+    }
+  }
+}

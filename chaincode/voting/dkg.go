@@ -88,6 +88,38 @@ type dkgTranscript struct {
 	TranscriptHash     string                  `json:"transcriptHash"`
 }
 
+func dkgTranscriptStateKey(electionID string) string {
+	return "DKG_TRANSCRIPT_" + electionID
+}
+
+// GetDKGTranscript returns only the public Feldman transcript committed by the
+// election creation transaction. Secret scalars and encrypted dealer envelopes
+// are deliberately not part of this ledger artifact.
+func (c *VotingContract) GetDKGTranscript(ctx contractapi.TransactionContextInterface, electionID string) (*dkgTranscript, error) {
+	election, err := c.GetElection(ctx, electionID)
+	if err != nil {
+		return nil, err
+	}
+	if election.KeyCeremonyMode != "dkg-v1" || election.DKGTranscriptHash == "" {
+		return nil, fmt.Errorf("election does not use a DKG transcript")
+	}
+	raw, err := ctx.GetStub().GetState(dkgTranscriptStateKey(electionID))
+	if err != nil {
+		return nil, fmt.Errorf("DKG transcript read failed: %w", err)
+	}
+	if len(raw) == 0 {
+		return nil, fmt.Errorf("DKG transcript is missing from public state")
+	}
+	transcript, _, err := parseAndValidateDKGTranscript(raw)
+	if err != nil {
+		return nil, fmt.Errorf("stored DKG transcript invalid: %w", err)
+	}
+	if transcript.TranscriptHash != election.DKGTranscriptHash || transcript.CeremonyID != election.DKGCeremonyID {
+		return nil, fmt.Errorf("stored DKG transcript is not bound to election")
+	}
+	return transcript, nil
+}
+
 func canonicalTranscriptHash(raw []byte) (string, error) {
 	var value map[string]interface{}
 	decoder := json.NewDecoder(strings.NewReader(string(raw)))

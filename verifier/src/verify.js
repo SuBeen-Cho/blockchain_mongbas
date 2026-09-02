@@ -467,12 +467,75 @@ function verifyVectorAuditTrail(bundle, y) {
   if ([...receiptByID.values()].filter(receipt => receipt.status === 'audited').length !== disclosures.length) throw new Error('audited receipt/disclosure count mismatch');
 }
 
+function verifyDKGKeyCeremony(bundle) {
+  const ceremony = bundle.keyCeremony;
+  requireExactKeys(ceremony, ['mode', 'transcript', 'transcriptHash', 'approvals'], 'keyCeremony');
+  if (ceremony.mode !== 'dkg-v1') throw new Error('unsupported key ceremony mode');
+  const transcript = ceremony.transcript;
+  requireExactKeys(transcript, ['schema', 'ceremonyID', 'threshold', 'totalTrustees', 'group', 'participants', 'contributions',
+    'publicShares', 'electionPublicKeyY', 'transcriptHash'], 'keyCeremony.transcript');
+  if (transcript.schema !== 'mongbas-feldman-dkg-transcript/v1' || transcript.threshold !== 2 || transcript.totalTrustees !== 3) {
+    throw new Error('DKG parameters must be 2-of-3 Feldman v1');
+  }
+  requireExactKeys(transcript.group, ['p', 'g', 'q'], 'keyCeremony.transcript.group');
+  if (transcript.group.p !== P_HEX || transcript.group.g !== '2' || transcript.group.q !== Q.toString(16)) throw new Error('DKG group mismatch');
+  const hashInput = structuredClone(transcript);
+  delete hashInput.transcriptHash;
+  const computedHash = sha256Hex(canonicalize(hashInput));
+  if (!/^[0-9a-f]{64}$/.test(ceremony.transcriptHash) || transcript.transcriptHash !== computedHash || ceremony.transcriptHash !== computedHash) {
+    throw new Error('DKG canonical transcript hash mismatch');
+  }
+  if (!Array.isArray(transcript.participants) || transcript.participants.length !== 3) throw new Error('DKG participant count mismatch');
+  const participants = new Map();
+  for (const [offset, participant] of transcript.participants.entries()) {
+    requireExactKeys(participant, ['id', 'index', 'transportPublicKeyDer', 'signingPublicKeyDer'], `DKG participant[${offset}]`);
+    if (participant.index < 1 || participant.index > 3 || typeof participant.id !== 'string' || participants.has(participant.id)) throw new Error('DKG participant roster invalid');
+    const transport = crypto.createPublicKey({ key: requireCanonicalBase64(participant.transportPublicKeyDer, 'DKG transport key'), format: 'der', type: 'spki' });
+    const signing = crypto.createPublicKey({ key: requireCanonicalBase64(participant.signingPublicKeyDer, 'DKG signing key'), format: 'der', type: 'spki' });
+    if (transport.asymmetricKeyType !== 'x25519' || signing.asymmetricKeyType !== 'ed25519') throw new Error('DKG participant key type invalid');
+    participants.set(participant.id, participant);
+  }
+  const expectedMSPs = ['ElectionCommissionMSP', 'PartyObserverMSP', 'CivilSocietyMSP'];
+  for (let index = 1; index <= 3; index += 1) if (participants.get(expectedMSPs[index - 1])?.index !== index) throw new Error('DKG participant MSP/index binding mismatch');
+  if (!Array.isArray(ceremony.approvals) || ceremony.approvals.length !== 3 ||
+      canonicalize([...ceremony.approvals].sort()) !== canonicalize([...expectedMSPs].sort())) throw new Error('DKG MSP approvals incomplete');
+  if (!Array.isArray(transcript.contributions) || transcript.contributions.length !== 3) throw new Error('DKG contribution count mismatch');
+  const commitments = new Map();
+  for (const [offset, contribution] of transcript.contributions.entries()) {
+    requireExactKeys(contribution, ['dealerID', 'commitments', 'contributionHash'], `DKG contribution[${offset}]`);
+    requireExactKeys(contribution.commitments, ['constant', 'linear'], `DKG commitments[${offset}]`);
+    if (!participants.has(contribution.dealerID) || commitments.has(contribution.dealerID) || !/^[0-9a-f]{64}$/.test(contribution.contributionHash)) throw new Error('DKG contribution metadata invalid');
+    commitments.set(contribution.dealerID, {
+      constant: parseHex(contribution.commitments.constant, 'DKG constant commitment', { subgroup: true }),
+      linear: parseHex(contribution.commitments.linear, 'DKG linear commitment', { subgroup: true }),
+    });
+  }
+  let electionY = 1n;
+  for (const id of expectedMSPs) electionY = (electionY * commitments.get(id).constant) % P;
+  if (transcript.electionPublicKeyY !== electionY.toString(16) || bundle.publicKey.y !== transcript.electionPublicKeyY) throw new Error('DKG election key commitment equation failed');
+  if (!Array.isArray(transcript.publicShares) || transcript.publicShares.length !== 3 || !Array.isArray(bundle.trusteePublicShares)) throw new Error('DKG public shares missing');
+  for (let index = 1; index <= 3; index += 1) {
+    const published = transcript.publicShares.find(entry => entry.trusteeIndex === index);
+    if (!published) throw new Error(`DKG public share ${index} missing`);
+    requireExactKeys(published, ['schema', 'ceremonyID', 'trusteeID', 'trusteeIndex', 'publicKeyY'], `DKG public share[${index}]`);
+    if (published.schema !== 'mongbas-dkg-public-share/v1' || published.ceremonyID !== transcript.ceremonyID || published.trusteeID !== expectedMSPs[index - 1]) throw new Error(`DKG public share ${index} binding invalid`);
+    let expected = 1n;
+    for (const id of expectedMSPs) expected = expected * commitments.get(id).constant % P * modPow(commitments.get(id).linear, BigInt(index), P) % P;
+    const actual = parseHex(published.publicKeyY, `DKG public share ${index}`, { subgroup: true });
+    if (actual !== expected) throw new Error(`DKG public share ${index} commitment equation failed`);
+    const bundled = bundle.trusteePublicShares.find(entry => entry.index === index);
+    if (!bundled || bundled.mspID !== published.trusteeID || bundled.publicKeyY !== published.publicKeyY) throw new Error(`DKG trustee bundle share ${index} mismatch`);
+  }
+}
+
 function verifyVectorBundle(bundle) {
   const errors = [];
   const check = (label, fn) => { try { return fn(); } catch (error) { errors.push(`${label}: ${error.message}`); return undefined; } };
-  check('bundle envelope', () => validateBundleEnvelope(bundle, 'mongbas-election-bundle/v4', VECTOR_THRESHOLD_ALGORITHM,
+  const dkgV5 = bundle?.schema === 'mongbas-election-bundle/v5';
+  check('bundle envelope', () => validateBundleEnvelope(bundle, dkgV5 ? 'mongbas-election-bundle/v5' : 'mongbas-election-bundle/v4', VECTOR_THRESHOLD_ALGORITHM,
     ['schema', 'algorithms', 'configuration', 'provenance', 'publicKey', 'trusteePublicShares', 'ballots', 'bulletinBoard',
-      'aggregateCiphertextVector', 'tally', 'vectorPartialDecryptions', 'vectorBallotReceipts', 'vectorAuditDisclosures', 'signatures'], { vector: true }));
+      'aggregateCiphertextVector', 'tally', 'vectorPartialDecryptions', 'vectorBallotReceipts', 'vectorAuditDisclosures',
+	  ...(dkgV5 ? ['keyCeremony'] : []), 'signatures'], { vector: true }));
   if (bundle?.algorithms?.tally !== VECTOR_THRESHOLD_ALGORITHM) errors.push('algorithms.tally: vector-v3 required (downgrade rejected)');
   const candidates = bundle?.configuration?.candidates;
   if (!Array.isArray(candidates) || candidates.length < 2 || new Set(candidates).size !== candidates.length) errors.push('configuration.candidates: invalid');
@@ -480,6 +543,7 @@ function verifyVectorBundle(bundle) {
   const key = bundle?.publicKey;
   if (key?.p !== P_HEX || key?.g !== '2') errors.push('publicKey: parameters are not RFC 3526 group 14');
   const y = check('publicKey.y', () => parseHex(key?.y, 'publicKey.y', { subgroup: true }));
+	if (dkgV5) check('keyCeremony', () => verifyDKGKeyCeremony(bundle));
   const ballots = bundle?.ballots;
   if (!Array.isArray(ballots) || ballots.length === 0) errors.push('ballots: empty or missing');
   const aggregates = Array.isArray(candidates) ? candidates.map(() => ({ c1: 1n, c2: 1n })) : [];
@@ -509,7 +573,7 @@ function verifyVectorBundle(bundle) {
 }
 
 function verifyBundleUnchecked(bundle) {
-	if (bundle?.schema === 'mongbas-election-bundle/v4') return verifyVectorBundle(bundle);
+	if (bundle?.schema === 'mongbas-election-bundle/v4' || bundle?.schema === 'mongbas-election-bundle/v5') return verifyVectorBundle(bundle);
   const errors = [];
   let validSignatures = 0;
   const check = (label, fn) => {

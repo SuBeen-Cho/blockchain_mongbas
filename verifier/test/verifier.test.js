@@ -327,7 +327,7 @@ test('builds and verifies a 2-of-3 threshold bundle without a private-key recons
   assert.equal(verifyBundle(bundle).valid, false, 'tampered threshold proof must fail');
 });
 
-function buildVectorBundle() {
+function buildVectorBundle({ dkg = false } = {}) {
   const legacy = buildBundle(), electionID = 'vector-v3-test', candidates = ['A', 'B', 'C'];
   const secret = scalar('vector-secret'), coefficient = scalar('vector-coefficient');
   const shares = [1, 2, 3].map((index) => (secret + coefficient * BigInt(index)) % Q);
@@ -360,19 +360,61 @@ function buildVectorBundle() {
   const vectorPartials = [0, 1].map((offset) => ({ index: offset + 1, mspID: mspIDs[offset], publicKeyY: modPow(G, shares[offset], P).toString(16),
     values: aggregates.map((aggregate) => thresholdPartial(offset + 1, shares[offset], aggregate, mspIDs[offset]).value),
     proofs: aggregates.map((aggregate) => thresholdPartial(offset + 1, shares[offset], aggregate, mspIDs[offset]).proof) }));
+  let keyCeremony;
+  if (dkg) {
+	const constantScalars = [scalar('dkg-constant-1'), scalar('dkg-constant-2')];
+	constantScalars.push((secret - constantScalars[0] - constantScalars[1] + 2n * Q) % Q);
+	const linearScalars = [scalar('dkg-linear-1'), scalar('dkg-linear-2')];
+	linearScalars.push((coefficient - linearScalars[0] - linearScalars[1] + 2n * Q) % Q);
+	const participants = mspIDs.map((id, offset) => {
+	  const transport = crypto.generateKeyPairSync('x25519');
+	  const signing = crypto.generateKeyPairSync('ed25519');
+	  return { id, index: offset + 1,
+		transportPublicKeyDer: transport.publicKey.export({ format: 'der', type: 'spki' }).toString('base64'),
+		signingPublicKeyDer: signing.publicKey.export({ format: 'der', type: 'spki' }).toString('base64') };
+	});
+	const transcript = { schema: 'mongbas-feldman-dkg-transcript/v1', ceremonyID: 'verifier-dkg-test', threshold: 2, totalTrustees: 3,
+	  group: { p: P_HEX, g: '2', q: Q.toString(16) }, participants,
+	  contributions: mspIDs.map((dealerID, offset) => ({ dealerID, commitments: {
+		constant: modPow(G, constantScalars[offset], P).toString(16), linear: modPow(G, linearScalars[offset], P).toString(16),
+	  }, contributionHash: sha256Hex(`contribution:${offset}`) })),
+	  publicShares: shares.map((share, offset) => ({ schema: 'mongbas-dkg-public-share/v1', ceremonyID: 'verifier-dkg-test', trusteeID: mspIDs[offset], trusteeIndex: offset + 1, publicKeyY: modPow(G, share, P).toString(16) })),
+	  electionPublicKeyY: publicKey.y };
+	transcript.transcriptHash = sha256Hex(canonicalize(transcript));
+	keyCeremony = { mode: 'dkg-v1', transcript, transcriptHash: transcript.transcriptHash, approvals: [...mspIDs].sort() };
+  }
   const source = { schema: 'mongbas-election-bundle-source/v1', encryptionMode: 'elgamal-vector-v3',
     configuration: { ...legacy.configuration, electionID, candidates }, provenance: legacy.provenance, publicKey, ballots,
     tallyResults: { A: 2, B: 1, C: 1 }, totalVotes: 4, aggregateCiphertextVector: aggregates,
     thresholdPublicShares: shares.map((share, offset) => ({ index: offset + 1, mspID: mspIDs[offset], publicKeyY: modPow(G, share, P).toString(16) })),
-    vectorPartialDecryptions: vectorPartials, vectorBallotReceipts, vectorAuditDisclosures, publishedAt: 1 };
+    vectorPartialDecryptions: vectorPartials, vectorBallotReceipts, vectorAuditDisclosures, publishedAt: 1,
+	...(keyCeremony ? { keyCeremony } : {}) };
   let bundle = buildUnsignedBundle(source);
-  assert.equal(bundle.schema, 'mongbas-election-bundle/v4');
+  assert.equal(bundle.schema, dkg ? 'mongbas-election-bundle/v5' : 'mongbas-election-bundle/v4');
   const keys = [crypto.generateKeyPairSync('ed25519'), crypto.generateKeyPairSync('ed25519')];
   bundle.configuration.organizations = keys.map((key, index) => ({ id: index ? 'civil' : 'ec', ed25519PublicKeyDer: key.publicKey.export({ format: 'der', type: 'spki' }).toString('base64') }));
   bundle = signBundle(bundle, 'ec', keys[0].privateKey.export({ format: 'pem', type: 'pkcs8' }));
   bundle = signBundle(bundle, 'civil', keys[1].privateKey.export({ format: 'pem', type: 'pkcs8' }));
   return bundle;
 }
+
+test('verifies a DKG v5 bundle and recomputes every public commitment equation', () => {
+  const bundle = buildVectorBundle({ dkg: true });
+  assert.equal(verifyBundle(bundle).valid, true, verifyBundle(bundle).errors.join('\n'));
+  const mutations = [
+	(value) => { value.keyCeremony.approvals.pop(); },
+	(value) => { value.keyCeremony.transcriptHash = '00'.repeat(32); },
+	(value) => { value.keyCeremony.transcript.contributions[0].commitments.linear = '2'; },
+	(value) => { value.keyCeremony.transcript.publicShares[0].publicKeyY = value.keyCeremony.transcript.publicShares[1].publicKeyY; },
+	(value) => { value.keyCeremony.transcript.electionPublicKeyY = value.keyCeremony.transcript.publicShares[0].publicKeyY; },
+	(value) => { value.trusteePublicShares[0].publicKeyY = value.trusteePublicShares[1].publicKeyY; },
+  ];
+  for (const mutate of mutations) {
+	const changed = structuredClone(bundle);
+	mutate(changed);
+	assert.equal(verifyBundle(changed).valid, false, 'tampered DKG evidence unexpectedly verified');
+  }
+});
 
 test('builds and verifies vector-v3 one-hot ballots and per-candidate threshold decryptions', () => {
   const bundle = buildVectorBundle();

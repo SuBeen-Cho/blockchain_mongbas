@@ -131,12 +131,13 @@ function buildUnsignedVectorBundle(source) {
     throw new Error('vector audit-or-cast receipts/disclosures are required');
   }
   return {
-    schema: 'mongbas-election-bundle/v4',
+	  schema: source.keyCeremony?.mode === 'dkg-v1' ? 'mongbas-election-bundle/v5' : 'mongbas-election-bundle/v4',
     algorithms: { canonicalization: 'mongbas-canonical-json-v1', hash: 'sha-256', signature: 'ed25519', tally: 'mongbas-exp-elgamal-vector-threshold-v3' },
     configuration: source.configuration,
     provenance: source.provenance,
     publicKey: source.publicKey,
     trusteePublicShares: source.thresholdPublicShares,
+	...(source.keyCeremony?.mode === 'dkg-v1' ? { keyCeremony: source.keyCeremony } : {}),
     ballots,
     bulletinBoard: { root: merkleRoot(ballots), publishedAt: source.publishedAt },
     aggregateCiphertextVector,

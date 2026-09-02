@@ -63,18 +63,20 @@ The process exits `0` only when every implemented check passes, `1` for an inval
 - vector-v3 prepared-ballot receipts, exact cast artifact binding, and one-to-one cast receipt coverage;
 - spoiled audit nonce commitment, one-hot proof, disclosed randomness and full ciphertext re-encryption;
 - rejection of missing, duplicate or mutated cast receipts and audit disclosures;
+- v5 DKG transcript canonical hash, fixed roster/MSP approvals, Feldman election-key equation, every trustee public-share equation, and exact bundle-share binding;
 - threshold of distinct Ed25519 organization signatures over the complete unsigned canonical bundle;
 - downgrade, deletion, replacement, reordering, duplication and proof/signature mutation tests.
 
 ## Current protocol limitations
 
-Bundle v4 verifies one-hot vector ballots and 2-of-3, per-candidate threshold
-decryptions without reconstructing the complete election private key. This does
-not yet make the deployment institutionally independent: key generation remains
-dealer-assisted, and trustee secret shares currently reside in a shared Fabric
-private-data collection. Production deployment still requires auditable DKG,
-per-organization secret storage and administration, and independently controlled
-bundle-signing keys.
+Bundle v5 adds the public transcript and the three MSP approvals for DKG-backed
+elections. The verifier recomputes the transcript hash, election public key and
+all trustee public shares directly from Feldman commitments. This removes the
+dealer-assisted key-generation requirement for a v5 election. It does not by
+itself establish institutional independence: trustees must still run under
+separately controlled accounts/hosts and retain their private shares and signing
+keys independently. Bundle v4 remains supported for legacy dealer-assisted
+vector elections.
 
 Bundle v4 also carries terminal audit-or-cast receipts. A cast receipt is bound
 to the exact ciphertext/proof artifact and `preparedBallotID`; an audited receipt

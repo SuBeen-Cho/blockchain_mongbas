@@ -808,6 +808,11 @@ router.get('/:id/election-bundle-source', requireValidElectionID, async (req, re
 	  return res.status(409).json({ error: 'bundle은 검증 가능한 ElGamal 선거만 지원합니다.' });
     }
 	const vectorMode = board.encryptionMode === 'elgamal-vector-v3';
+	let dkgTranscript = null;
+	if (election.keyCeremonyMode === 'dkg-v1') {
+	  const transcriptRaw = await contract.evaluateTransaction('GetDKGTranscript', id);
+	  dkgTranscript = JSON.parse(Buffer.from(transcriptRaw).toString('utf8'));
+	}
 	const ballots = (board.encryptedBallots || []).filter((ballot) => vectorMode ? ballot.encryptedCandidateVector?.length : ballot.encryptedCandidateID);
     if (ballots.length !== board.totalVotes) {
       return res.status(409).json({
@@ -830,6 +835,11 @@ router.get('/:id/election-bundle-source', requireValidElectionID, async (req, re
       provenance: { gitCommit, imageDigest, softwareVersion },
       publicKey: board.elgamalPubKey,
       thresholdPublicShares: board.thresholdPublicShares,
+	  keyCeremony: dkgTranscript ? {
+		mode: 'dkg-v1', transcript: dkgTranscript,
+		transcriptHash: election.dkgTranscriptHash,
+		approvals: election.dkgApprovals,
+	  } : null,
       ballots,
       tallyResults: board.tallyResults,
       totalVotes: board.totalVotes,

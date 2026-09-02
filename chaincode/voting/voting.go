@@ -1377,6 +1377,15 @@ func (c *VotingContract) CreateElection(
 	if err := ctx.GetStub().PutState(electionID, b); err != nil {
 		return fmt.Errorf("선거 원장 저장 실패: %w", err)
 	}
+	if dkg != nil {
+		publicTranscript, marshalErr := json.Marshal(dkg)
+		if marshalErr != nil {
+			return fmt.Errorf("DKG transcript serialization failed: %w", marshalErr)
+		}
+		if putErr := ctx.GetStub().PutState(dkgTranscriptStateKey(electionID), publicTranscript); putErr != nil {
+			return fmt.Errorf("DKG transcript public-state commit failed: %w", putErr)
+		}
+	}
 
 	// ── Panic Mode용 더미 Nullifier 생성 ─────────────────────────
 	// 후보자별 PanicDummyCount개의 더미 Nullifier를 실제 Nullifier 레코드로 저장합니다.
@@ -5204,9 +5213,9 @@ func (c *VotingContract) GetSecurityProperties(
 	return &SecurityProperties{
 		BallotSecrecy: SecurityProperty{
 			Property:   "Ballot Secrecy",
-			Status:     "implemented",
-			Mechanism:  "ElGamal client-side encryption + dealer-assisted 2-of-3 partial decryption",
-			Assumption: "DDH; dealer does not retain the key; shared PDC readers do not collude",
+			Status:     "unverified",
+			Mechanism:  "ElGamal client-side encryption + optional authenticated Feldman DKG + 2-of-3 partial decryption",
+			Assumption: "DDH; DKG trustees keep scalar shares and signing keys under genuinely independent custody",
 			PaperRef:   "PAPER-1 (21차)",
 		},
 		CastAsIntended: SecurityProperty{
@@ -5233,7 +5242,7 @@ func (c *VotingContract) GetSecurityProperties(
 		UniversalVerifiability: SecurityProperty{
 			Property:   "Universal Verifiability",
 			Status:     "implemented",
-			Mechanism:  "Signed offline bundle v2 verifies ballots, aggregate, trustee proofs, and tally",
+			Mechanism:  "Signed offline bundle v5 verifies DKG commitments, ballots, aggregate, trustee proofs, and tally",
 			Assumption: "bundle publication is complete; organization signing threshold is honestly operated",
 			PaperRef:   "PAPER-6 (26차), PAPER-13 (33차)",
 		},
@@ -5260,7 +5269,7 @@ func (c *VotingContract) GetSecurityProperties(
 			"SHA-256 (hash, commitment, Merkle tree)",
 			"Ed25519 (credential signature, RFC 8032)",
 			"HMAC-SHA256 (credential authentication)",
-			"Dealer-assisted threshold ElGamal (2-of-3 partial decryption; DKG pending)",
+			"Authenticated Feldman DKG or legacy dealer-assisted threshold ElGamal (2-of-3 partial decryption)",
 			"Opaque fixed-size deniable-proof API (limited mitigation; not full coercion resistance)",
 		},
 		EndorsementPolicy: "2-of-3 (ElectionCommission, PartyObserver, CivilSociety)",
