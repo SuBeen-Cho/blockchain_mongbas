@@ -21,3 +21,16 @@ test('runtime metadata and UI do not self-certify coercion resistance', () => {
   assert.doesNotMatch(diagram, /Coercion Resistance —/);
   assert.doesNotMatch(e2e, /Coercion Resistance E2E Test/);
 });
+
+test('public showcase and credential labels do not claim unverified equivalence', () => {
+  const showcase = read('frontend/public/showcase3.html');
+  const auth = read('application/src/middleware/auth.js');
+  const psPrototype = read('application/src/lib/ps-idemix.js');
+
+  assert.doesNotMatch(showcase, /7\/7 보안 속성/);
+  assert.doesNotMatch(showcase, /하나도 빠짐없이 달성한 첫 사례/);
+  assert.match(showcase, /현재 7\/7 완전 검증을 주장하지 않습니다/);
+  assert.doesNotMatch(auth, /진짜 Idemix|Fabric Idemix와 동일/);
+  assert.match(auth, /PS-BN254 credential prototype/);
+  assert.match(psPrototype, /Fabric Idemix와의 wire-format/);
+});
