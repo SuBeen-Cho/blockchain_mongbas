@@ -63,8 +63,8 @@ sleep 1
 
 echo ""
 echo "══════════════════════════════════════════════════════════════"
-echo "  팀 몽바스 — 진짜 Idemix A/B/C 3단계 자동 성능 비교"
-echo "  A: bypass / B: PS-BN254(진짜 Idemix CL) / C: BBS+(개선)"
+echo "  팀 몽바스 — credential 프로토타입 A/B/C 자동 성능 비교"
+echo "  A: bypass / B: PS-BN254 prototype / C: BBS+ prototype"
 echo "  시작: $(date)"
 echo "══════════════════════════════════════════════════════════════"
 
@@ -81,8 +81,8 @@ node benchmark/full-comparison-bench.js \
 stop_server
 
 # ────────────────────────────────────────────────────────────────
-# B단계: PS Signatures on BN254 — 진짜 Hyperledger Fabric Idemix
-#   - Pointcheval-Sanders 쌍선형 서명 (Fabric Idemix와 동일 수학)
+# B단계: PS Signatures on BN254 독립 credential 프로토타입
+#   - Fabric Idemix 호환성을 주장하지 않는 비교용 구현
 #   - BN254 곡선, 2 pairings per verification (~50-60ms)
 # ────────────────────────────────────────────────────────────────
 log "=== B단계 시작: PS-BN254 Idemix (IDEMIX_IMPL=ps) ==="

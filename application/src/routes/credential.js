@@ -5,8 +5,8 @@
  * [A단계] bypass (IDEMIX_ENABLED=false)
  *   - 자격증명 없이 통과 (성능 기준선)
  *
- * [B단계] PS Signatures on BN254 — 진짜 Idemix (IDEMIX_IMPL=ps)
- *   - Pointcheval-Sanders 쌍선형 서명 (Hyperledger Fabric Idemix와 동일한 수학)
+ * [B단계] PS Signatures on BN254 credential prototype (IDEMIX_IMPL=ps)
+ *   - 독립 비교용 구현으로 Fabric Idemix 호환성을 주장하지 않음
  *   - BN254 (BN256) 곡선, 2 pairings per verification
  *   - 비밀키 없이 공개키로만 검증 가능
  *

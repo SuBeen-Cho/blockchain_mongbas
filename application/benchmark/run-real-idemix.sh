@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # benchmark/run-real-idemix.sh
-# 진짜 Idemix 3단계 자동 성능 비교 오케스트레이션
+# credential 프로토타입 자동 성능 비교 오케스트레이션
 #
 # A단계: bypass (기준선)
-# B단계: PS-BN254 (Hyperledger Fabric Idemix와 동일 수학)
+# B단계: 독립 PS-BN254 credential 프로토타입
 # C단계: BBS+-BLS12381 (IRTF CFRG 표준, 개선된 Idemix)
 
 set -euo pipefail
@@ -27,7 +27,7 @@ start_server() {
     A단계) expected_health_mode=bypass; expected_health_impl=HMAC-SHA256 ;;
     HMAC) expected_health_mode=idemix-hmac; expected_health_impl=HMAC-SHA256 ;;
     Ed25519) expected_health_mode=idemix-hmac; expected_health_impl=Ed25519-asymmetric ;;
-    B단계) expected_health_mode=idemix-ps; expected_health_impl='PS-BN254 (B단계: 진짜 Idemix CL)' ;;
+    B단계) expected_health_mode=idemix-ps; expected_health_impl='PS-BN254 credential prototype' ;;
     C단계) expected_health_mode=idemix-bbs; expected_health_impl='BBS+-BLS12381 (C단계: 개선 Idemix)' ;;
     *) err "알 수 없는 측정 모드: ${mode}"; exit 1 ;;
   esac
@@ -74,8 +74,8 @@ sleep 1
 
 echo ""
 echo "╔══════════════════════════════════════════════════════════════════╗"
-echo "║  팀 몽바스 — 진짜 Idemix A/B/C 3단계 성능 비교                  ║"
-echo "║  A: bypass  │  B: PS-BN254(진짜 Idemix)  │  C: BBS+(개선)        ║"
+echo "║  팀 몽바스 — credential 프로토타입 성능 비교                    ║"
+echo "║  A: bypass  │  B: PS-BN254 prototype  │  C: BBS+ prototype        ║"
 echo "║  시작: $(date +'%Y-%m-%d %H:%M:%S')                                  ║"
 echo "╚══════════════════════════════════════════════════════════════════╝"
 
@@ -118,7 +118,7 @@ node benchmark/real-idemix-bench.js \
 stop_server
 
 # ════════════════════════════════════════════════════════════════
-# B단계: PS-BN254 — 진짜 Hyperledger Fabric Idemix
+# B단계: 독립 PS-BN254 credential 프로토타입
 #
 #   수학적 등가성:
 #   - Hyperledger Fabric Idemix는 amcl 라이브러리의 BN256 곡선 사용
@@ -127,7 +127,7 @@ stop_server
 #   - pure JavaScript 구현 (@noble/curves)
 # ════════════════════════════════════════════════════════════════
 echo ""
-log "========== B단계: PS-BN254 (진짜 Idemix) =========="
+log "========== B단계: PS-BN254 credential prototype =========="
 start_server "B단계" "IDEMIX_ENABLED=true IDEMIX_IMPL=ps IDEMIX_CACHE_ENABLED=false"
 
 node benchmark/real-idemix-bench.js \

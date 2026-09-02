@@ -20,7 +20,7 @@ start_server() {
   local expected_health_mode expected_health_impl
   case "${mode}" in
     HMAC) expected_health_mode=idemix-hmac; expected_health_impl=HMAC-SHA256 ;;
-    B-PS-BN254) expected_health_mode=idemix-ps; expected_health_impl='PS-BN254 (B단계: 진짜 Idemix CL)' ;;
+    B-PS-BN254) expected_health_mode=idemix-ps; expected_health_impl='PS-BN254 credential prototype' ;;
     C-BBS) expected_health_mode=idemix-bbs; expected_health_impl='BBS+-BLS12381 (C단계: 개선 Idemix)' ;;
     *) echo "unknown mode: ${mode}" >&2; exit 1 ;;
   esac

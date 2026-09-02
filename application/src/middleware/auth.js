@@ -9,7 +9,7 @@
  *
  *   [B단계] PS Signatures on BN254 (IDEMIX_IMPL=ps)
  *     - Pointcheval-Sanders 쌍선형 서명
- *     - Hyperledger Fabric Idemix와 동일한 BN254 곡선 + 동일한 서명 방정식
+ *     - 독립 PS/BN254 credential 프로토타입; Fabric Idemix 호환 구현은 아님
  *     - 검증: e(h, X·∏Yi^mi) == e(σ, g2)  [2 pairings + k G2 mults]
  *
  *   [C단계] BBS+ on BLS12-381 (IDEMIX_IMPL=bbs)
@@ -302,7 +302,7 @@ async function measureAuthLatency(req) {
 function idemixStatus() {
   let impl, securityNote;
   if (IDEMIX_IMPL === 'ps') {
-    impl = 'PS-BN254 (B단계: 진짜 Idemix CL)';
+    impl = 'PS-BN254 credential prototype';
     securityNote = process.env.PS_ISSUER_SEED
       ? '익명 credential — PS_ISSUER_PUBLIC_KEY_B64를 체인코드에 주입하면 pairing 기반 체인코드 직접 검증'
       : '익명 credential — PS_ISSUER_SEED/PS_ISSUER_PUBLIC_KEY_B64 미설정 시 체인코드 직접 검증 불가';

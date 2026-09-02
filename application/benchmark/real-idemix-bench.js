@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * benchmark/real-idemix-bench.js
- * 진짜 Idemix 성능 비교: A(bypass) / B(PS-BN254) / C(BBS+-BLS12381)
+ * Credential 프로토타입 성능 비교: A(bypass) / B(PS-BN254) / C(BBS+-BLS12381)
  *
  * 측정 지표:
  *   1. Credential 발급 레이턴시 (50회)
@@ -245,12 +245,12 @@ async function runPhase(phaseName, note) {
 // ── 종합 비교 출력 ────────────────────────────────────────────
 function printSummary(phases) {
   console.log(`\n${'═'.repeat(70)}`);
-  console.log('  진짜 Idemix A/B/C 비교 요약');
+  console.log('  Credential 프로토타입 A/B/C 비교 요약');
   console.log('═'.repeat(70));
 
   const labels = {
     'A': '기준선(bypass)',
-    'B': 'PS-BN254 (진짜 Idemix CL)',
+    'B': 'PS-BN254 credential prototype',
     'C': 'BBS+-BLS12381 (개선 Idemix)',
   };
 
@@ -315,7 +315,7 @@ async function main() {
   if (!idemix.enabled) {
     phaseName = 'A'; note = 'bypass (인증 없음 — 성능 기준선)';
   } else if (impl === 'ps') {
-    phaseName = 'B'; note = 'PS-BN254 Idemix (Hyperledger Fabric Idemix와 동일 수학)';
+    phaseName = 'B'; note = 'PS-BN254 credential prototype (Fabric Idemix 호환성 미주장)';
   } else if (impl === 'bbs') {
     phaseName = 'C'; note = 'BBS+-BLS12381 (IRTF CFRG 표준, 선택적 공개 ZKP)';
   } else if (idemix.asymEnabled) {

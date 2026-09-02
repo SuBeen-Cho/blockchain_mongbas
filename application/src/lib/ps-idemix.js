@@ -1,7 +1,7 @@
 /**
  * ps-idemix.js — Pointcheval-Sanders (PS) Signatures on BN254
  *
- * Hyperledger Fabric Idemix와 동일한 수학 기반:
+ * 비교 실험을 위한 독립 PS/BN254 credential 프로토타입:
  *   - BN254 (BN256) 쌍선형 곡선
  *   - PS 서명 (CL 서명의 현대적 구현)
  *   - ZKP 자격증명 증명
@@ -9,7 +9,7 @@
  * 서명 방정식: e(h, X * ∏Yi^mi) == e(σ, g2)
  * 여기서 (h, σ)가 서명, X와 Yi는 공개키
  *
- * [B단계] 이 구현이 B단계(진짜 Idemix)의 암호 연산입니다.
+ * Fabric Idemix와의 wire-format, credential 구조, 보안성 또는 상호운용성을 입증하지 않습니다.
  */
 
 'use strict';
