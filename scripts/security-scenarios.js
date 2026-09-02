@@ -19,6 +19,15 @@
 
 'use strict';
 
+// This pre-vector runner catches scenario errors and still writes a completion
+// report, so its historical output is not admissible as security evidence.
+// Keep the source for audit traceability, but fail closed before any network or
+// ledger mutation. Use the strict vector-v3/DKG evaluators instead.
+if (require.main === module) {
+  console.error('[UNSUPPORTED] scripts/security-scenarios.js is a legacy evaluator and cannot produce security evidence. Use deploy/linux/vector-*.sh or verifier-evaluation.sh.');
+  process.exit(2);
+}
+
 const http   = require('http');
 const crypto = require('crypto');
 const fs     = require('fs');

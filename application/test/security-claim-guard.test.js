@@ -70,3 +70,15 @@ test('legacy extended security runner is quarantined before state mutation', () 
   assert.match(run.stderr, /UNSUPPORTED/);
   assert.doesNotMatch(run.stderr, /측정 완료/);
 });
+
+test('legacy security scenario runner is quarantined before network access', () => {
+  const run = spawnSync(process.execPath, [path.join(root, 'scripts/security-scenarios.js')], {
+    encoding: 'utf8',
+    timeout: 5000,
+  });
+
+  assert.equal(run.status, 2);
+  assert.equal(run.stdout, '');
+  assert.match(run.stderr, /UNSUPPORTED/);
+  assert.doesNotMatch(run.stderr, /측정 완료/);
+});
