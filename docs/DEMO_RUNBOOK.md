@@ -1,5 +1,7 @@
 # 부스 시연 운영 가이드 (DEMO RUNBOOK)
 
+> 시연은 구현 기능을 보여주는 것이며 7대 보안 속성의 7/7 독립 검증이 아니다. normal/panic 비교는 API transcript 보완만 시연하며, PDC/backend 공모와 revote/participation pattern을 포함한 coercion resistance는 `unverified`입니다.
+
 발표 당일 부스에서 그대로 따라 하는 실전 운영 절차. (설계 배경은 `DEMO_BOOTH_DESIGN.md` 참조)
 
 ---
@@ -11,13 +13,13 @@ cd mongbas
 ./scripts/demo-start.sh        # 네트워크 확인 → 빌드 → 백엔드(:3000) → 헬스
 ```
 - 네트워크가 안 떠 있으면 자동으로 `up + deploy`(수 분). 이미 떠 있으면 건너뜀.
-- 꼬였거나 깨끗이 다시 하려면: `./scripts/demo-reset.sh` (모든 데이터 삭제 후 재기동).
+- `./scripts/demo-reset.sh`는 모든 데모 데이터를 삭제하므로 필요한 기록을 보존하고 명시적으로 재설정할 때만 사용한다.
 
 폰 접속용 공개 URL(다른 터미널):
 ```bash
 ./scripts/demo-tunnel.sh       # cloudflared 무료 터널 → https://*.trycloudflare.com
 ```
-> cloudflared 미설치: `brew install cloudflared`. 백업으로 같은 WiFi면 노트북 IP 사용.
+> 공개 Quick Tunnel은 사용자 승인을 받은 일시 시험에만 사용한다. 발표/장기 운영은 named tunnel, vote/admin 경로 분리와 관리자 인증을 적용한다. cloudflared 미설치: `brew install cloudflared`.
 
 화면 3개:
 - **관제판(노트북)**: `http://localhost:3000/?app=control` (또는 터널 URL + `/?app=control`)
@@ -65,7 +67,7 @@ cd mongbas
 | 기록대로 집계 | ④ 집계 기여 / ZKP |
 | 보편 검증 | ④ 공개 게시판 / ⑤ 변조 탐지 |
 | 자격 검증 | ② 폰 접속 시 자격증명 자동 발급 |
-| 강압 저항 | (심화) 패닉/노멀 비교 — 전체 파이프라인 화면 |
+| 강압 저항(목표) | (심화) opaque normal/panic API 비교. 전체 속성은 `unverified`로 표시 |
 
 ---
 

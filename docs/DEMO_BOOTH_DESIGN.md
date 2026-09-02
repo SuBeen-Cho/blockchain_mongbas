@@ -1,5 +1,7 @@
 # 캡스톤 부스 체험 시연 설계 문서 (Mongbas)
 
+> **보존용 역사 문서:** 2026-06-05 발표 준비 당시의 설계를 보존한다. 현재 코드·보안 검증 상태의 근거로 인용하지 말고 `README.md`와 비공개 security matrix를 사용한다. 특히 아래의 “강압자도 구분 못 함”, 7/7 연결, 과거 file:line 표는 현재 증거가 아니다.
+
 > **한 줄 요약**: 방문자가 폰으로 직접 투표 → 큰 화면에서 "방금 당신이 던진 그 표"가
 > 블록체인에 변조 불가능하게 기록되었음을 본인 영수증으로 확인시켜주는,
 > 2~3분짜리 **반복 가능한 부스 체험**을 만든다. 느린 부분(네트워크 기동·체인코드 배포)은
@@ -69,7 +71,7 @@
 | | → "당신 표는 최종 N표 중 1표" 막대에 톡 쌓임 | | **Universal Verifiability** |
 | ⑤ 변조 데모 | (발표자) 번호 한 글자 바꿔 재검증 → **빨간 X, 봉인 깨짐** | 내 표 추적 | 무결성 / 변조 탐지 |
 | ⑥ **운영자도 못 본다** | (발표자/방문자) 관리자 화면을 열어도 암호문·해시만 → "후보·이름 불가" | 관리자 시점 패널 | **Ballot Secrecy / 익명성 (권한자에 대한 프라이버시)** |
-| ⑦ 강압 데모 (선택) | (발표자) 진짜/패닉 영수증 둘 다 **✓** → 구분 불가 + 패닉표 집계 제외 | 강압 비교 | **Coercion Resistance / Receipt-Freeness** |
+| ⑦ 불투명 API 데모 (선택) | normal/panic proof가 둘 다 유효하고 고정 길이임을 표시 | API transcript mitigation | **전체 Coercion Resistance 증명 아님** |
 | → 반복 | 다음 팀 오면 ①부터 ([새 세션] 한 번이면 리셋) | | |
 
 > Cast-as-Intended(Benaloh 챌린지), ZKP 수식 검증 등 **심화 내용은 "심화 탭"으로 분리**하여
@@ -290,7 +292,7 @@ if (appMode === 'control') return <ControlPage />;
   → "이래서 조작이 불가능합니다."
 
 **강압 비교** (§3 ⑥, 기존 `DeniableDiagram` 재사용):
-- 진짜 영수증 / 패닉 영수증을 **좌우로 나란히** 검증 → 둘 다 ✅ → "강압자도 구분 못 함."
+- normal/panic proof를 **좌우로 나란히** 검증 → 둘 다 유효. 발표에서는 “API body/timing 분류 공격을 보완했지만 기관 공모·재투표 패턴을 포함한 전체 강압 저항성은 미검증”이라고 설명.
 
 ---
 
@@ -304,7 +306,7 @@ if (appMode === 'control') return <ControlPage />;
 | Tallied-as-Recorded | Chaum-Pedersen ZKP | ④ 집계 기여 / (심화) ZKP 검증 |
 | Universal Verifiability | 게시판 + ZKP | ④ 게시판 공개 — 누구나 검증, ⑤ 변조 탐지 |
 | Eligibility Verifiability | HMAC/Ed25519 자격증명 | ② 폰 접속 시 자동 발급(로그) |
-| Coercion Resistance | 패닉 자격/재투표/패닉PW/Receipt-Free | ⑥ 진짜·패닉 영수증 구분 불가 |
+| Coercion Resistance(목표) | opaque proof API/panic/revote prototype | ⑥에서 API 보완만 시연; 속성 전체는 `unverified` |
 
 > **Receipt-freeness 경계 주석**: 실제 시스템에서 검증화면은 후보 평문을 노출하지 않는다
 > (강압자에게 증거가 됨). **데모에서는** 방문자 본인이 방금 찍었고 강압 상황이 아니므로
@@ -472,7 +474,7 @@ cloudflared tunnel --url http://localhost:3000
 | voterID 공개원장 미노출 | ✅ 사실 | 공개 Nullifier 구조체에 voterID 없음 voting.go:153-167 |
 | 재투표(last-vote-wins) 덮어쓰기 | ✅ 사실 | voting.go:1232-1246, 1404-1427 |
 | 패닉표 집계 제외 | ✅ 사실 | PDC 저장 1277-1288/1375, 필터 1652-1663 |
-| 강압: 진짜/패닉 영수증 구분불가 | ✅ 사실 | voting.go:2065-2179 (패닉→실재 더미leaf, 동일 응답형) |
+| 강압: API body/timing oracle 보완 | ⚠️ 제한 범위 실측 통과 | `0e8f63c`, Linux sequence 12, 100 samples. PDC/backend/revote 공격은 미통과 |
 | Receipt-free(included만 반환) | ✅ 사실 | voting.go:2218-2223 (electionID 필드 추가될 뿐, 후보/증명 누출 없음) |
 | Merkle 포함증명 + 변조탐지 | ✅ 사실 | voting.go:1923/2261/2307, crypto.js:67, VerifyPage:97-104 |
 | ZKP 집계검증(비밀키 없이) | ✅ 사실 | voting.go:2789/2827-2858, elections.js:124/573 |
@@ -504,8 +506,7 @@ cloudflared tunnel --url http://localhost:3000
   목록 렌더 + 영수번호(6 hex prefix) 매칭 하이라이트 추가.
 - **seed-votes**: 신규 엔드포인트가 데모 자격증명 발급→ElGamal 암호화+ZKP→CastVote
   (e2e 로직 재사용). `DISABLE_RATE_LIMITS=true` 전제.
-- **강압 데모 전제**: 키오스크 "강압 체험" 경로는 `normalPWHash`+`panicPWHash`를 함께 전송해야
-  패닉 분기가 활성화됨(아니면 일반 proof로 폴백). 체험 흐름에 반영.
+- **불투명 API 데모 전제**: 현재 브라우저는 256-bit verification receipt에서 `normalLookupToken`/`panicLookupToken`을 파생한다. 과거 `normalPWHash`/`panicPWHash` 경로는 사용하지 않는다.
 
 **🔴 발표 정직성 직결 — 결정 필요 (코드/내러티브 선택)**
 - **P-1. Shamir 2-of-3 ↔ ElGamal 집계키**: 현재 ElGamal 모드에선 단일 관리자가 *합계*를

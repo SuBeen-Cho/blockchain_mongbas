@@ -5,14 +5,14 @@
   </p>
   <p align="center">
     Anonymous E-Voting on Hyperledger Fabric 2.5:<br>
-    Practical Mitigation of the Verification Paradox and Coercion Resistance
+    A Research Prototype for the Verification Paradox and Coercion-Resistance Evaluation
   </p>
 </p>
 
 <p align="center">
   <img src="https://img.shields.io/badge/Hyperledger%20Fabric-2.5-blue?logo=hyperledger" alt="Fabric">
   <img src="https://img.shields.io/badge/Go-1.21-00ADD8?logo=go" alt="Go">
-  <img src="https://img.shields.io/badge/Node.js-18+-339933?logo=node.js" alt="Node">
+  <img src="https://img.shields.io/badge/Node.js-22.12+-339933?logo=node.js" alt="Node">
   <img src="https://img.shields.io/badge/React-Vite-61DAFB?logo=react" alt="React">
   <img src="https://img.shields.io/badge/Encryption-Exponential%20ElGamal-purple" alt="Encryption">
 </p>
@@ -33,7 +33,7 @@
 
 전자투표 시스템은 **투표 비밀성**, **검증 가능성**, **강압 저항성** 간의 구조적 긴장을 본질적으로 내포합니다. 유권자는 자신의 투표가 정확히 포함되었는지 검증할 수 있어야 하나, 이러한 검증 정보가 제3자에게 증거로 제공될 경우 선거 이후 협박의 근거가 됩니다. 본 연구는 이러한 긴장을 **검증 역설(Verification Paradox)** 로 정의합니다.
 
-**Mongbas**는 Hyperledger Fabric 2.5 기반 3개 조직 컨소시엄 위에 전자투표 프로토타입을 구현하여, **2-of-3 보증 정책**, **Nullifier 기반 익명성**, **Exponential ElGamal 동형 집계**, **Zero-Knowledge Proof 기반 투표 유효성 검증**, **패닉 비밀번호 기반 부인 가능 검증**, **Private Data Collection 기반 강압 투표 분리**를 결합하여 검증 역설의 다층적 완화를 제안합니다.
+**Mongbas**는 Hyperledger Fabric 2.5 기반 3개 조직 컨소시엄 위에 **2-of-3 보증 정책**, **credential-bound nullifier**, **Exponential ElGamal 동형 집계**, **Zero-Knowledge Proof**, **독립 election bundle verifier**를 구현한 연구용 전자투표 프로토타입입니다. 불투명 deniable-proof와 PDC 분리도 실험하지만, 이를 전체 강압 저항성의 증명으로 간주하지 않습니다.
 
 ---
 
@@ -45,8 +45,8 @@
 | **Exponential ElGamal 동형 집계** | 개별 ballot 평문을 열지 않고 후보별 암호문을 집계하고 threshold partial proof로 검증 |
 | **Chaum-Pedersen ZKP** | 이접적 OR-증명(CDS'94)으로 투표 유효성을 후보 선택 노출 없이 증명 |
 | **Benaloh Challenge** | AES 준비 ballot의 audit/spoil 상태를 commit하고 브라우저 재검증. 실제 vector-v3 cast와 동일 암호 경로로 통합하는 작업은 진행 중 |
-| **Shamir Secret Sharing (2-of-3)** | 개표 키를 3개 기관에 분산 — 단일 관리자 없이 합의 기반 집계 |
-| **부인 가능 검증 (Deniable Verification)** | 정상/패닉 응답 구조를 맞추는 실험 기능. 강압자 비구별성은 아직 공격 평가 중 |
+| **Threshold partial decryption (2-of-3)** | 후보별 집계 암호문에 대한 2개 이상의 검증 가능한 partial share로 최종 개표. dealerless DKG는 아직 미구현 |
+| **부인 가능 검증 (Deniable Verification)** | 불투명 lookup capability과 8,192-byte 고정 응답으로 기존 API oracle를 제거. PDC/backend 공모·재투표 패턴은 미해결 |
 | **Merkle Tree 검증** | 투표 포함/배제를 암호학적으로 증명 (E2E Verifiability) |
 | **Nullifier 기반 재투표** | 동일 nullifier로 재투표 시 기존 기록 덮어쓰기 — 강압 후 자유 의사 반영 가능 |
 
@@ -60,7 +60,7 @@
 
 네트워크는 **ElectionCommission**(선거관리위원회), **PartyObserver**(참관정당), **CivilSociety**(시민단체) 3개 조직으로 구성됩니다. 정렬 서비스는 etcdraft 4노드 CFT 아키텍처를 채택하며, 핵심 트랜잭션은 2-of-3 보증 정책을 요구하여 단일 기관이 투표 기록이나 집계 결과를 일방적으로 갱신할 수 없습니다.
 
-데이터는 **공개 원장**과 **PDC(Private Data Collection)** 의 두 계층으로 분리됩니다. 공개 원장에는 nullifier 해시, 암호화된 후보 기록, Merkle 루트 등 검증 가능한 데이터가 저장되고, PDC에는 자격 증명 유형(정상/패닉), 비밀번호 해시 등 민감 데이터가 격리 저장됩니다. PDC 데이터는 오더러에게 전달되지 않으며, 인가된 조직의 피어만 접근할 수 있습니다.
+데이터는 **공개 원장**과 **PDC(Private Data Collection)** 의 두 계층으로 분리됩니다. 공개 원장에는 nullifier 해시, 암호화된 ballot, proof, Merkle root 등이 남고, PDC에는 투표 private data·credential type·deniable lookup target 등이 격리됩니다. PDC는 오더러에게 전달되지 않지만 인가된 피어/운영자는 읽을 수 있으므로 untappable channel이나 강압 저항성 증거로 간주하지 않습니다.
 
 ---
 
@@ -84,12 +84,12 @@
   <img src="./docs/images/fig_panicmode.png" width="500" alt="패닉 비밀번호 기반 부인 가능 검증 흐름">
 </p>
 
-강압자가 유권자에게 투표 증명을 요구할 경우, 유권자는 **정상 비밀번호** 또는 **패닉 비밀번호**를 입력합니다.
+유권자 브라우저는 256-bit 검증 receipt nonce와 **정상/패닉 비밀번호**로 서로 다른 domain-separated lookup capability를 만듭니다. 비밀번호와 실제 ballot nullifier는 proof API에 전송되지 않습니다.
 
-- **정상 비밀번호** → 실제 nullifier를 재생성하여 실제 투표의 Merkle 포함 증명을 반환
-- **패닉 비밀번호** → 더미 nullifier를 결정론적으로 선택하여 더미 투표의 Merkle 포함 증명을 반환
+- **정상 capability** → 실제 ballot의 Merkle 포함 증명
+- **패닉 capability** → 선거 생성 시 추가된 더미 ballot의 유효한 Merkle 포함 증명
 
-두 경우의 응답 구조를 동일하게 만드는 것이 구현 목표입니다. 그러나 공개 padding 인덱스, 투표 패턴, 타이밍·네트워크·로컬 상태 등 사이드채널 평가가 끝나지 않았으므로 현재 구현만으로 강압자 비구별성이나 강압 저항성을 보장한다고 주장하지 않습니다.
+최초 Linux 공격 평가는 요청 nullifier 일치와 body size로 모드를 각각 100% 분류했습니다. `0e8f63c`/chaincode sequence 12 보완 후에는 100개 응답의 target nullifier 노출이 0개였고, 고정 8,192-byte body와 timing의 held-out classifier가 모두 15/30(50%)이었습니다. 이는 동일 호스트 API transcript oracle만 보완했음을 의미합니다. PDC/backend 공모, 자격증명 강요, forced abstention, 재투표/참여 패턴은 남아 있으므로 전체 강압 저항성은 아직 `unverified`입니다.
 
 ---
 
@@ -101,11 +101,11 @@
 |---|---|---|
 | Ballot secrecy | vector ElGamal, threshold partial decryption, ballot proof | dealerless DKG, metadata privacy game, key deletion |
 | Cast-as-intended | audit-or-cast 기능 및 E2E 테스트 | 엄격한 상태기계·독립 audit 증거 |
-| Recorded-as-cast | Merkle inclusion 검증 | 서명된 checkpoint, omission/fork witness |
+| Recorded-as-cast | Merkle inclusion, 서명 checkpoint·Mac witness의 prefix/fork 탐지 | complaint protocol과 독립 운영 witness |
 | Tallied-as-recorded | 후보별 동형 집계, 2-of-3 partial proof, tamper tests | 더 넓은 공모·장애 평가 |
-| Universal verifiability | standalone bundle verifier와 tamper corpus | 외부 witness/checkpoint와 다른 운영 주체 검증 |
+| Universal verifiability | standalone bundle verifier 55/55, tamper corpus, Linux·Mac witness | 실제 기관별 독립 키/운영 검증 |
 | Eligibility | election-bound credential/nullifier 검증, 선거별 append-only revocation 구현 | 실제 등록부 연동, 익명 accumulator non-revocation proof, Linux 공격 증거 |
-| Coercion resistance | panic/revote 실험 메커니즘 | 강압자 모델, 패턴·타이밍·네트워크 사이드채널 공격 평가 |
+| Coercion resistance | opaque proof API의 100-sample transcript gate 통과, panic/revote prototype | PDC/backend 공모, credential surrender, forced abstention, revote/participation hiding |
 
 ---
 
@@ -236,7 +236,7 @@ cd network
 |----------|--------|
 | A. 선관위 단독 조작 시도 | 2-of-3 보증 정책으로 차단 |
 | B. 이중투표 시도 | Nullifier Eviction으로 100% 처리 |
-| C. 강압 투표 (Panic) | Normal/Panic 응답 타이밍 차이 0.2ms (통계적 비구별성 확인) |
+| C. 강압 투표 API | 수정 전 100% 분류 재현; 수정 후 target 노출 0/100, size/timing held-out 각 50%. 전체 강압 저항성은 미검증 |
 | D. 집계 키 단독 탈취 | 1-share 복원 실패 100%, 2-share 성공 100% |
 | E. 결과 조작 외부 주장 | Merkle 검증 정확도 100% |
 

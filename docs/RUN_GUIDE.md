@@ -67,10 +67,12 @@ cd mongbas
 
 ### 데모 흐름
 1. 대시보드 **[＋ 새 세션]** → QR 표시 (+ 쇼케이스 QR 자동 동기화)
-2. 폰으로 QR 스캔 → 정상/패닉 선택 → 투표 → 추적번호
+2. 폰으로 QR 스캔 → 투표 → 일반 추적번호 또는 deniable verification receipt
 3. 사이드바 **커스텀 투표 주입**(후보별 드롭다운 + ＋)으로 분위기 채우기
 4. **[개표]** → 종료 + 2-of-3 복호화 + 집계 과정(실제 계산값) + 셔플
 5. **[검증]** → 추적번호로 Merkle 봉인 일치 확인
+
+> normal/panic 흐름은 불투명 lookup capability와 고정 크기 API 응답을 시연합니다. 이는 PDC/backend 공모·재투표 패턴·forced abstention을 해결했다는 증거가 아니므로 전체 coercion resistance로 표현하지 않는다.
 
 ---
 
