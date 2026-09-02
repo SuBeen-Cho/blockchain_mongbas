@@ -454,15 +454,15 @@ async function main() {
     throw new Error('security-properties endpoint must identify itself as non-independent metadata');
   }
   const declared = secProps.properties;
-  const declaredAchieved = [
+  const declaredImplemented = [
     declared.ballotSecrecy,
     declared.castAsIntended,
     declared.recordedAsCast,
     declared.talliedAsRecorded,
     declared.eligibilityVerify,
-  ].filter(p => p.status === 'achieved').length;
-  const declaredPartial = declared.coercionResistance.status === 'partial' ? 1 : 0;
-  console.log(`[INFO] Self-declared capability metadata only: ${declaredAchieved} achieved labels, ${declaredPartial} partial label`);
+  ].filter(p => p.status === 'implemented').length;
+  const declaredUnverified = declared.coercionResistance.status === 'unverified' ? 1 : 0;
+  console.log(`[INFO] Self-declared capability metadata only: ${declaredImplemented} implemented labels, ${declaredUnverified} unverified label`);
   console.log('[INFO] This phase is not independent evidence for any of the seven security properties.');
   console.log(`[INFO] Crypto: ${declared.cryptoPrimitives.join(', ')}`);
   console.log(`[INFO] Endorsement: ${declared.endorsementPolicy}`);
@@ -785,8 +785,8 @@ async function main() {
     throw new Error(`ElGamal bulletin board lacks threshold verification material: ${JSON.stringify(egBoard)}`);
   }
 
-  // ── Phase 15: Deniable Credential Duality (PAPER-12) ─────
-  console.log('\n── Phase 15: Deniable Credential Duality ──');
+  // ── Phase 15: panic-filtering behavior (not full coercion resistance) ──
+  console.log('\n── Phase 15: Panic-Filtering Behavior (Limited) ──');
 
   const CR_ELECTION_ID = `coercion-e2e-${Date.now()}`;
   const CR_CANDIDATES = ['HONEST', 'COERCED'];
@@ -799,8 +799,8 @@ async function main() {
       method: 'POST',
       body: JSON.stringify({
         electionID: CR_ELECTION_ID,
-        title: 'Coercion Resistance E2E Test',
-        description: 'PDC-Based Deniable Credential Duality test',
+        title: 'Panic Filtering Behavior E2E Test',
+        description: 'Limited PDC panic-filtering behavior test; not a coercion-resistance proof',
         candidates: CR_CANDIDATES,
         startTime: crStartTime,
         endTime: crEndTime,

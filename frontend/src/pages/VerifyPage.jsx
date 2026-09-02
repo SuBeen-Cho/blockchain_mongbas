@@ -392,7 +392,7 @@ export default function VerifyPage() {
                   </div>
                 </div>
                 <p className="text-[11px] text-amber-700 font-medium">
-                  두 결과 모두 "검증 성공"이지만 Leaf Hash가 다름 — 강압자가 어느 것이 진짜인지 구분할 수 없습니다 (Coercion Resistance)
+                  두 결과는 모두 유효한 Merkle proof입니다. 고정 크기 API 테스트는 통과했지만 PDC 운영자 공모·재투표 패턴을 포함한 전체 강압 저항성은 미검증입니다.
                 </p>
               </div>
             )}

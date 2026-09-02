@@ -24,7 +24,7 @@ export default function DeniableDiagram({ verifySteps = [], result = null, prevR
         </div>
         <div>
           <p className="text-sm font-bold text-slate-800">Deniable Verification 흐름</p>
-          <p className="text-[11px] text-slate-400">Coercion Resistance — 강압자가 진짜/가짜 증명을 구분할 수 없음</p>
+          <p className="text-[11px] text-slate-400">Opaque proof API — API transcript 보완 범위만 시연</p>
         </div>
       </div>
 

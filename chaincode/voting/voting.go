@@ -379,10 +379,10 @@ type VotePrivate struct {
 	CandidateCommitment      string              `json:"candidateCommitment"` // 공개 원장 commitment와 일치해야 함
 	VoteHash                 string              `json:"voteHash"`            // 암호화 투표 레코드 무결성 확인용
 	Timestamp                int64               `json:"timestamp"`
-	// [PAPER-12] Deniable Credential Duality — PDC-based coercion resistance
+	// [PAPER-12] Experimental panic filtering metadata; not a proof of coercion resistance.
 	// "real" (기본): 유효 투표, 집계에 포함
-	// "panic": 강압 하 제출된 투표, 집계에서 제외 (Cleansing-Hiding)
-	// 공개 원장에서는 real/panic이 구조적으로 동일 (구별 불가)
+	// "panic": 패닉 경로로 제출된 투표, 집계에서 제외.
+	// PDC readers and public revote patterns remain explicit distinguishing risks.
 	CredentialType string `json:"credentialType,omitempty" metadata:",optional"` // "real" | "panic"
 }
 
@@ -5057,14 +5057,14 @@ type SecurityProperties struct {
 // SecurityProperty 개별 보안 속성
 type SecurityProperty struct {
 	Property   string `json:"property"`
-	Status     string `json:"status"`     // "achieved" | "partial" | "not-achieved"
+	Status     string `json:"status"`     // implementation metadata only; not independent evidence
 	Mechanism  string `json:"mechanism"`  // 구현 메커니즘
 	Assumption string `json:"assumption"` // 암호학적 가정
 	PaperRef   string `json:"paperRef"`   // 구현 보고서 참조
 }
 
-// GetSecurityProperties [PAPER-5] 시스템의 보안 속성 요약을 반환합니다.
-// 감사자(auditor)가 시스템의 보안 수준을 확인하는 데 사용됩니다.
+// GetSecurityProperties returns self-declared implementation metadata. It is
+// never sufficient evidence that a security property has been achieved.
 func (c *VotingContract) GetSecurityProperties(
 	ctx contractapi.TransactionContextInterface,
 ) (*SecurityProperties, error) {
@@ -5072,57 +5072,57 @@ func (c *VotingContract) GetSecurityProperties(
 	hasPubKey := os.Getenv("ED25519_PUBLIC_KEY_DER_B64") != ""
 
 	credMechanism := "metadata-only"
-	credStatus := "not-achieved"
+	credStatus := "unverified"
 	if hasCredSecret {
 		credMechanism = "chaincode-hmac"
-		credStatus = "achieved"
+		credStatus = "implemented"
 	}
 	if hasPubKey {
 		credMechanism = "chaincode-ed25519"
-		credStatus = "achieved"
+		credStatus = "implemented"
 	}
 
 	return &SecurityProperties{
 		BallotSecrecy: SecurityProperty{
 			Property:   "Ballot Secrecy",
-			Status:     "partial",
+			Status:     "implemented",
 			Mechanism:  "ElGamal client-side encryption + dealer-assisted 2-of-3 partial decryption",
 			Assumption: "DDH; dealer does not retain the key; shared PDC readers do not collude",
 			PaperRef:   "PAPER-1 (21차)",
 		},
 		CastAsIntended: SecurityProperty{
 			Property:   "Cast-as-Intended",
-			Status:     "partial",
+			Status:     "implemented",
 			Mechanism:  "Benaloh Challenge (PrepareBallot/AuditBallot) with deterministic re-encryption",
 			Assumption: "audited ballot sampling is representative; unaudited cast ballot remains hidden",
 			PaperRef:   "PAPER-3 (23차)",
 		},
 		RecordedAsCast: SecurityProperty{
 			Property:   "Recorded-as-Cast",
-			Status:     "achieved",
+			Status:     "implemented",
 			Mechanism:  "Merkle tree inclusion proof (hashWithLengthPrefix)",
 			Assumption: "SHA-256 collision resistance",
 			PaperRef:   "Merkle proof (기존)",
 		},
 		TalliedAsRecorded: SecurityProperty{
 			Property:   "Tallied-as-Recorded",
-			Status:     "partial",
+			Status:     "implemented",
 			Mechanism:  "Homomorphic ElGamal tally with proof-carrying 2-of-3 partial decryptions",
 			Assumption: "DDH; every included ballot has a validity proof; filtering requires separate proof",
 			PaperRef:   "PAPER-2 (22차), PAPER-13 (33차)",
 		},
 		UniversalVerifiability: SecurityProperty{
 			Property:   "Universal Verifiability",
-			Status:     "partial",
+			Status:     "implemented",
 			Mechanism:  "Signed offline bundle v2 verifies ballots, aggregate, trustee proofs, and tally",
 			Assumption: "bundle publication is complete; organization signing threshold is honestly operated",
 			PaperRef:   "PAPER-6 (26차), PAPER-13 (33차)",
 		},
 		CoercionResistance: SecurityProperty{
-			Property:   "Coercion Resistance (Layered)",
-			Status:     "partial",
-			Mechanism:  "PDC-based Deniable Credential Duality (Layer 1: Panic Credential, Layer 2: Re-voting, Layer 3: Panic Password, Layer 4: Receipt-Free) + Cleansing-Hiding tally + multi-org endorsement",
-			Assumption: "demo-only panic filtering; no formal JCJ-style coercion proof or indistinguishable cleansing proof",
+			Property:   "Coercion Resistance",
+			Status:     "unverified",
+			Mechanism:  "Opaque fixed-size proof API plus experimental panic filtering and re-voting",
+			Assumption: "API transcript sub-test passed; PDC/backend collusion, forced abstention, credential surrender and revote-pattern hiding remain unresolved",
 			PaperRef:   "PAPER-12 (32차)",
 		},
 		EligibilityVerify: SecurityProperty{
@@ -5142,7 +5142,7 @@ func (c *VotingContract) GetSecurityProperties(
 			"Ed25519 (credential signature, RFC 8032)",
 			"HMAC-SHA256 (credential authentication)",
 			"Dealer-assisted threshold ElGamal (2-of-3 partial decryption; DKG pending)",
-			"PDC-based Deniable Credential Duality (Cleansing-Hiding coercion resistance)",
+			"Opaque fixed-size deniable-proof API (limited mitigation; not full coercion resistance)",
 		},
 		EndorsementPolicy: "2-of-3 (ElectionCommission, PartyObserver, CivilSociety)",
 	}, nil
