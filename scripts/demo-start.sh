@@ -5,7 +5,7 @@
 #   - 네트워크가 안 떠 있으면 up + deploy 수행
 #   - 프론트엔드 빌드 후 백엔드(:3000, .env 자동로드)를 백그라운드 기동
 #   - 폰 접속용 공개 터널: 별도 터미널에서 ./scripts/demo-tunnel.sh
-set -e
+set -Eeuo pipefail
 cd "$(dirname "$0")/.."   # → mongbas/
 
 echo "[1/4] 네트워크 상태 확인..."
@@ -26,7 +26,10 @@ sleep 1
 sleep 4
 
 echo "[4/4] 헬스 체크..."
-if curl -s -m 5 http://localhost:3000/health >/dev/null; then
+if curl --fail --silent --show-error --max-time 5 http://localhost:3000/health | node -e '
+  const health = JSON.parse(require("node:fs").readFileSync(0, "utf8"));
+  process.exit(health.status === "ok" ? 0 : 1);
+' >/dev/null; then
   echo "      ✓ 백엔드 정상"
 else
   echo "      ✗ 백엔드 응답 없음 — /tmp/mongbas-backend.log 확인"

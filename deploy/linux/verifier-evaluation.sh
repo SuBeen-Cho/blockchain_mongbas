@@ -71,7 +71,10 @@ backend_pid=$!
 
 ready=0
 for _ in $(seq 1 60); do
-  if curl --silent --fail "http://127.0.0.1:${port}/health" >/dev/null 2>&1; then ready=1; break; fi
+  if curl --silent --fail "http://127.0.0.1:${port}/health" | node -e '
+    const health = JSON.parse(require("node:fs").readFileSync(0, "utf8"));
+    process.exit(health.status === "ok" && health.benchmark?.rateLimitsDisabled === true ? 0 : 1);
+  ' >/dev/null 2>&1; then ready=1; break; fi
   kill -0 "${backend_pid}" 2>/dev/null || break
   sleep 1
 done

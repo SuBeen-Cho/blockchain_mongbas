@@ -6,7 +6,7 @@
 #   ./scripts/demo-stop.sh      ← 중지
 #
 # 노트북이 켜져만 있으면 발표 내내 손 안 대도 동작합니다.
-set -e
+set -Eeuo pipefail
 cd "$(dirname "$0")/.."
 BLOG=/tmp/mongbas-backend.log
 TLOG=/tmp/mongbas-tunnel.log
@@ -21,8 +21,11 @@ else
 fi
 
 echo "[2/5] 컨테이너 자동재시작 정책 (재부팅/크래시 대비)..."
-docker ps --format '{{.Names}}' | grep -E 'peer|orderer|couchdb|^ca\.|voting-chaincode' \
-  | xargs -I{} docker update --restart unless-stopped {} >/dev/null 2>&1 || true
+container_names="$(docker ps --format '{{.Names}}' | grep -E 'peer|orderer|couchdb|^ca\.|voting-chaincode')" || {
+  echo "      ✗ 재시작 정책을 적용할 투표 컨테이너가 없습니다."
+  exit 1
+}
+printf '%s\n' "${container_names}" | xargs -I{} docker update --restart unless-stopped {} >/dev/null
 echo "      ✓ unless-stopped 적용"
 
 echo "[3/5] 프론트엔드 빌드..."
@@ -32,7 +35,10 @@ echo "[4/5] 백엔드 백그라운드 기동 (:3000)..."
 pkill -f "node src/app.js" 2>/dev/null || true; sleep 1
 ( cd application && DISABLE_RATE_LIMITS=true nohup node src/app.js > "$BLOG" 2>&1 & )
 sleep 4
-if curl -s -m 5 http://localhost:3000/health >/dev/null; then echo "      ✓ 정상"; else echo "      ✗ 백엔드 실패 — $BLOG 확인"; exit 1; fi
+if curl --fail --silent --show-error --max-time 5 http://localhost:3000/health | node -e '
+  const health = JSON.parse(require("node:fs").readFileSync(0, "utf8"));
+  process.exit(health.status === "ok" ? 0 : 1);
+' >/dev/null; then echo "      ✓ 정상"; else echo "      ✗ 백엔드 실패 — $BLOG 확인"; exit 1; fi
 
 echo "[5/5] 공개 터널 백그라운드 기동 (간헐적 실패 시 자동 재시도)..."
 pkill -f "cloudflared tunnel" 2>/dev/null || true; sleep 1
@@ -44,8 +50,9 @@ for try in 1 2 3 4; do
   [ -n "$URL" ] && break
   echo "      터널 시도 $try 실패 → 재시도"; pkill -f "cloudflared tunnel" 2>/dev/null; sleep 2
 done
+[ -n "${URL}" ] || { echo "      ✗ 터널 URL 확보 실패 — $TLOG 확인"; exit 1; }
 echo "$URL" > "$TURL"
-echo "      ✓ ${URL:-(터널 URL 확보 실패 — $TLOG 확인 후 ./scripts/demo-up.sh 재실행)}"
+echo "      ✓ ${URL}"
 
 cat <<EOF
 
