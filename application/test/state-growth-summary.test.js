@@ -7,7 +7,8 @@ const { parseSnapshot, summarize } = require('../benchmark/summarize-state-growt
 test('state growth summary computes per-target and aggregate deltas', () => {
   const value = summarize('peer\tledger\t100\ndb\tcouchdb\t200\n', 'peer\tledger\t140\ndb\tcouchdb\t260\n', 10);
   assert.equal(value.totalDeltaKiB, 100);
-  assert.equal(value.aggregateBytesPerBallot, 10240);
+  assert.equal(value.replicatedTopologyBytesPerBallot, 10240);
+  assert.deepEqual(value.byKind, { ledger: { replicas: 1, totalDeltaKiB: 40 }, couchdb: { replicas: 1, totalDeltaKiB: 60 } });
   assert.deepEqual(value.targets.map(row => row.deltaKiB), [40, 60]);
 });
 

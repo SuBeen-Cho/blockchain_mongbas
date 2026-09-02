@@ -55,7 +55,7 @@ snapshot() {
 snapshot "${out}/storage-before.tsv"
 docker ps --no-trunc --size >"${out}/containers-before.txt"
 set +e
-MONGBAS_RESULT_DIR="${out}/workload-results" MONGBAS_RATE_LEVELS="${rate}" \
+MONGBAS_RATE_RESULT_ROOT="${out}/workload-results" MONGBAS_RATE_LEVELS="${rate}" \
   MONGBAS_RATE_DURATION_SECONDS="${duration}" MONGBAS_RATE_REPEATS=1 \
   "${LINUX_DEPLOY_DIR}/rate-evaluation.sh" >"${out}/workload.stdout.log" 2>"${out}/workload.stderr.log"
 workload_status=$?

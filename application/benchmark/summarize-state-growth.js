@@ -31,12 +31,16 @@ function summarize(beforeText, afterText, ballots) {
   if (after.size !== before.size) throw new Error('snapshot target count changed');
   const totalDeltaKiB = rows.reduce((sum, row) => sum + row.deltaKiB, 0);
   if (totalDeltaKiB <= 0) throw new Error(`non-positive total storage delta: ${totalDeltaKiB}`);
+  const byKind = Object.fromEntries([...new Set(rows.map(row => row.kind))].map(kind => [kind, {
+    replicas: rows.filter(row => row.kind === kind).length,
+    totalDeltaKiB: rows.filter(row => row.kind === kind).reduce((sum, row) => sum + row.deltaKiB, 0),
+  }]));
   return {
-    schema: 'mongbas-state-growth-summary/v1', ballots, targets: rows,
+    schema: 'mongbas-state-growth-summary/v2', ballots, targets: rows, byKind,
     totalBeforeKiB: rows.reduce((sum, row) => sum + row.beforeKiB, 0),
     totalAfterKiB: rows.reduce((sum, row) => sum + row.afterKiB, 0),
     totalDeltaKiB,
-    aggregateBytesPerBallot: +(totalDeltaKiB * 1024 / ballots).toFixed(3),
+    replicatedTopologyBytesPerBallot: +(totalDeltaKiB * 1024 / ballots).toFixed(3),
   };
 }
 

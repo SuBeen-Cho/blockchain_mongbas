@@ -18,7 +18,10 @@ port="${MONGBAS_RATE_PORT:-3002}"
 [[ "${port}" =~ ^[0-9]+$ ]] && [ "${port}" -ge 1024 ] && [ "${port}" -le 65535 ] || die "port must be 1024..65535"
 
 run_id="$(timestamp_utc)"
-out="${MONGBAS_RESULT_DIR}/rate-${run_id}"
+out_root="${MONGBAS_RATE_RESULT_ROOT:-${MONGBAS_RESULT_DIR}}"
+case "${out_root}" in ""|/|"${HOME}"|"${MONGBAS_REPO_DIR}") die "unsafe rate result root: ${out_root}" ;; esac
+install -d -m 0700 "${out_root}"
+out="${out_root}/rate-${run_id}"
 install -d -m 0700 "${out}"
 backend_pid=""
 
