@@ -72,6 +72,16 @@ test('benchmark runners explicitly enable their isolated test surface and never 
   }
 });
 
+test('supported ElGamal benchmarks publish an explicit validity verdict without overwriting evidence', () => {
+  for (const name of ['elgamal-e2e-bench.js', 'elgamal-concurrency-bench.js']) {
+    const source = fs.readFileSync(path.join(__dirname, '..', 'benchmark', name), 'utf8');
+    assert.match(source, /evidenceValid/);
+    assert.match(source, /evidenceClass/);
+    assert.match(source, /writeJsonEvidenceExclusive\(OUT,/);
+    assert.doesNotMatch(source, /fs\.writeFileSync\(OUT,/);
+  }
+});
+
 test('benchmark exact-success gate rejects empty, partial and failed evidence', () => {
   assert.doesNotThrow(() => requireExactSuccess('issuance', 50, 50, 0));
   assert.throws(() => requireExactSuccess('issuance', 50, 49, 1), /incomplete evidence/);

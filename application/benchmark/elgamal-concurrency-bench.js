@@ -15,12 +15,12 @@
 'use strict';
 
 const crypto = require('crypto');
-const fs = require('fs');
 const http = require('http');
 const { execSync } = require('child_process');
 const path = require('path');
 require('dotenv').config({ path: path.join(__dirname, '../.env') });
 const { generateVectorBallot } = require('../src/lib/vectorElgamal');
+const { writeJsonEvidenceExclusive } = require('./evidence-contract');
 
 const args = {};
 process.argv.slice(2).forEach((a, i, arr) => {
@@ -351,6 +351,8 @@ async function runConcurrency(label, concurrency, idemixEnabled) {
 
   const ok = results.filter(r => r.ok);
   const fail = results.filter(r => !r.ok);
+  const overloadErrorCount = fail.filter(r => r.status === 0 || r.status >= 500).length;
+  const contractErrorCount = fail.length - overloadErrorCount;
   const errors = {};
   for (const r of fail) {
     const key = `${r.status}:${(r.error || '').slice(0, 120)}`;
@@ -366,6 +368,8 @@ async function runConcurrency(label, concurrency, idemixEnabled) {
     concurrency,
     success: ok.length,
     fail: fail.length,
+    overloadErrorCount,
+    contractErrorCount,
     failRate: +((fail.length / concurrency) * 100).toFixed(2),
     tps: +(ok.length / elapsedSec).toFixed(2),
     elapsedSec: +elapsedSec.toFixed(2),
@@ -413,14 +417,21 @@ async function main() {
   }
 
   const result = {
+    schema: 'mongbas-elgamal-concurrency/v2',
+    evidenceClass: 'saturation-performance',
     scenario: `elgamal-concurrency-${label}`,
     timestamp: new Date().toISOString(),
     config: { encryptionMode: 'elgamal-vector-v3', candidates: CANDIDATES.length, idemix, stopFailRate: STOP_FAIL_RATE, rateLimitsDisabled: true },
     rounds,
   };
 
-  fs.mkdirSync(path.dirname(OUT), { recursive: true });
-  fs.writeFileSync(OUT, JSON.stringify(result, null, 2));
+  result.evidenceValid = rounds.length > 0 && rounds.every(round =>
+    round.success + round.fail === round.concurrency &&
+    round.latency.n === round.success &&
+    round.contractErrorCount === 0 &&
+    round.tally?.success === true);
+
+  writeJsonEvidenceExclusive(OUT, result);
 
   // 요약 테이블
   console.log('\n═══════════════════════════════════════════════════');
@@ -433,8 +444,8 @@ async function main() {
   }
 
   console.log(`\n결과 저장: ${OUT}`);
-  if (rounds.some(round => !round.tally?.success)) {
-    throw new Error('one or more exact threshold tally checks failed');
+  if (!result.evidenceValid) {
+    throw new Error('concurrency evidence contract failed; diagnostic result retained');
   }
 }
 

@@ -25,9 +25,9 @@
 'use strict';
 
 const crypto = require('crypto');
-const fs = require('fs');
 const http = require('http');
 const path = require('path');
+const { writeJsonEvidenceExclusive } = require('./evidence-contract');
 require('dotenv').config({ path: path.join(__dirname, '../.env') });
 const { generateVectorBallot } = require('../src/lib/vectorElgamal');
 
@@ -464,6 +464,8 @@ async function main() {
   const successful = results.filter(r => r.success);
 
   const report = {
+    schema: 'mongbas-elgamal-e2e/v2',
+    evidenceClass: 'exact-e2e-performance',
     scenario: label,
     timestamp: new Date().toISOString(),
     config: {
@@ -502,6 +504,8 @@ async function main() {
     },
     errors,
   };
+  report.evidenceValid = successCount === N && tally.success === true &&
+    report.e2eTotal.n === N && report.summary.fail === 0;
 
   // ── 결과 출력 ─────────────────────────────────────────────────
   console.log('\n═══════════════════════════════════════════════════');
@@ -530,15 +534,14 @@ async function main() {
   }
 
   // ── 파일 저장 ─────────────────────────────────────────────────
-  fs.mkdirSync(path.dirname(OUT), { recursive: true });
-  fs.writeFileSync(OUT, JSON.stringify(report, null, 2));
+  writeJsonEvidenceExclusive(OUT, report);
   console.log(`\n결과 저장: ${OUT}`);
 
   // A benchmark with rejected/failed ballots is evidence of a failed run,
   // even when the tally of the subset that reached the ledger is exact.
   // Keep the report on disk for diagnosis, but never let automation mistake
   // a partial run for a successful performance result.
-  if (successCount !== N) {
+  if (!report.evidenceValid) {
     console.error(`[FAIL] ${N - successCount}/${N} measured ballots failed; report retained for diagnosis`);
     process.exitCode = 1;
   }
