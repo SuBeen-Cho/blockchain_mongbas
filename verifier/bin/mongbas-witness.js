@@ -4,13 +4,16 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const { canonicalize, verifyBundleBytes } = require('../src/verify');
-const { TRUST_SCHEMA, checkpointHash, compareCheckpointLogs, createCheckpoint, parseCanonicalLog, publicKeyDer, verifyCheckpointLog } = require('../src/witness');
+const { CHECKPOINT_SCHEMA, CHECKPOINT_V2_SCHEMA, TRUST_SCHEMA, checkpointHash, compareCheckpointLogs,
+  createHistoryCheckpoint, parseCanonicalLog, publicKeyDer, verifyCheckpointLog, verifyHistoryBinding } = require('../src/witness');
 
 function usage(exitCode = 2) {
   console.error('Usage:');
   console.error('  mongbas-witness init-trust <witness-id> <ed25519-private.pem> <witness-trust.json>');
   console.error('  mongbas-witness observe <bundle.json> <checkpoint.jsonl> <witness-id> <ed25519-private.pem>');
+  console.error('  mongbas-witness migrate-history <bundle.json> <checkpoint.jsonl> <witness-id> <ed25519-private.pem>');
   console.error('  mongbas-witness verify <checkpoint.jsonl> <witness-trust.json>');
+  console.error('  mongbas-witness verify-bundle <bundle.json> <checkpoint.jsonl> <witness-trust.json> <sequence>');
   console.error('  mongbas-witness compare <witness-trust.json> <checkpoint-a.jsonl> <checkpoint-b.jsonl> [...]');
   process.exit(exitCode);
 }
@@ -66,14 +69,37 @@ function observe(bundlePath, logPath, witnessID, keyPath) {
       existing = parseCanonicalLog(fs.readFileSync(resolvedLog, 'utf8'));
       verifyCheckpointLog(existing, trust);
     }
-    const previous = existing.at(-1);
-    checkpoint = createCheckpoint({ bundle, verification, witnessID, privateKeyPem, sequence: existing.length + 1,
-      previousCheckpointHash: previous ? checkpointHash(previous) : null });
+    const previous = existing.at(-1) ?? null;
+    if (previous?.schema === CHECKPOINT_SCHEMA) throw new Error('v1 log requires explicit migrate-history before v2 observation');
+    checkpoint = createHistoryCheckpoint({ bundle, verification, witnessID, privateKeyPem, previousCheckpoint: previous });
     appendAndSync(resolvedLog, canonicalize(checkpoint));
   });
   console.log(`WITNESSED: electionID=${checkpoint.electionID} sequence=${checkpoint.sequence}`);
   console.log(`checkpointHash=${checkpointHash(checkpoint)}`);
   console.log(`bundleHash=${checkpoint.bundleHash}`);
+}
+
+function migrateHistory(bundlePath, logPath, witnessID, keyPath) {
+  const bundleBytes = fs.readFileSync(bundlePath);
+  const verification = verifyBundleBytes(bundleBytes);
+  if (!verification.valid) throw new Error(`bundle rejected: ${verification.summary}: ${verification.errors.join('; ')}`);
+  const bundle = JSON.parse(bundleBytes);
+  const privateKeyPem = fs.readFileSync(keyPath);
+  const trust = { schema: TRUST_SCHEMA, witnesses: [{ id: witnessID, ed25519PublicKeyDer: publicKeyDer(privateKeyPem) }] };
+  let checkpoint;
+  const resolvedLog = path.resolve(logPath);
+  withLogLock(resolvedLog, () => {
+    if (!fs.existsSync(resolvedLog) || fs.statSync(resolvedLog).size === 0) throw new Error('migration requires a non-empty v1 log');
+    const existing = parseCanonicalLog(fs.readFileSync(resolvedLog, 'utf8'));
+    verifyCheckpointLog(existing, trust);
+    const previous = existing.at(-1);
+    if (previous.schema !== CHECKPOINT_SCHEMA) throw new Error('migration requires the latest checkpoint to be v1');
+    checkpoint = createHistoryCheckpoint({ bundle, verification, witnessID, privateKeyPem,
+      previousCheckpoint: previous, migrationFromV1: true });
+    appendAndSync(resolvedLog, canonicalize(checkpoint));
+  });
+  console.log(`HISTORY MIGRATED: consistency starts at sequence=${checkpoint.sequence}`);
+  console.log(`checkpointHash=${checkpointHash(checkpoint)}`);
 }
 
 function verify(logPath, trustPath) {
@@ -83,6 +109,31 @@ function verify(logPath, trustPath) {
   console.log(`VALID: ${result.checkpoints} witnessed checkpoint(s)`);
   console.log(`latestCheckpointHash=${result.latestCheckpointHash}`);
   console.log(`latestElectionID=${result.latest.electionID}`);
+  console.log(result.historyVerifiedFromSequence === undefined
+    ? 'historyConsistency=not-available-v1-signature-chain-only'
+    : `historyConsistency=verified-from-sequence-${result.historyVerifiedFromSequence}`);
+}
+
+function verifyBundleCheckpoint(bundlePath, logPath, trustPath, sequenceText) {
+  if (!/^[1-9][0-9]*$/.test(sequenceText)) throw new Error('sequence must be a positive integer');
+  const sequence = Number(sequenceText);
+  if (!Number.isSafeInteger(sequence)) throw new Error('sequence exceeds safe integer range');
+  const bundleBytes = fs.readFileSync(bundlePath);
+  const bundleVerification = verifyBundleBytes(bundleBytes);
+  if (!bundleVerification.valid) throw new Error(`bundle rejected: ${bundleVerification.summary}: ${bundleVerification.errors.join('; ')}`);
+  const bundle = JSON.parse(bundleBytes);
+  const entries = parseCanonicalLog(fs.readFileSync(logPath, 'utf8'));
+  const trust = JSON.parse(fs.readFileSync(trustPath, 'utf8'));
+  verifyCheckpointLog(entries, trust);
+  const checkpoint = entries[sequence - 1];
+  if (!checkpoint || checkpoint.sequence !== sequence) throw new Error('checkpoint sequence not found');
+  if (checkpoint.schema !== CHECKPOINT_V2_SCHEMA) throw new Error('checkpoint has no v2 history binding');
+  if (checkpoint.bundleHash !== bundleVerification.bundleHash || checkpoint.electionID !== bundleVerification.electionID ||
+      checkpoint.ballotCount !== bundleVerification.ballots || checkpoint.bulletinBoardRoot !== bundle.bulletinBoard.root) {
+    throw new Error('bundle does not match checkpoint metadata');
+  }
+  verifyHistoryBinding(bundle, checkpoint.history);
+  console.log(`BUNDLE BOUND: sequence=${sequence} bundleHash=${bundleVerification.bundleHash}`);
 }
 
 function compare(trustPath, logPaths) {
@@ -98,7 +149,9 @@ try {
   const [command, ...args] = process.argv.slice(2);
   if (command === 'init-trust' && args.length === 3) initTrust(args[0], path.resolve(args[1]), path.resolve(args[2]));
   else if (command === 'observe' && args.length === 4) observe(path.resolve(args[0]), path.resolve(args[1]), args[2], path.resolve(args[3]));
+  else if (command === 'migrate-history' && args.length === 4) migrateHistory(path.resolve(args[0]), path.resolve(args[1]), args[2], path.resolve(args[3]));
   else if (command === 'verify' && args.length === 2) verify(...args.map(value => path.resolve(value)));
+  else if (command === 'verify-bundle' && args.length === 4) verifyBundleCheckpoint(path.resolve(args[0]), path.resolve(args[1]), path.resolve(args[2]), args[3]);
   else if (command === 'compare' && args.length >= 3) compare(path.resolve(args[0]), args.slice(1).map(value => path.resolve(value)));
   else if (command === '--help' || command === '-h') usage(0);
   else usage();

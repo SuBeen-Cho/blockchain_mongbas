@@ -15,6 +15,7 @@ signed, hash-chained checkpoint without contacting Fabric or the backend:
 node bin/mongbas-witness.js init-trust mac-observer /secure/witness-ed25519.pem witness-trust.json
 node bin/mongbas-witness.js observe election-bundle.signed.json checkpoints.jsonl mac-observer /secure/witness-ed25519.pem
 node bin/mongbas-witness.js verify checkpoints.jsonl witness-trust.json
+node bin/mongbas-witness.js verify-bundle election-bundle.signed.json checkpoints.jsonl witness-trust.json 1
 node bin/mongbas-witness.js compare witness-trust.json observer-a.jsonl observer-b.jsonl
 ```
 
@@ -33,6 +34,29 @@ The trust document pins witness identities to Ed25519 public keys:
 Checkpoint JSONL is canonical, signed and hash-chained. A changed, inserted or
 reordered observed checkpoint is rejected. The witness private key stays on the
 observer machine.
+
+New logs use checkpoint v2. In addition to the signed checkpoint hash chain,
+v2 commits the complete canonical ballot objects in a separate, election-bound
+history tree and verifies an old-to-new prefix consistency proof. The tree uses
+the Merkle Tree Hash and consistency-proof construction from RFC 9162: raw
+32-byte commitments, `0x00` leaf separation, `0x01` node separation, and the
+largest-power-of-two split. It is a Mongbas JSON protocol, not an RFC 9162/CT
+implementation or wire-compatible transparency log. `verify-bundle` is needed
+to recompute that a particular archived bundle matches the signed v2 history;
+log-only verification authenticates the witness assertion and its consistency
+chain but cannot recreate omitted source data.
+
+Existing checkpoint-v1 logs remain verifiable. They must be upgraded with an
+explicit, one-way migration before another observation:
+
+```bash
+node bin/mongbas-witness.js migrate-history election-bundle.signed.json checkpoints.jsonl mac-observer /secure/witness-ed25519.pem
+```
+
+The first v2 entry starts consistency coverage at its own sequence; it does not
+retroactively prove the v1-to-v2 boundary. A subsequent v2-to-v1 downgrade,
+tree shrink, changed witness/election/context, inconsistent root advance, or
+timestamp rollback is rejected.
 
 To build and sign an exported source without sending private keys to the server:
 
@@ -87,12 +111,21 @@ cannot be linked to a later cast by recomputing its identifier. These checks do
 not prove that the user actually chose to audit or that an uncompromised display
 showed the intended candidate; usability and compromised-device risks remain.
 
-The signed Merkle root detects changes to the exported ballot sequence, but the
-repository now contains an independent checkpoint witness, but a same-host test
-does not establish operational independence. A valid final bundle/checkpoint
-also cannot prove that an operator withheld no ballot before the witness first
-observed it. Deployment therefore needs a separately controlled Mac/host that
-polls or receives periodic roots during the election, publishes its latest
-checkpoint out of band, and retains the pinned witness key/log.
+The legacy signed bundle root detects changes to one exported ballot sequence;
+it is deliberately not reinterpreted as the v2 history root. The current bundle
+producer exports a shuffled final active-ballot set, and revoting replaces the
+active record. Therefore repeated final bundles alone cannot establish a stable
+append-only election history. Production use of v2 requires a separately
+exported, stably indexed cast-event log with explicit supersession events;
+tallying may continue to select the latest eligible event per nullifier. Until
+that producer exists, the implemented v2 verifier proves prefix consistency
+only for supplied bundles that really preserve the earlier ballot prefix.
+
+A same-host witness test also does not establish operational independence. A
+valid final bundle/checkpoint cannot prove that an operator withheld no ballot
+before the witness first observed it. Deployment therefore needs a separately
+controlled Mac/host that polls or receives periodic snapshots, publishes its
+latest checkpoint out of band, gossips views, and retains the pinned witness
+key/log.
 
 The verifier intentionally does not call `GetSecurityProperties` and does not accept a server-provided `isValid` flag as evidence.

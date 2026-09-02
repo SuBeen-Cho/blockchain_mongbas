@@ -180,6 +180,18 @@ function createHistory(bundle, previousSize = 0) {
   };
 }
 
+function verifyHistoryBinding(bundle, history) {
+  if (!history || typeof history !== 'object' || Array.isArray(history)) throw new Error('history: expected object');
+  const { contextHash, commitments } = historyCommitments(bundle);
+  if (history.schema !== HISTORY_SCHEMA || history.treeAlgorithm !== TREE_ALGORITHM || history.leafAlgorithm !== LEAF_ALGORITHM) {
+    throw new Error('history: unsupported schema or algorithm');
+  }
+  if (history.contextHash !== contextHash) throw new Error('history: election context mismatch');
+  if (history.treeSize !== commitments.length) throw new Error('history: tree size does not match bundle ballots');
+  if (history.rootHash !== merkleTreeHash(commitments).toString('hex')) throw new Error('history: root does not match bundle ballots');
+  return true;
+}
+
 module.exports = {
   BALLOT_COMMITMENT_SCHEMA,
   HISTORY_CONTEXT_SCHEMA,
@@ -193,5 +205,6 @@ module.exports = {
   historyContextHash,
   largestPowerOfTwoBelow,
   merkleTreeHash,
+  verifyHistoryBinding,
   verifyConsistencyProof,
 };

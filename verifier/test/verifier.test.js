@@ -12,7 +12,8 @@ const {
   canonicalize, merkleRoot, modInverse, modPow, sha256Hex, unsignedBundle, verifyBundle, verifyBundleBytes,
 } = require('../src/verify');
 const { buildUnsignedBundle, signBundle } = require('../src/bundle');
-const { TRUST_SCHEMA, checkpointHash, compareCheckpointLogs, createCheckpoint, parseCanonicalLog, publicKeyDer, verifyCheckpointLog } = require('../src/witness');
+const { CHECKPOINT_SCHEMA, CHECKPOINT_V2_SCHEMA, TRUST_SCHEMA, checkpointHash, compareCheckpointLogs, createCheckpoint,
+  createHistoryCheckpoint, parseCanonicalLog, publicKeyDer, verifyCheckpointLog } = require('../src/witness');
 const { generateVectorBallot } = require('../../application/src/lib/vectorElgamal');
 
 function scalar(label) {
@@ -109,12 +110,11 @@ function thresholdPartial(index, share, aggregate, mspID) {
   };
 }
 
-function buildBundle() {
+function buildBundle(selections = [0, 1], signingKeys = null) {
   const electionID = 'verifier-known-answer-1';
   const candidates = ['ALICE', 'BOB'];
   const privateKey = scalar('election-private-key');
   const publicKeyY = modPow(G, privateKey, P);
-  const selections = [0, 1];
   const ballots = selections.map((selection, index) => {
     const encrypted = encryptAndProve(publicKeyY, selection, candidates.length, `ballot:${index}`);
     const nullifierHash = sha256Hex(`nullifier:${index}`);
@@ -129,8 +129,13 @@ function buildBundle() {
     c1: ((BigInt(`0x${result.c1}`) * BigInt(`0x${ballot.ciphertext.c1}`)) % P).toString(16),
     c2: ((BigInt(`0x${result.c2}`) * BigInt(`0x${ballot.ciphertext.c2}`)) % P).toString(16),
   }), { c1: '1', c2: '1' });
-  const { publicKey: publicKey1, privateKey: privateKey1 } = crypto.generateKeyPairSync('ed25519');
-  const { publicKey: publicKey2, privateKey: privateKey2 } = crypto.generateKeyPairSync('ed25519');
+  const signer1 = signingKeys?.[0] ?? crypto.generateKeyPairSync('ed25519');
+  const signer2 = signingKeys?.[1] ?? crypto.generateKeyPairSync('ed25519');
+  const { publicKey: publicKey1, privateKey: privateKey1 } = signer1;
+  const { publicKey: publicKey2, privateKey: privateKey2 } = signer2;
+  const results = Object.fromEntries(candidates.map((candidate, index) =>
+    [candidate, selections.filter(selection => selection === index).length]));
+  const decryptedExponent = selections.reduce((sum, selection) => sum + HOMOMORPHIC_BASE ** BigInt(selection), 0n);
   const bundle = {
     schema: 'mongbas-election-bundle/v1',
     algorithms: {
@@ -153,8 +158,8 @@ function buildBundle() {
     ballots,
     bulletinBoard: { root: merkleRoot(ballots), publishedAt: 1 },
     aggregateCiphertext: aggregate,
-    tally: { results: { ALICE: 1, BOB: 1 }, totalVotes: 2 },
-    decryptionProof: decryptionProof(privateKey, publicKeyY, aggregate, 1n + HOMOMORPHIC_BASE),
+    tally: { results, totalVotes: selections.length },
+    decryptionProof: decryptionProof(privateKey, publicKeyY, aggregate, decryptedExponent),
   };
   const payload = Buffer.from(canonicalize(unsignedBundle(bundle)));
   bundle.signatures = [
@@ -509,6 +514,71 @@ test('witness rejects checkpoint mutation, broken hash chain and untrusted key',
   assert.throws(() => verifyCheckpointLog([first], untrusted), /untrusted witness key/);
 });
 
+test('witness construction rejects a valid verification result paired with another bundle', () => {
+  const firstBundle = buildBundle(), secondBundle = buildBundle();
+  const signer = crypto.generateKeyPairSync('ed25519');
+  assert.throws(() => createCheckpoint({
+    bundle: firstBundle,
+    verification: verifyBundle(secondBundle),
+    witnessID: 'observer',
+    privateKeyPem: signer.privateKey.export({ format: 'pem', type: 'pkcs8' }),
+    sequence: 1,
+  }), /does not match/);
+});
+
+test('history checkpoint v2 proves ballot-prefix growth without changing bundle semantics', () => {
+  const organizationKeys = [crypto.generateKeyPairSync('ed25519'), crypto.generateKeyPairSync('ed25519')];
+  const firstBundle = buildBundle([0, 1], organizationKeys);
+  const secondBundle = buildBundle([0, 1, 0], organizationKeys);
+  const witness = crypto.generateKeyPairSync('ed25519');
+  const privateKeyPem = witness.privateKey.export({ format: 'pem', type: 'pkcs8' });
+  const trust = { schema: TRUST_SCHEMA, witnesses: [{ id: 'observer', ed25519PublicKeyDer: publicKeyDer(privateKeyPem) }] };
+  const first = createHistoryCheckpoint({ bundle: firstBundle, verification: verifyBundle(firstBundle), witnessID: 'observer',
+    privateKeyPem, observedAt: '2026-09-03T00:00:00.000Z' });
+  const second = createHistoryCheckpoint({ bundle: secondBundle, verification: verifyBundle(secondBundle), witnessID: 'observer',
+    privateKeyPem, previousCheckpoint: first, observedAt: '2026-09-03T00:01:00.000Z' });
+
+  assert.equal(first.schema, CHECKPOINT_V2_SCHEMA);
+  assert.equal(first.history.previousTreeSize, 0);
+  assert.equal(second.history.previousTreeSize, 2);
+  assert.deepEqual(verifyCheckpointLog([first, second], trust), {
+    valid: true,
+    checkpoints: 2,
+    latestCheckpointHash: checkpointHash(second),
+    latest: second,
+    historyVerifiedFromSequence: 1,
+  });
+
+  const replacedPrefix = buildBundle([1, 0, 0], organizationKeys);
+  assert.throws(() => createHistoryCheckpoint({ bundle: replacedPrefix, verification: verifyBundle(replacedPrefix), witnessID: 'observer',
+    privateKeyPem, previousCheckpoint: first }), /not an append-only extension/);
+});
+
+test('history checkpoint v2 rejects downgrade and timestamp rollback while v1 remains valid', () => {
+  const bundle = buildBundle(), verification = verifyBundle(bundle), witness = crypto.generateKeyPairSync('ed25519');
+  const privateKeyPem = witness.privateKey.export({ format: 'pem', type: 'pkcs8' });
+  const trust = { schema: TRUST_SCHEMA, witnesses: [{ id: 'observer', ed25519PublicKeyDer: publicKeyDer(privateKeyPem) }] };
+  const v1 = createCheckpoint({ bundle, verification, witnessID: 'observer', privateKeyPem, sequence: 1 });
+  assert.equal(v1.schema, CHECKPOINT_SCHEMA);
+  assert.equal(verifyCheckpointLog([v1], trust).valid, true);
+
+  const first = createHistoryCheckpoint({ bundle, verification, witnessID: 'observer', privateKeyPem,
+    observedAt: '2026-09-03T00:01:00.000Z' });
+  assert.throws(() => createHistoryCheckpoint({ bundle, verification, witnessID: 'observer', privateKeyPem,
+    previousCheckpoint: first, observedAt: '2026-09-03T00:00:00.000Z' }), /timestamp rollback/);
+  const rollback = createHistoryCheckpoint({ bundle, verification, witnessID: 'observer', privateKeyPem,
+    previousCheckpoint: first, observedAt: '2026-09-03T00:02:00.000Z' });
+  rollback.observedAt = '2026-09-03T00:00:00.000Z';
+  const unsignedRollback = structuredClone(rollback);
+  delete unsignedRollback.signature;
+  rollback.signature = crypto.sign(null, Buffer.from(canonicalize(unsignedRollback)), witness.privateKey).toString('base64');
+  assert.throws(() => verifyCheckpointLog([first, rollback], trust), /timestamp rollback/);
+
+  const downgrade = createCheckpoint({ bundle, verification, witnessID: 'observer', privateKeyPem, sequence: 2,
+    previousCheckpointHash: checkpointHash(first), observedAt: '2026-09-03T00:02:00.000Z' });
+  assert.throws(() => verifyCheckpointLog([first, downgrade], trust), /downgrade/);
+});
+
 test('witness gossip accepts a consistent prefix and rejects two valid signed forks', () => {
   const bundle = buildBundle(), verification = verifyBundle(bundle), signer = crypto.generateKeyPairSync('ed25519');
   const privateKeyPem = signer.privateKey.export({ format: 'pem', type: 'pkcs8' });
@@ -560,6 +630,27 @@ test('witness CLI observes and independently verifies a bundle', () => {
     const verified = spawnSync(process.execPath, [cli, 'verify', logPath, trustPath], { encoding: 'utf8' });
     assert.equal(verified.status, 0, verified.stderr);
     assert.match(verified.stdout, /VALID: 1 witnessed checkpoint/);
+    assert.match(verified.stdout, /historyConsistency=verified-from-sequence-1/);
+    assert.equal(parseCanonicalLog(fs.readFileSync(logPath, 'utf8'))[0].schema, CHECKPOINT_V2_SCHEMA);
+    const bound = spawnSync(process.execPath, [cli, 'verify-bundle', bundlePath, logPath, trustPath, '1'], { encoding: 'utf8' });
+    assert.equal(bound.status, 0, bound.stderr);
+    assert.match(bound.stdout, /BUNDLE BOUND: sequence=1/);
+
+    const migrationLog = path.join(temporary, 'legacy-checkpoints.jsonl');
+    const sourceBundle = JSON.parse(fs.readFileSync(bundlePath, 'utf8'));
+    const sourceVerification = verifyBundle(sourceBundle);
+    const legacy = createCheckpoint({ bundle: sourceBundle, verification: sourceVerification, witnessID: 'mac-observer',
+      privateKeyPem, sequence: 1, observedAt: '2026-09-02T00:00:00.000Z' });
+    fs.writeFileSync(migrationLog, `${canonicalize(legacy)}\n`, { mode: 0o600 });
+    const implicit = spawnSync(process.execPath, [cli, 'observe', bundlePath, migrationLog, 'mac-observer', keyPath], { encoding: 'utf8' });
+    assert.equal(implicit.status, 1);
+    assert.match(implicit.stderr, /explicit migrate-history/);
+    const migrated = spawnSync(process.execPath, [cli, 'migrate-history', bundlePath, migrationLog, 'mac-observer', keyPath], { encoding: 'utf8' });
+    assert.equal(migrated.status, 0, migrated.stderr);
+    assert.match(migrated.stdout, /consistency starts at sequence=2/);
+    const migratedEntries = parseCanonicalLog(fs.readFileSync(migrationLog, 'utf8'));
+    assert.deepEqual(migratedEntries.map(entry => entry.schema), [CHECKPOINT_SCHEMA, CHECKPOINT_V2_SCHEMA]);
+    assert.equal(verifyCheckpointLog(migratedEntries, JSON.parse(fs.readFileSync(trustPath))).historyVerifiedFromSequence, 2);
   } finally {
     fs.rmSync(temporary, { recursive: true, force: true });
   }
