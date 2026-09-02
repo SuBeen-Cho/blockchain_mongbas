@@ -548,25 +548,33 @@ function verifyVectorBundle(bundle) {
   if (!Array.isArray(ballots) || ballots.length === 0) errors.push('ballots: empty or missing');
   const aggregates = Array.isArray(candidates) ? candidates.map(() => ({ c1: 1n, c2: 1n })) : [];
   const seen = new Set();
-  if (Array.isArray(ballots) && y && Array.isArray(candidates)) ballots.forEach((ballot, index) => check(`ballots[${index}]`, () => {
+  // First perform inexpensive envelope, binding and aggregate checks. An
+  // already-invalid bundle must not force minutes of modular proof work.
+  // Honest bundles and proof-only mutations still execute every ZKP below.
+  if (Array.isArray(ballots) && y && Array.isArray(candidates)) ballots.forEach((ballot, index) => check(`ballots[${index}].binding`, () => {
     if (!/^[0-9a-f]{64}$/.test(ballot.nullifierHash) || seen.has(ballot.nullifierHash)) throw new Error('invalid/duplicate nullifier');
     seen.add(ballot.nullifierHash);
     const canonicalVector = JSON.stringify(ballot.ciphertextVector);
     if (ballot.candidateCommitment !== sha256Hex(`${bundle.configuration.electionID}|${ballot.nullifierHash}|${canonicalVector}`)) throw new Error('candidate commitment mismatch');
-    verifyVectorBallotProof(y, ballot, candidates.length);
+    if (!Array.isArray(ballot.ciphertextVector) || ballot.ciphertextVector.length !== candidates.length) throw new Error('invalid ciphertext vector dimensions');
     ballot.ciphertextVector.forEach((ciphertext, candidateIndex) => {
-      aggregates[candidateIndex].c1 = (aggregates[candidateIndex].c1 * BigInt(`0x${ciphertext.c1}`)) % P;
-      aggregates[candidateIndex].c2 = (aggregates[candidateIndex].c2 * BigInt(`0x${ciphertext.c2}`)) % P;
+      const c1 = parseHex(ciphertext?.c1, `ciphertextVector[${candidateIndex}].c1`);
+      const c2 = parseHex(ciphertext?.c2, `ciphertextVector[${candidateIndex}].c2`);
+      aggregates[candidateIndex].c1 = (aggregates[candidateIndex].c1 * c1) % P;
+      aggregates[candidateIndex].c2 = (aggregates[candidateIndex].c2 * c2) % P;
     });
   }));
-  if (y && Array.isArray(candidates) && Array.isArray(ballots)) check('vectorAuditTrail', () => verifyVectorAuditTrail(bundle, y));
   const aggregateHex = aggregates.map((value) => ({ c1: value.c1.toString(16), c2: value.c2.toString(16) }));
   if (canonicalize(bundle?.aggregateCiphertextVector) !== canonicalize(aggregateHex)) errors.push('aggregateCiphertextVector: mismatch');
   if (bundle?.tally?.totalVotes !== ballots?.length) errors.push('tally.totalVotes: ballot count mismatch');
   if (Array.isArray(candidates) && bundle?.tally?.results && candidates.reduce((sum, candidate) => sum + (bundle.tally.results[candidate] ?? -1), 0) !== bundle.tally.totalVotes) errors.push('tally.results: sum mismatch');
-  if (y && Array.isArray(candidates)) check('vectorPartialDecryptions', () => verifyVectorThresholdDecryptions(y, bundle.aggregateCiphertextVector, bundle.tally.results, candidates, bundle.trusteePublicShares, bundle.vectorPartialDecryptions));
-  const root = Array.isArray(ballots) ? check('bulletinBoard.root', () => merkleRoot(ballots)) : undefined;
-  if (root && root !== bundle?.bulletinBoard?.root) errors.push('bulletinBoard.root: mismatch');
+  if (errors.length === 0 && y && Array.isArray(candidates) && Array.isArray(ballots)) {
+    ballots.forEach((ballot, index) => check(`ballots[${index}].proof`, () => verifyVectorBallotProof(y, ballot, candidates.length)));
+    check('vectorAuditTrail', () => verifyVectorAuditTrail(bundle, y));
+    check('vectorPartialDecryptions', () => verifyVectorThresholdDecryptions(y, bundle.aggregateCiphertextVector, bundle.tally.results, candidates, bundle.trusteePublicShares, bundle.vectorPartialDecryptions));
+    const root = check('bulletinBoard.root', () => merkleRoot(ballots));
+    if (root && root !== bundle?.bulletinBoard?.root) errors.push('bulletinBoard.root: mismatch');
+  }
   const validSignatures = check('signatures', () => verifySignatures(bundle, Buffer.from(canonicalize(unsignedBundle(bundle))))) ?? 0;
   return { valid: errors.length === 0, summary: errors.length ? `${errors.length} verification check(s) failed` : 'all vector-v3 bundle checks passed', errors,
     bundleHash: sha256Hex(canonicalize(bundle)), electionID: bundle?.configuration?.electionID, ballots: ballots?.length ?? 0, validSignatures };
