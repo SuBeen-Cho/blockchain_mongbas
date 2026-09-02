@@ -94,8 +94,8 @@ else
         method: "POST", headers: { authorization: `Bearer ${token}`, "content-type": "application/json" }, body: "{}",
       }).then(async response => {
         const text = await response.text();
-        if (!response.ok) throw new Error(`publish-audit failed: HTTP ${response.status}`);
         process.stdout.write(text);
+        if (!response.ok) throw new Error(`publish-audit failed: HTTP ${response.status}`);
       }).catch(error => { console.error(error.message); process.exit(1); });
     ' >"${out}/publish-existing-audit.json" 2>"${out}/publish-existing-audit.stderr.log" \
       || die "existing election audit publication failed"
