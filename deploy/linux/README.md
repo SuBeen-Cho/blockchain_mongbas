@@ -63,6 +63,19 @@ MONGBAS_PROFILE=benchmark ./deploy/linux/verifier-evaluation.sh
 ./deploy/linux/supply-chain-evidence.sh
 ```
 
+`extended-vulnerability-evidence.sh`는 활성 컨테이너의 고유 image를 모두
+스캔한다. 실행 중인 컨테이너를 교체하지 않고 pull한 canary image를
+비교하려면 정확한 reference를 한 줄에 하나씩 지정한다.
+
+```bash
+MONGBAS_EXTRA_SCAN_IMAGES=$'hyperledger/fabric-peer:3.1.5\nhyperledger/fabric-orderer:3.1.5' \
+  ./deploy/linux/extended-vulnerability-evidence.sh
+```
+
+active/canary target 중 high/critical이 하나라도 있거나 소스의 reachable Go
+finding이 있으면 전체 gate는 fail closed다. Canary scan은 비교 증거이지
+실행 중인 ledger migration에 대한 승인이 아니다.
+
 N=100 측정은 독립된 loopback 벤치마크 백엔드를 `DISABLE_RATE_LIMITS=true`로 기동한 후에만 실행한다. 벤치마크 프로그램은 `/health`에서 이 상태를 확인하고, 일반 rate limit이 켜진 백엔드에서는 부분 측정을 시작하지 않는다. 측정 후에는 즉시 일반 백엔드로 재기동해야 한다.
 
 `smoke-test.sh`는 HTTP 200만 확인하지 않고 15단계 Fabric E2E의 종료 코드를 그대로 전파한다. 결과와 환경 기록은 runtime의 `logs/`, `results/`에 저장한다. benchmark는 demo 실행과 결과가 섞이지 않도록 명시적인 `benchmark` profile에서만 시작한다.
