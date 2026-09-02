@@ -16,7 +16,11 @@ install -d -m 0700 "${out}"
 dkg_public="${MONGBAS_DKG_PUBLIC_DIR:-$(ls -1dt "${MONGBAS_RESULT_DIR}"/dkg-2* 2>/dev/null | head -1)}"
 dkg_secret="${MONGBAS_DKG_SECRET_DIR:-${MONGBAS_SECRET_DIR}/$(basename "${dkg_public}")}"
 [ -f "${dkg_public}/transcript.json" ] || die "DKG transcript missing: ${dkg_public}/transcript.json"
-[ -d "${dkg_secret}" ] || die "DKG secret directory missing: ${dkg_secret}"
+if [ -n "${MONGBAS_DKG_PARTIAL_HELPER:-}" ]; then
+  [ -x "${MONGBAS_DKG_PARTIAL_HELPER}" ] || die "DKG partial helper is not executable"
+else
+  [ -d "${dkg_secret}" ] || die "DKG secret directory missing: ${dkg_secret}"
+fi
 
 git -C "${MONGBAS_REPO_DIR}" rev-parse HEAD >"${out}/git-commit.txt"
 git -C "${MONGBAS_REPO_DIR}" status --porcelain=v1 >"${out}/git-status.txt"
@@ -51,6 +55,7 @@ count_shared_pdc "${out}/pdc-before.jsonl"
 set +e
 MONGBAS_DKG_TRANSCRIPT="${dkg_public}/transcript.json" \
 MONGBAS_DKG_SECRET_ROOT="${dkg_secret}" \
+MONGBAS_DKG_PARTIAL_HELPER="${MONGBAS_DKG_PARTIAL_HELPER:-}" \
 MONGBAS_DKG_BASE_URL="http://127.0.0.1:3000" \
 node "${MONGBAS_REPO_DIR}/application/scripts/dkg-election-e2e.js" \
   >"${out}/evaluation.json" 2>"${out}/evaluation.stderr.log"
@@ -77,11 +82,13 @@ const summary = {
   approvals: result.approvals,
   rejectedAttackGates: Array.isArray(result.rejected) ? result.rejected : [],
   externalPartialDecryptions: result.externalPartialDecryptions,
+  partialGenerationMode: result.partialGenerationMode,
   sharedPDCShareDocumentCountsUnchanged: sharedPDCUnchanged,
   privateScalarRecordedInEvidence: false,
 };
 summary.securityGatePassed = status === 0 && summary.exactTally && summary.approvals === 3 &&
-  summary.externalPartialDecryptions === 2 && sharedPDCUnchanged && summary.rejectedAttackGates.length === 5;
+  summary.externalPartialDecryptions === 2 && ['external-helper', 'in-process-secret-file'].includes(summary.partialGenerationMode) &&
+  sharedPDCUnchanged && summary.rejectedAttackGates.length === 5;
 process.stdout.write(`${JSON.stringify(summary, null, 2)}\n`);
 if (!summary.securityGatePassed) process.exitCode = 1;
 NODE

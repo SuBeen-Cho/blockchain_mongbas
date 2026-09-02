@@ -4,7 +4,9 @@
 const crypto = require('node:crypto');
 const fs = require('node:fs');
 const http = require('node:http');
+const os = require('node:os');
 const path = require('node:path');
+const { spawnSync } = require('node:child_process');
 require('dotenv').config({ path: path.join(__dirname, '../.env'), quiet: true });
 const { generateVectorBallot } = require('../src/lib/vectorElgamal');
 const { createVectorPartialDecryption } = require('../../trustee/src/dkg');
@@ -13,6 +15,7 @@ const BASE = process.env.MONGBAS_DKG_BASE_URL || 'http://127.0.0.1:3000';
 const ADMIN_API_TOKEN = process.env.ADMIN_API_TOKEN || '';
 const TRANSCRIPT_FILE = process.env.MONGBAS_DKG_TRANSCRIPT;
 const SECRET_ROOT = process.env.MONGBAS_DKG_SECRET_ROOT;
+const PARTIAL_HELPER = process.env.MONGBAS_DKG_PARTIAL_HELPER || '';
 const TRUSTEES = [
   { id: 'ElectionCommissionMSP', index: '1' },
   { id: 'PartyObserverMSP', index: '2' },
@@ -62,8 +65,36 @@ function readPrivateShare(trusteeID) {
   return JSON.parse(fs.readFileSync(file, 'utf8'));
 }
 
+function createTrusteePartial(trustee, electionID, encryptedAggregateVector) {
+  if (!PARTIAL_HELPER) {
+    return createVectorPartialDecryption({
+      privateShare: readPrivateShare(trustee.id), electionID, encryptedAggregateVector,
+    });
+  }
+  const nonce = crypto.randomBytes(16).toString('hex');
+  const aggregateFile = path.join(os.tmpdir(), `mongbas-dkg-aggregate-${nonce}.json`);
+  const outputFile = path.join(os.tmpdir(), `mongbas-dkg-partial-${nonce}.json`);
+  try {
+    fs.writeFileSync(aggregateFile, `${JSON.stringify({ encAggVector: encryptedAggregateVector })}\n`, { flag: 'wx', mode: 0o644 });
+    if (process.platform !== 'win32') fs.chmodSync(aggregateFile, 0o644);
+    const generated = spawnSync(PARTIAL_HELPER, [trustee.id, trustee.index, electionID, aggregateFile, outputFile], {
+      encoding: 'utf8', env: process.env, timeout: 180000,
+    });
+    if (generated.status !== 0) throw new Error(`trustee partial helper failed for ${trustee.id}: ${generated.stderr.trim()}`);
+    const partial = JSON.parse(fs.readFileSync(outputFile, 'utf8'));
+    if (partial.mspID !== trustee.id || String(partial.index) !== trustee.index) throw new Error(`helper output identity mismatch: ${trustee.id}`);
+    return partial;
+  } finally {
+    for (const file of [aggregateFile, outputFile]) {
+      try { fs.unlinkSync(file); } catch (error) { if (error.code !== 'ENOENT') throw error; }
+    }
+  }
+}
+
 async function main() {
-  if (!ADMIN_API_TOKEN || !TRANSCRIPT_FILE || !SECRET_ROOT) throw new Error('admin token, transcript and protected DKG secret root are required');
+  if (!ADMIN_API_TOKEN || !TRANSCRIPT_FILE || (!SECRET_ROOT && !PARTIAL_HELPER)) {
+    throw new Error('admin token, transcript and either protected secret root or partial helper are required');
+  }
   const transcript = JSON.parse(fs.readFileSync(TRANSCRIPT_FILE, 'utf8'));
   const electionID = `dkg-live-${Date.now()}`;
   const now = Math.floor(Date.now() / 1000);
@@ -143,10 +174,7 @@ async function main() {
   }
   requireFailure(await post(`/api/elections/${electionID}/partial-decryptions`, { shareIndex: '1' }), 'shared-PDC partial path');
 
-  const partials = TRUSTEES.slice(0, 2).map(trustee => createVectorPartialDecryption({
-    privateShare: readPrivateShare(trustee.id), electionID,
-    encryptedAggregateVector: tally.encAggVector,
-  }));
+  const partials = TRUSTEES.slice(0, 2).map(trustee => createTrusteePartial(trustee, electionID, tally.encAggVector));
   const tampered = structuredClone(partials[0]);
   tampered.proofs[0].z = tampered.proofs[0].z === '1' ? '2' : '1';
   requireFailure(await post(`/api/elections/${electionID}/external-partial-decryptions`, {
@@ -173,6 +201,7 @@ async function main() {
     approvals: 3, rejected: ['pre-approval-activation', 'wrong-transcript-hash', 'shared-pdc-partial', 'tampered-partial', 'duplicate-partial'],
     totalVotes: tally.totalVotes, results: tally.results,
     externalPartialDecryptions: tally.vectorPartialDecryptions.length, auditedBallots: 1, auditPublished: true,
+    partialGenerationMode: PARTIAL_HELPER ? 'external-helper' : 'in-process-secret-file',
   })}\n`);
 }
 
