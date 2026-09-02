@@ -29,6 +29,7 @@ const { router: credentialRouter } = require('./routes/credential');
 const { requireVoterAuth, measureAuthLatency, idemixStatus } = require('./middleware/auth');
 const { guardElectionAdminRoutes, validateAdminConfiguration } = require('./middleware/admin');
 const { fabricConcurrencyGate } = require('./lib/fabricConcurrencyGate');
+const { demoEndpointsEnabled } = require('./lib/demoFeatures');
 const { validateRuntimeSecurity, apiRequestShapeGuard } = require('./lib/runtimeSecurity');
 
 const app  = express();
@@ -144,6 +145,7 @@ app.get('/health', (_req, res) => {
     timestamp: new Date().toISOString(),
     idemix:    idemixStatus(),
     benchmark: { rateLimitsDisabled: DISABLE_RATE_LIMITS },
+    demo: { endpointsEnabled: demoEndpointsEnabled() },
     fabricConcurrency: fabricConcurrencyGate.status(),
     memory: {
       heapUsed:  mem.heapUsed,

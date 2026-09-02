@@ -20,6 +20,7 @@ const { connectGateway, connectGatewayForShareIndex } = require('../gateway');
 const { submitTransactionAndWait } = require('../lib/submitTransaction');
 const liveCount = require('../lib/liveCount');  // [부스 시연] 라이브 투표 카운터
 const demoLive  = require('../lib/demoLive');   // [부스 시연] 라이브 암호문 표 + 셔플 + 이벤트 버스
+const { demoEndpointsEnabled, requireDemoEndpoint } = require('../lib/demoFeatures');
 
 const router = express.Router();
 
@@ -257,7 +258,9 @@ router.post('/', async (req, res) => {
     if (!status.successful) {
       throw new Error(`CreateElection 트랜잭션 실패: ${status.code}`);
     }
-    try { liveCount.reset(electionID); demoLive.reset(electionID); } catch (_) { /* 리셋 실패 무시 */ }
+    if (demoEndpointsEnabled()) {
+      try { liveCount.reset(electionID); demoLive.reset(electionID); } catch (_) { /* 리셋 실패 무시 */ }
+    }
     res.status(201).json({ message: '선거가 생성되었습니다.', electionID, encryptionMode: mode });
   } catch (err) {
     console.error('[elections] CreateElection error:', err.message);
@@ -269,19 +272,19 @@ router.post('/', async (req, res) => {
 
 // ── GET /api/elections/:id/live-count ──────────────────────────
 // [부스 시연] 진행 중 선거의 실시간 투표 수 (백엔드 인메모리 카운터 — 관제판 폴링용)
-router.get('/:id/live-count', (req, res) => {
+router.get('/:id/live-count', requireDemoEndpoint, (req, res) => {
   res.json({ electionID: req.params.id, totalVotes: liveCount.get(req.params.id) });
 });
 
 // ── GET /:id/live-votes ────────────────────────────────────────
 // [부스 시연] 도착한 암호문 표를 실시간 제공 (대시보드가 폴링) — 새로고침 없이 누적/셔플 반영
-router.get('/:id/live-votes', (req, res) => {
+router.get('/:id/live-votes', requireDemoEndpoint, (req, res) => {
   res.json({ electionID: req.params.id, ...demoLive.listVotes(req.params.id) });
 });
 
 // ── POST /:id/demo-event ───────────────────────────────────────
 // [부스 시연] 모바일 → 대시보드 이벤트 (예: 검증하기 누름). Body: { type, payload }
-router.post('/:id/demo-event', (req, res) => {
+router.post('/:id/demo-event', requireDemoEndpoint, (req, res) => {
   const { type, payload } = req.body || {};
   if (!type) return res.status(400).json({ error: 'type 필요' });
   demoLive.pushEvent(req.params.id, String(type), payload || {});
@@ -290,7 +293,7 @@ router.post('/:id/demo-event', (req, res) => {
 
 // ── GET /:id/demo-events?since=N ───────────────────────────────
 // [부스 시연] 대시보드가 폴링해 모바일 액션을 감지 (검증 뷰 전환 등)
-router.get('/:id/demo-events', (req, res) => {
+router.get('/:id/demo-events', requireDemoEndpoint, (req, res) => {
   res.json({ electionID: req.params.id, ...demoLive.listEvents(req.params.id, req.query.since) });
 });
 
@@ -298,10 +301,7 @@ router.get('/:id/demo-events', (req, res) => {
 // [부스 시연] 서버에서 ElGamal 투표 N개를 자동 주입 (게시판/집계 채우기).
 // Body: { count: number, dist?: number[] }  dist 미지정 시 무작위 후보.
 // 내부 HTTP로 자격증명 발급 + /api/vote 경로를 그대로 재사용한다(DISABLE_RATE_LIMITS 권장).
-router.post('/:id/seed-votes', async (req, res) => {
-  if (process.env.ENABLE_DEMO_ENDPOINTS !== 'true') {
-    return res.status(404).json({ error: '사용할 수 없는 엔드포인트입니다.' });
-  }
+router.post('/:id/seed-votes', requireDemoEndpoint, async (req, res) => {
   const { id } = req.params;
   const count = Math.min(Math.max(parseInt(req.body.count, 10) || 5, 1), 50);
   const dist = Array.isArray(req.body.dist) ? req.body.dist : null;

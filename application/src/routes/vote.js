@@ -33,6 +33,7 @@ const { fabricConcurrencyGate } = require('../lib/fabricConcurrencyGate');
 const { submitTransactionAndWait } = require('../lib/submitTransaction');
 const liveCount = require('../lib/liveCount');  // [부스 시연] 라이브 투표 카운터
 const demoLive  = require('../lib/demoLive');   // [부스 시연] 라이브 암호문 표 + 셔플 + 이벤트 버스
+const { demoEndpointsEnabled } = require('../lib/demoFeatures');
 
 const router = express.Router();
 
@@ -195,11 +196,13 @@ router.post('/', async (req, res) => {
     } catch (_) { /* 조회 실패 시 무시 — evictCount=0 */ }
 
     // [부스 시연] 라이브 카운터 — 신규 투표만 증가 (재투표는 기존 표 대체이므로 제외)
-    if (evictCount === 0) {
-      try { liveCount.increment(electionID); } catch (_) { /* 카운터 실패 무시 */ }
+    if (demoEndpointsEnabled()) {
+      if (evictCount === 0) {
+        try { liveCount.increment(electionID); } catch (_) { /* 카운터 실패 무시 */ }
+      }
+      // [부스 시연] 라이브 암호문 표 — 운영/평가 profile에서는 기록하지 않는다.
+      try { demoLive.recordVote(electionID, { nullifierHash, ciphertext: encryptedCandidateID, zkpValid: true }); } catch (_) { /* 무시 */ }
     }
-    // [부스 시연] 라이브 암호문 표 — 도착한 암호문(c1:c2)+ZKP결과 기록 (재투표는 행 교체)
-    try { demoLive.recordVote(electionID, { nullifierHash, ciphertext: encryptedCandidateID, zkpValid: true }); } catch (_) { /* 무시 */ }
 
     res.json({
       message : evictCount > 0
@@ -334,10 +337,12 @@ router.post('/cast-vector', async (req, res) => {
       const bytes = await connection.contract.evaluateTransaction('GetNullifier', nullifierHash);
       evictCount = JSON.parse(Buffer.from(bytes).toString('utf8')).evictCount || 0;
     } catch (_) { /* committed cast remains successful even if follow-up read fails */ }
-    if (evictCount === 0) {
-      try { liveCount.increment(electionID); } catch (_) { /* display-only */ }
+    if (demoEndpointsEnabled()) {
+      if (evictCount === 0) {
+        try { liveCount.increment(electionID); } catch (_) { /* display-only */ }
+      }
+      try { demoLive.recordVote(electionID, { nullifierHash, ciphertext: '[vector-v3]', zkpValid: true }); } catch (_) { /* display-only */ }
     }
-    try { demoLive.recordVote(electionID, { nullifierHash, ciphertext: '[vector-v3]', zkpValid: true }); } catch (_) { /* display-only */ }
     res.json({ message: evictCount > 0 ? '재투표가 완료되었습니다.' : '투표가 완료되었습니다.',
       electionID, ballotID, nullifierHash, blindMode: true, isRevote: evictCount > 0, evictCount });
   } catch (err) {
