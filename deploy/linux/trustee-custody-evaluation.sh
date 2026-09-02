@@ -2,6 +2,7 @@
 set -Eeuo pipefail
 
 [ "${EUID}" -eq 0 ] || { echo "run with sudo: $0" >&2; exit 1; }
+umask 0027
 repo="$(cd "$(dirname "$0")/../.." && pwd)"
 operator="${SUDO_USER:-user1}"
 operator_group="$(id -gn "${operator}")"
@@ -27,6 +28,7 @@ for offset in 0 1 2; do
   install -d -o "${user}" -g mongbas-trustees -m 0700 "${private}"
   runuser -u "${user}" -- node "${cli}" init --id "${id}" --index "${index}" \
     --private "${private}/transport-private.json" --public "${public}/keys/${id}.json" >>"${out}/ceremony.log"
+  chmod 0640 "${public}/keys/${id}.json"
 done
 
 node - "${public}/participants.json" "${public}/keys"/*.json <<'NODE'
@@ -45,6 +47,7 @@ for offset in 0 1 2; do
   runuser -u "${user}" -- node "${cli}" contribute --ceremony "${ceremony}" --id "${id}" \
     --private "${private}/transport-private.json" --participants "${public}/participants.json" \
     --out "${public}/contributions/${id}.json" >>"${out}/ceremony.log"
+  chmod 0640 "${public}/contributions/${id}.json"
 done
 
 for offset in 0 1 2; do
@@ -53,6 +56,7 @@ for offset in 0 1 2; do
     --private "${private}/transport-private.json" --participants "${public}/participants.json" \
     --contributions-dir "${public}/contributions" --private-out "${private}/trustee-share.json" \
     --public-out "${public}/shares/${id}.json" >>"${out}/ceremony.log"
+  chmod 0640 "${public}/shares/${id}.json"
 done
 
 node "${cli}" finalize-transcript --ceremony "${ceremony}" --participants "${public}/participants.json" \
