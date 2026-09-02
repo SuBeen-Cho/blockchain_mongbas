@@ -19,12 +19,22 @@ err()  { echo -e "${RED}[$(date +%H:%M:%S)] $*${NC}"; }
 start_server() {
   local mode=$1; shift
   local env_vars="$*"
+  local expected_health_mode
+  case "${mode}" in
+    A단계) expected_health_mode=bypass ;;
+    B단계) expected_health_mode=idemix-ps ;;
+    C단계) expected_health_mode=idemix-bbs ;;
+    *) err "알 수 없는 측정 모드: ${mode}"; exit 1 ;;
+  esac
   log "서버 기동: $mode ($env_vars)"
   eval "env $env_vars node src/app.js > /tmp/mongbas-server.log 2>&1 &"
   SERVER_PID=$!
   # 헬스 체크 대기
   local attempts=0
-  until curl -s http://localhost:3000/health > /dev/null 2>&1; do
+  until curl --fail --silent --show-error http://localhost:3000/health | EXPECTED_HEALTH_MODE="${expected_health_mode}" node -e '
+    const health = JSON.parse(require("node:fs").readFileSync(0, "utf8"));
+    process.exit(health.status === "ok" && health.idemix?.mode === process.env.EXPECTED_HEALTH_MODE ? 0 : 1);
+  ' >/dev/null 2>&1; do
     sleep 0.5
     attempts=$((attempts + 1))
     if [ $attempts -ge 30 ]; then
@@ -110,7 +120,11 @@ node benchmark/generate-report.js \
   "${REPORTS_DIR}/phase-B-${TIMESTAMP}.json" \
   "${REPORTS_DIR}/phase-C-${TIMESTAMP}.json" \
   --out "${REPORTS_DIR}/comparison-${TIMESTAMP}.json" \
-  2>/dev/null || true
+  2>"${REPORTS_DIR}/comparison-${TIMESTAMP}.stderr.log"
+[ -s "${REPORTS_DIR}/comparison-${TIMESTAMP}.json" ] || {
+  err "종합 비교 보고서가 생성되지 않았습니다."
+  exit 1
+}
 
 echo "══════════════════════════════════════════════════════════════"
 echo "  완료: $(date)"

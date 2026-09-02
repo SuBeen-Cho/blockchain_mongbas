@@ -22,12 +22,26 @@ err()  { echo -e "${RED}[$(date +%H:%M:%S)] $*${NC}"; }
 start_server() {
   local mode=$1; shift
   local env_vars="$*"
+  local expected_health_mode expected_health_impl
+  case "${mode}" in
+    A단계) expected_health_mode=bypass; expected_health_impl=HMAC-SHA256 ;;
+    HMAC) expected_health_mode=idemix-hmac; expected_health_impl=HMAC-SHA256 ;;
+    Ed25519) expected_health_mode=idemix-hmac; expected_health_impl=Ed25519-asymmetric ;;
+    B단계) expected_health_mode=idemix-ps; expected_health_impl='PS-BN254 (B단계: 진짜 Idemix CL)' ;;
+    C단계) expected_health_mode=idemix-bbs; expected_health_impl='BBS+-BLS12381 (C단계: 개선 Idemix)' ;;
+    *) err "알 수 없는 측정 모드: ${mode}"; exit 1 ;;
+  esac
   log "서버 기동: $mode"
   info "  env: $env_vars"
   eval "env DISABLE_RATE_LIMITS=true SESSION_SECRET=bench-session-secret CREDENTIAL_SECRET=bench-credential-secret $env_vars node src/app.js > /tmp/mongbas-server.log 2>&1 &"
   SERVER_PID=$!
   local attempts=0
-  until curl -s http://localhost:3000/health > /dev/null 2>&1; do
+  until curl --fail --silent --show-error http://localhost:3000/health | \
+    EXPECTED_HEALTH_MODE="${expected_health_mode}" EXPECTED_HEALTH_IMPL="${expected_health_impl}" node -e '
+    const health = JSON.parse(require("node:fs").readFileSync(0, "utf8"));
+    process.exit(health.status === "ok" && health.idemix?.mode === process.env.EXPECTED_HEALTH_MODE &&
+      health.idemix?.impl === process.env.EXPECTED_HEALTH_IMPL ? 0 : 1);
+  ' >/dev/null 2>&1; do
     sleep 0.5
     attempts=$((attempts + 1))
     if [ $attempts -ge 40 ]; then
@@ -38,10 +52,10 @@ start_server() {
   done
   log "서버 준비 완료 (PID=$SERVER_PID)"
   # 헬스 체크 출력
-  curl -s http://localhost:3000/health | node -e "
+  curl --fail --silent --show-error http://localhost:3000/health | node -e "
     const d = JSON.parse(require('fs').readFileSync('/dev/stdin','utf8'));
     console.log('  mode:', d.idemix.mode, '| impl:', d.idemix.impl);
-  " 2>/dev/null || true
+  "
 }
 
 stop_server() {
@@ -161,8 +175,7 @@ const ts = '${TIMESTAMP}';
 const dir = '${REPORTS_DIR}';
 
 function load(phase) {
-  try { return JSON.parse(fs.readFileSync(\`\${dir}/real-\${phase}-\${ts}.json\`, 'utf8')); }
-  catch { return null; }
+  return JSON.parse(fs.readFileSync(\`\${dir}/real-\${phase}-\${ts}.json\`, 'utf8'));
 }
 
 const A = load('A'), HMAC = load('HMAC'), Ed25519 = load('Ed25519'), B = load('B'), C = load('C');
@@ -198,7 +211,7 @@ if (B && C) {
   if (bAuth && cAuth) console.log(\`  인증 레이턴시: \${bAuth.toFixed(1)}ms → \${cAuth.toFixed(1)}ms (\${(bAuth/cAuth).toFixed(2)}x 향상)\`);
   if (bTps && cTps)   console.log(\`  스트레스 TPS:  \${bTps} → \${cTps} (\${(cTps/bTps).toFixed(2)}x 향상)\`);
 }
-" 2>/dev/null || echo "  (결과 파싱 실패)"
+" 2>"${REPORTS_DIR}/summary-${TIMESTAMP}.stderr.log"
 
 echo ""
 echo "╔══════════════════════════════════════════════════════════════════╗"
