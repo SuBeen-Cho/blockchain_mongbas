@@ -1381,7 +1381,7 @@ func (c *VotingContract) CreateElection(
 		}
 	}
 
-	log.Printf("[CreateElection] 선거 생성 완료: %s (더미: %d개)", electionID, len(candidates)*PanicDummyCount)
+	log.Printf("[CreateElection] 선거 생성 완료: %s", electionID)
 	return nil
 }
 
@@ -3117,12 +3117,10 @@ func (c *VotingContract) GetMerkleProofWithPassword(
 	// 어느 모드인지 확인 (Normal vs Panic)
 	targetHash := nullifierHash
 
-	panicMode := false
 	// 상수시간 비교로 타이밍 사이드채널 방지 (A-2 보안 수정)
 	isPanic := subtle.ConstantTimeCompare([]byte(passwordHash), []byte(pw.PanicPWHash)) == 1
 	isNormal := subtle.ConstantTimeCompare([]byte(passwordHash), []byte(pw.NormalPWHash)) == 1
 	if isPanic {
-		panicMode = true
 		// ── Panic Mode: 더미 nullifier 반환 ─────────────────
 		dummyCandID := pw.PanicCandidateID
 		if dummyCandID == "" {
@@ -3152,7 +3150,6 @@ func (c *VotingContract) GetMerkleProofWithPassword(
 			}
 		}
 		targetHash = string(dummyHashBytes)
-		log.Printf("[GetMerkleProofWithPassword] Panic Mode — dummy idx: %d, hash: %s", dummyIdx, targetHash[:16])
 	} else if !isNormal {
 		// 두 비밀번호 모두 불일치 (상수시간 비교 완료 후 판정)
 		return nil, fmt.Errorf("비밀번호가 일치하지 않습니다")
@@ -3170,7 +3167,6 @@ func (c *VotingContract) GetMerkleProofWithPassword(
 		return nil, fmt.Errorf("Nullifier candidateID 조회 실패: %s", targetHash)
 	}
 
-	_ = panicMode // 로그 목적으로만 사용 (응답에서 모드 노출 금지)
 	return &MerkleProofResult{
 		NullifierHash:        targetHash,
 		CandidateID:          resolveCandidateID(ctx, electionID, n),

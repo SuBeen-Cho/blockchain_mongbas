@@ -12,7 +12,7 @@ test('runtime logs do not expose panic ballots, nullifiers or filtered counts', 
   const application = fs.readFileSync(path.join(repositoryRoot, 'application/src/app.js'), 'utf8');
   const logCalls = chaincode.split('\n').filter(line => /log\.Printf|log\.Println/.test(line));
 
-  assert.equal(logCalls.some(line => /panic|PANIC|패닉/.test(line)), false,
+  assert.equal(logCalls.some(line => /panic|패닉/i.test(line)), false,
     'chaincode logs must not classify panic ballots or reveal a panic-filter count');
   assert.equal(logCalls.some(line => /nullifierHash/.test(line)), false,
     'chaincode logs must not emit a ballot nullifier from a panic branch');
