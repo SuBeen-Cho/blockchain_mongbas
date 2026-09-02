@@ -12,6 +12,7 @@ require_cmd npm
 require_cmd openssl
 require_cmd ss
 require_cmd tar
+[ -x /usr/bin/time ] || die "GNU /usr/bin/time is required for verifier resource measurements"
 [ "${MONGBAS_PROFILE}" = benchmark ] || die "set MONGBAS_PROFILE=benchmark for verifier evaluation"
 
 port="${MONGBAS_VERIFIER_EVALUATION_PORT:-3002}"
@@ -86,7 +87,8 @@ else
   [[ "${election_id}" =~ ^[A-Za-z0-9._-]+$ ]] || die "MONGBAS_VERIFIER_ELECTION_ID is invalid"
   printf '{"electionID":"%s","source":"pre-existing"}\n' "${election_id}" >"${out}/live-election.json"
   if [ "${MONGBAS_VERIFIER_PUBLISH_EXISTING_AUDIT:-false}" = true ]; then
-    BUNDLE_BASE_URL="http://127.0.0.1:${port}" BUNDLE_ELECTION_ID="${election_id}" node -e '
+    BUNDLE_BASE_URL="http://127.0.0.1:${port}" BUNDLE_ELECTION_ID="${election_id}" \
+      /usr/bin/time -f 'elapsedSeconds=%e\nmaxRssKiB=%M' -o "${out}/publish-existing-audit.metrics.txt" node -e '
       const base = process.env.BUNDLE_BASE_URL;
       const election = encodeURIComponent(process.env.BUNDLE_ELECTION_ID);
       const token = process.env.ADMIN_API_TOKEN;
@@ -103,13 +105,19 @@ else
     die "MONGBAS_VERIFIER_PUBLISH_EXISTING_AUDIT must be true or false"
   fi
 fi
-curl --silent --show-error --fail "http://127.0.0.1:${port}/api/elections/${election_id}/election-bundle-source" \
+/usr/bin/time -f 'elapsedSeconds=%e\nmaxRssKiB=%M' -o "${out}/bundle-source.metrics.txt" \
+  curl --silent --show-error --fail "http://127.0.0.1:${port}/api/elections/${election_id}/election-bundle-source" \
   >"${out}/bundle-source.json"
 stop_backend
 
-node "${MONGBAS_REPO_DIR}/verifier/bin/mongbas-bundle.js" build "${out}/bundle-source.json" "${out}/bundle-unsigned.json"
-node "${MONGBAS_REPO_DIR}/verifier/bin/mongbas-bundle.js" sign "${out}/bundle-unsigned.json" ec "${signer_dir}/ec.pem" "${out}/bundle-ec.json"
-node "${MONGBAS_REPO_DIR}/verifier/bin/mongbas-bundle.js" sign "${out}/bundle-ec.json" party "${signer_dir}/party.pem" "${out}/bundle-signed.json"
+/usr/bin/time -f 'elapsedSeconds=%e\nmaxRssKiB=%M' -o "${out}/bundle-build.metrics.txt" \
+  node "${MONGBAS_REPO_DIR}/verifier/bin/mongbas-bundle.js" build "${out}/bundle-source.json" "${out}/bundle-unsigned.json"
+/usr/bin/time -f 'elapsedSeconds=%e\nmaxRssKiB=%M' -o "${out}/bundle-sign-ec.metrics.txt" \
+  node "${MONGBAS_REPO_DIR}/verifier/bin/mongbas-bundle.js" sign "${out}/bundle-unsigned.json" ec "${signer_dir}/ec.pem" "${out}/bundle-ec.json"
+/usr/bin/time -f 'elapsedSeconds=%e\nmaxRssKiB=%M' -o "${out}/bundle-sign-party.metrics.txt" \
+  node "${MONGBAS_REPO_DIR}/verifier/bin/mongbas-bundle.js" sign "${out}/bundle-ec.json" party "${signer_dir}/party.pem" "${out}/bundle-signed.json"
+stat -c '%n\t%s' "${out}/bundle-source.json" "${out}/bundle-unsigned.json" "${out}/bundle-ec.json" \
+  "${out}/bundle-signed.json" >"${out}/bundle-sizes.tsv"
 remove_ephemeral_signers
 
 npm pack --silent --pack-destination "${out}" "${MONGBAS_REPO_DIR}/verifier" >"${out}/npm-pack.stdout.log"
@@ -118,7 +126,8 @@ package_file="$(find "${out}" -maxdepth 1 -type f -name 'mongbas-election-verifi
 install -d -m 0700 "${out}/clean-verifier"
 tar -xzf "${package_file}" -C "${out}/clean-verifier"
 set +e
-node "${out}/clean-verifier/package/bin/mongbas-verify.js" "${out}/bundle-signed.json" \
+/usr/bin/time -f 'elapsedSeconds=%e\nmaxRssKiB=%M' -o "${out}/valid-verification.metrics.txt" \
+  node "${out}/clean-verifier/package/bin/mongbas-verify.js" "${out}/bundle-signed.json" \
   >"${out}/valid-verification.stdout.log" 2>"${out}/valid-verification.stderr.log"
 valid_status=$?
 set -e
@@ -132,7 +141,8 @@ tamper_failure=0
 while IFS= read -r tampered; do
   name="$(basename "${tampered}" .json)"
   set +e
-  node "${out}/clean-verifier/package/bin/mongbas-verify.js" "${tampered}" \
+  /usr/bin/time -f 'elapsedSeconds=%e\nmaxRssKiB=%M' -o "${out}/tamper-corpus/${name}.metrics.txt" \
+    node "${out}/clean-verifier/package/bin/mongbas-verify.js" "${tampered}" \
     >"${out}/tamper-corpus/${name}.stdout.log" 2>"${out}/tamper-corpus/${name}.stderr.log"
   status=$?
   set -e
