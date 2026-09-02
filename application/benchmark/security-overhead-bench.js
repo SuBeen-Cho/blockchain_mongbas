@@ -17,6 +17,13 @@
 
 'use strict';
 
+process.stderr.write(
+  'UNSUPPORTED: security-overhead-bench.js benchmarks synthetic legacy snippets ' +
+  '(including hash commitments mislabeled as Feldman VSS) rather than the deployed ' +
+  'vector-v3/DKG implementation. Use the strict Linux evaluators.\n',
+);
+process.exit(2);
+
 const crypto = require('crypto');
 
 const args = {};

@@ -2,6 +2,13 @@
 
 'use strict';
 
+process.stderr.write(
+  'UNSUPPORTED: benchmark-paper-features.js mixes legacy AES/plain and obsolete ' +
+  'PAPER-1..8 paths and is not valid performance or security evidence. Use the ' +
+  'strict deploy/linux evaluators and the standalone verifier corpus.\n',
+);
+process.exit(2);
+
 /**
  * benchmark-paper-features.js — PAPER-1~8 기능별 성능 측정
  *

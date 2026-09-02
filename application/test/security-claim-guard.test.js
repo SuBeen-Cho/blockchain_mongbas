@@ -113,13 +113,15 @@ test('legacy BatchTimeout runners are quarantined before output or channel mutat
   }
 });
 
-test('superseded credential and concurrency benchmarks fail closed before network access', () => {
+test('superseded evidence runners fail closed before network or output access', () => {
   const runners = [
     'application/benchmark/http-bench.js',
     'application/benchmark/idemix-bench.js',
     'application/benchmark/phase-bc-bench.js',
     'scripts/measure-concurrent-vote.js',
     'scripts/generate-bt-report.js',
+    'application/scripts/benchmark-paper-features.js',
+    'application/benchmark/security-overhead-bench.js',
   ];
 
   for (const relative of runners) {
