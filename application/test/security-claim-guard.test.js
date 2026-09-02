@@ -47,3 +47,13 @@ test('public showcase and credential labels do not claim unverified equivalence'
   assert.match(auth, /PS-BN254 credential prototype/);
   assert.match(psPrototype, /Fabric Idemix와의 wire-format/);
 });
+
+test('legacy security scenario does not mislabel missing-election rejection as endorsement evidence', () => {
+  const scenarios = read('scripts/security-scenarios-extended.js');
+
+  assert.doesNotMatch(scenarios, /단일 서명 거부율/);
+  assert.doesNotMatch(scenarios, /정책 위반 거부 횟수/);
+  assert.doesNotMatch(scenarios, /코드 레벨 추가 검증 없이도 정책이 보장/);
+  assert.match(scenarios, /cannot measure or prove an endorsement-policy rejection/);
+  assert.match(scenarios, /2-of-3 endorsement 차단 증거가 아닙니다/);
+});

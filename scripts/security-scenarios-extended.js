@@ -3,7 +3,7 @@
  * scripts/security-scenarios-extended.js — 보안 위협 시나리오 추가 측정
  *
  * 기존 security-scenarios.js에서 측정되지 않은 항목들을 보완:
- *   A-2. 단일 서명 거부율 (API 레벨 정책 동작 확인)
+ *   A-2. 존재하지 않는 선거 상태 전이 거부율 (API fail-closed 확인)
  *   A-3. 피어 1개 장애 시 처리율 (peer0.party 중단)
  *   B-2. 해시 충돌 저항성 (10만 개 SHA256)
  *   B-3. Eviction 오버헤드 (정상 vs 재투표 레이턴시 비교)
@@ -172,16 +172,16 @@ async function scenarioB2() {
 }
 
 // ══════════════════════════════════════════════════════════════════
-// A-2. 단일 서명 거부율 (API 레벨 정책 동작 확인)
+// A-2. 존재하지 않는 선거 상태 전이 거부율 (API fail-closed 확인)
 // ══════════════════════════════════════════════════════════════════
 async function scenarioA2() {
-  console.log('\n[A-2] 단일 서명 정책 동작 확인 중...');
-  // Fabric Gateway는 항상 2-of-3 endorsement를 자동 요구.
-  // API 레벨에서 "비정상적인" 트랜잭션을 시뮬레이션:
-  // 존재하지 않는 electionID로 CloseElection 100회 호출 → 정책 검증 전 상태 오류 확인
+  console.log('\n[A-2] 존재하지 않는 선거 상태 전이 거부 확인 중...');
+  // This checks application/chaincode state validation only. It does not
+  // submit a proposal with a single organization identity and therefore
+  // cannot measure or prove an endorsement-policy rejection.
   const ROUNDS = 100;
   const eid    = await createActiveElection('A2');
-  let policyEnforced = 0;
+  let notFoundRejected = 0;
   const times = [];
 
   for (let i = 0; i < ROUNDS; i++) {
@@ -189,13 +189,13 @@ async function scenarioA2() {
     const t0 = Date.now();
     const r = await req('POST', `/api/elections/${fakeEid}/close`);
     times.push(Date.now() - t0);
-    // 존재하지 않는 선거 → 400/500 = 정책 위반 또는 상태 오류 (올바른 거부)
-    if (r.status !== 200) policyEnforced++;
+    if (r.status !== 200) notFoundRejected++;
     process.stdout.write(`\r  진행: ${i + 1}/${ROUNDS}`);
   }
   console.log();
 
-  // 정상 트랜잭션도 확인 (2-of-3 자동 충족)
+  // A normal legacy request is retained only as a comparison request. Its
+  // success does not reveal which organizations endorsed the transaction.
   const t1 = Date.now();
   const normalVote = await req('POST', '/api/vote', {
     electionID: eid,
@@ -207,12 +207,12 @@ async function scenarioA2() {
 
   return {
     rounds: ROUNDS,
-    policyEnforced,
-    enforcementRate: (policyEnforced / ROUNDS * 100).toFixed(1) + '%',
+    notFoundRejected,
+    rejectionRate: (notFoundRejected / ROUNDS * 100).toFixed(1) + '%',
     invalidTxStats: stats(times),
     normalTxLatencyMs: normalLatency,
     normalTxStatus: normalVote.status,
-    note: 'Fabric Gateway는 모든 트랜잭션에 2-of-3 endorsement 자동 적용. 단독 조작 불가.',
+    note: 'This scenario proves only rejection of nonexistent election state transitions; use direct identity-controlled Fabric tests for endorsement claims.',
   };
 }
 
@@ -644,21 +644,19 @@ function generateMarkdown(results, runDate) {
 
 ---
 
-## 시나리오 A-2 — 단일 서명 거부율 (정책 동작 확인)
+## 시나리오 A-2 — 존재하지 않는 선거 상태 전이 거부
 
 ### 측정 개요
-Fabric Gateway는 모든 트랜잭션에 2-of-3 endorsement를 **자동 적용**합니다.
-단일 기관(EC)이 단독으로 트랜잭션을 제출해도 게이트웨이 레벨에서 차단됩니다.
-API 레벨에서는 비정상 요청 ${r.A2.rounds}회를 제출하여 거부율을 측정했습니다.
+존재하지 않는 election ID로 상태 전이를 ${r.A2.rounds}회 요청하여 API/chaincode가 fail closed로 거부하는지 측정했습니다. 이 시나리오는 단일 기관 identity로 Fabric proposal을 제출하지 않으므로 2-of-3 endorsement 차단 증거가 아닙니다.
 
 ### 측정 결과
 
 | 항목 | 값 |
 |------|----|
 | 총 요청 횟수 | ${r.A2.rounds}회 |
-| 정책 위반 거부 횟수 | ${r.A2.policyEnforced}회 |
-| **거부율** | **${r.A2.enforcementRate}** |
-| 정상 트랜잭션 (2-of-3 충족) | ${r.A2.normalTxStatus === 200 ? '✅ 성공' : '❌ 실패'} (${r.A2.normalTxLatencyMs}ms) |
+| 존재하지 않는 선거 거부 횟수 | ${r.A2.notFoundRejected}회 |
+| **거부율** | **${r.A2.rejectionRate}** |
+| 정상 legacy 요청(비교용) | ${r.A2.normalTxStatus === 200 ? '✅ 성공' : '❌ 실패'} (${r.A2.normalTxLatencyMs}ms) |
 
 ### 비정상 요청 응답 시간
 
@@ -667,9 +665,9 @@ API 레벨에서는 비정상 요청 ${r.A2.rounds}회를 제출하여 거부율
 | ${r.A2.invalidTxStats.avg}ms | ${r.A2.invalidTxStats.stddev}ms | ${r.A2.invalidTxStats.min}ms | ${r.A2.invalidTxStats.max}ms | ${r.A2.invalidTxStats.p50}ms | ${r.A2.invalidTxStats.p95}ms | ${r.A2.invalidTxStats.p99}ms |
 
 ### 시사점
-- 거부율 ${r.A2.enforcementRate}로 단일 기관의 단독 트랜잭션은 **100% 차단**됨
-- Fabric Gateway가 2-of-3 endorsement를 강제하므로 **코드 레벨 추가 검증 없이도 정책이 보장**됨
-- 비정상 요청 평균 응답 시간 ${r.A2.invalidTxStats.avg}ms — 거부 처리 비용 미미
+- 이 실행이 지지하는 결론은 존재하지 않는 선거 요청의 관측 거부율 ${r.A2.rejectionRate}에 한정됩니다.
+- endorsement 정책은 조직별 identity로 proposal을 제어하고 commit status와 ledger 무변경을 확인하는 별도 직접 Fabric 공격 시험을 사용해야 합니다.
+- 응답 시간 ${r.A2.invalidTxStats.avg}ms는 상태 검증 거부 비용이지 endorsement 거부 비용이 아닙니다.
 
 ---
 
@@ -894,7 +892,7 @@ Root Hash 덮어쓰기가 거부되는지 확인합니다.
 
 | 시나리오 | 측정 항목 | 목표 | 결과 | 판정 |
 |---------|---------|------|------|------|
-| A-2 | 단일 서명 거부율 | 100% | ${r.A2.enforcementRate} | ${r.A2.enforcementRate === '100.0%' ? '✅' : '⚠'} |
+| A-2 | 존재하지 않는 선거 상태 전이 거부율 | 100% | ${r.A2.rejectionRate} | ${r.A2.rejectionRate === '100.0%' ? '✅' : '⚠'} |
 | A-3 | 피어 장애 시 처리율 | 100% | ${r.A3.afterPeer.successRate} | ${parseFloat(r.A3.afterPeer.successRate) >= 90 ? '✅' : '⚠'} |
 | B-2 | 해시 충돌 건수 | 0건 | ${r.B2.collisions}건 | ${r.B2.collisions === 0 ? '✅' : '❌'} |
 | B-3 | Eviction 오버헤드 | <10ms | ${r.B3.overheadMs}ms | ${Math.abs(parseFloat(r.B3.overheadMs)) < 10 ? '✅' : '⚠'} |
@@ -905,6 +903,7 @@ Root Hash 덮어쓰기가 거부되는지 확인합니다.
 | E-3 | Root Hash 불변성 | 100% | ${r.E3.rejectionRate} | ${r.E3.rootHashUnchanged && r.E3.rejectionRate === '100.0%' ? '✅' : '⚠'} |
 
 > 측정 환경: localhost, Fabric 2.5, etcdraft 4-node, Node.js REST API
+> A-2는 application/chaincode state validation 결과이며 endorsement policy 시험이 아님. 조직 identity를 제어한 직접 Fabric 공격 시험과 분리해 인용할 것.
 `;
 }
 
