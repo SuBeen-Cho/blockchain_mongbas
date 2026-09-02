@@ -114,7 +114,7 @@ const summary = {
 };
 summary.securityGatePassed = status === 0 && summary.exactTally && summary.approvals === 3 &&
   summary.externalPartialDecryptions === 2 && ['external-helper', 'in-process-secret-file'].includes(summary.partialGenerationMode) &&
-  sharedPDCUnchanged && summary.rejectedAttackGates.length === 5 &&
+  sharedPDCUnchanged && summary.rejectedAttackGates.length === 6 &&
   (summary.partialGenerationMode !== 'external-helper' || trusteeExecutionIdentitiesVerified);
 process.stdout.write(`${JSON.stringify(summary, null, 2)}\n`);
 if (!summary.securityGatePassed) process.exitCode = 1;

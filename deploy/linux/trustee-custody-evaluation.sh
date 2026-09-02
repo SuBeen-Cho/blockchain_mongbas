@@ -76,13 +76,28 @@ for user in "${users[@]}"; do
   if runuser -u "${operator}" -- test -r "${share}"; then is_readable=yes; readable=$((readable + 1)); fi
   printf '%s\t%s\t%s\t%s\n' "${user}" "$(stat -c %U "${share}")" "$(stat -c %a "${share}")" "${is_readable}" >>"${out}/custody.tsv"
 done
-node - "${out}/custody.tsv" >"${out}/summary.json" <<'NODE'
+
+printf 'reader\ttarget\treadable\n' >"${out}/cross-account-readability.tsv"
+for reader in "${users[@]}"; do
+  for target in "${users[@]}"; do
+    [ "${reader}" != "${target}" ] || continue
+    share="${custody_root}/${target}/${run_id}/trustee-share.json"
+    is_readable=no
+    if runuser -u "${reader}" -- test -r "${share}"; then is_readable=yes; fi
+    printf '%s\t%s\t%s\n' "${reader}" "${target}" "${is_readable}" >>"${out}/cross-account-readability.tsv"
+  done
+done
+
+node - "${out}/custody.tsv" "${out}/cross-account-readability.tsv" >"${out}/summary.json" <<'NODE'
 const fs = require('node:fs');
 const rows = fs.readFileSync(process.argv[2], 'utf8').trim().split('\n').slice(1).map(line => line.split('\t'));
+const crossRows = fs.readFileSync(process.argv[3], 'utf8').trim().split('\n').slice(1).map(line => line.split('\t'));
 const result = { schema: 'mongbas-os-trustee-custody/v1', distinctOwners: new Set(rows.map(row => row[1])).size,
   sharesMode0600: rows.every(row => row[2] === '600'), operatorReadableShares: rows.filter(row => row[3] === 'yes').length,
+  crossAccountChecks: crossRows.length, crossAccountReadableShares: crossRows.filter(row => row[2] === 'yes').length,
   physicalHostIndependent: false, rootAdministratorTrusted: true };
-result.securityGatePassed = result.distinctOwners === 3 && result.sharesMode0600 && result.operatorReadableShares === 0;
+result.securityGatePassed = result.distinctOwners === 3 && result.sharesMode0600 && result.operatorReadableShares === 0 &&
+  result.crossAccountChecks === 6 && result.crossAccountReadableShares === 0;
 process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
 if (!result.securityGatePassed) process.exitCode = 1;
 NODE

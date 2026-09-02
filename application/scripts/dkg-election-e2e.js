@@ -183,6 +183,12 @@ async function main() {
   requireSuccess(await post(`/api/elections/${electionID}/external-partial-decryptions`, {
     shareIndex: '1', partial: partials[0],
   }), 'valid external partial 1');
+  const belowThresholdTally = requireSuccess(await get(`/api/elections/${electionID}/tally`), 'threshold-minus-one tally');
+  if (belowThresholdTally.decrypted !== false ||
+      !Array.isArray(belowThresholdTally.vectorPartialDecryptions) ||
+      belowThresholdTally.vectorPartialDecryptions.length !== 1) {
+    throw new Error(`threshold-minus-one exposed a tally: ${JSON.stringify(belowThresholdTally)}`);
+  }
   requireFailure(await post(`/api/elections/${electionID}/external-partial-decryptions`, {
     shareIndex: '1', partial: partials[0],
   }), 'duplicate external partial');
@@ -198,7 +204,7 @@ async function main() {
   requireSuccess(await post(`/api/elections/${electionID}/publish-audit`, {}), 'publish DKG audit data');
   process.stdout.write(`${JSON.stringify({
     success: true, electionID, keyCeremonyMode: 'dkg-v1', transcriptHash: transcript.transcriptHash,
-    approvals: 3, rejected: ['pre-approval-activation', 'wrong-transcript-hash', 'shared-pdc-partial', 'tampered-partial', 'duplicate-partial'],
+    approvals: 3, rejected: ['pre-approval-activation', 'wrong-transcript-hash', 'shared-pdc-partial', 'tampered-partial', 'threshold-minus-one', 'duplicate-partial'],
     totalVotes: tally.totalVotes, results: tally.results,
     externalPartialDecryptions: tally.vectorPartialDecryptions.length, auditedBallots: 1, auditPublished: true,
     partialGenerationMode: PARTIAL_HELPER ? 'external-helper' : 'in-process-secret-file',
