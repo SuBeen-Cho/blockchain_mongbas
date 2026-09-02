@@ -52,6 +52,17 @@ MONGBAS_SERVICE_PROFILE=production-like ./deploy/linux/install-systemd.sh --rend
 
 Demo unit을 production evidence로 사용하거나 benchmark/rate-limit-off backend를 장기 systemd service로 설치하지 않는다.
 
+## Tailscale QR HTTPS
+
+휴대폰 투표 UI는 Web Crypto API로 nullifier·ElGamal randomness·ZKP를 생성하므로 `http://100.x.x.x:3000` 같은 remote HTTP origin을 QR로 사용하지 않는다. Tailscale Serve를 활성화한 tailnet에서만 다음과 같이 private HTTPS reverse proxy를 설정한다.
+
+```bash
+tailscale serve --bg --yes http://127.0.0.1:3000
+tailscale serve status
+```
+
+이는 tailnet 내부에만 공유하는 Serve이다. 인터넷에 공개하는 `tailscale funnel`로 대체하지 않는다. 서버와 휴대폰은 같은 tailnet에 있어야 하며, tailnet 관리자가 HTTPS/Serve를 최초 1회 활성화해야 할 수 있다. 공식 CLI 문서: `https://tailscale.com/docs/reference/tailscale-cli/serve`.
+
 BBS+ 실험 모드는 `@mattrglobal/bbs-signatures` 2.0.0의 WASM 경로만 사용한다. 아카이브된 optional native addon이 취약한 `node-pre-gyp`/`tar` 설치 경로를 끌어오므로 application 의존성은 `npm ci --omit=optional`로 설치한다. `build.sh`는 실제 배포 세트를 `npm audit --omit=optional --audit-level=high`로 검사하며, high/critical 이상이면 실패한다. 해당 BBS 구현은 현재 CFRG draft-10의 완전한 표준 준거를 주장하지 않으며, 최신 구현으로의 마이그레이션은 별도 보안 게이트로 다룬다.
 
 ## 검증과 증거
