@@ -197,6 +197,53 @@ function validateContribution(contribution, ceremonyID, roster) {
   if (recipients.size !== TOTAL || roster.some(item => !recipients.has(`${item.id}:${item.index}`))) throw new Error('encrypted-share roster mismatch');
 }
 
+const COMPLAINT_REASONS = new Set([
+  'missing-contribution', 'invalid-signature', 'incomplete-recipient-set',
+  'envelope-authentication-failed', 'share-out-of-range', 'feldman-equation-failed',
+]);
+
+function createComplaint({ ceremonyID, complainerID, dealerID, reason, contributionHash, evidenceHash,
+  privateRecord, participants }) {
+  validateCeremonyID(ceremonyID);
+  const roster = normalizeParticipants(participants);
+  const complainer = roster.find(item => item.id === complainerID);
+  if (!complainer || !roster.some(item => item.id === dealerID) || complainerID === dealerID ||
+      privateRecord?.schema !== 'mongbas-dkg-transport-private/v1' || privateRecord.id !== complainerID ||
+      !COMPLAINT_REASONS.has(reason) || !/^[0-9a-f]{64}$/.test(contributionHash) || !/^[0-9a-f]{64}$/.test(evidenceHash)) {
+    throw new Error('invalid DKG complaint input');
+  }
+  const core = { schema: 'mongbas-dkg-complaint/v1', ceremonyID, complainerID, complainerIndex: complainer.index,
+    dealerID, reason, contributionHash, evidenceHash };
+  const complaintID = crypto.createHash('sha256').update(canonicalize(core)).digest('hex');
+  const signed = { ...core, complaintID };
+  const signingKey = crypto.createPrivateKey({
+    key: Buffer.from(privateRecord.signingPrivateKeyDer, 'base64'), format: 'der', type: 'pkcs8',
+  });
+  if (signingKey.asymmetricKeyType !== 'ed25519') throw new Error('complainer signing key is not Ed25519');
+  return { ...signed, signature: crypto.sign(null, Buffer.from(canonicalize(signed)), signingKey).toString('base64') };
+}
+
+function validateComplaint(complaint, ceremonyID, roster) {
+  if (!complaint || complaint.schema !== 'mongbas-dkg-complaint/v1' || complaint.ceremonyID !== ceremonyID ||
+      !COMPLAINT_REASONS.has(complaint.reason) || !/^[0-9a-f]{64}$/.test(complaint.contributionHash) ||
+      !/^[0-9a-f]{64}$/.test(complaint.evidenceHash) || !/^[0-9a-f]{64}$/.test(complaint.complaintID)) {
+    throw new Error('invalid DKG complaint artifact');
+  }
+  const complainer = roster.find(item => item.id === complaint.complainerID);
+  if (!complainer || complainer.index !== complaint.complainerIndex || complaint.complainerID === complaint.dealerID ||
+      !roster.some(item => item.id === complaint.dealerID)) throw new Error('DKG complaint roster binding invalid');
+  const { signature, ...signed } = complaint;
+  const { complaintID, ...core } = signed;
+  if (crypto.createHash('sha256').update(canonicalize(core)).digest('hex') !== complaintID) throw new Error('DKG complaint ID mismatch');
+  const signingKey = crypto.createPublicKey({
+    key: Buffer.from(complainer.signingPublicKeyDer, 'base64'), format: 'der', type: 'spki',
+  });
+  if (typeof signature !== 'string' || !crypto.verify(null, Buffer.from(canonicalize(signed)), signingKey, Buffer.from(signature, 'base64'))) {
+    throw new Error('DKG complaint signature invalid');
+  }
+  return complaintID;
+}
+
 function finalizeTrusteeShare({ ceremonyID, trusteeID, privateRecord, participants, contributions }) {
   validateCeremonyID(ceremonyID);
   const roster = normalizeParticipants(participants);
@@ -251,9 +298,15 @@ function finalizeTrusteeShare({ ceremonyID, trusteeID, privateRecord, participan
   };
 }
 
-function finalizeTranscript({ ceremonyID, participants, contributions, publicShares }) {
+function finalizeTranscript({ ceremonyID, participants, contributions, publicShares, complaints = [] }) {
   validateCeremonyID(ceremonyID);
   const roster = normalizeParticipants(participants);
+	if (!Array.isArray(complaints)) throw new Error('complaints must be an array');
+	const complaintIDs = complaints.map(item => validateComplaint(item, ceremonyID, roster));
+	if (new Set(complaintIDs).size !== complaintIDs.length) throw new Error('duplicate DKG complaint');
+	if (complaintIDs.length > 0) {
+	  throw new Error(`DKG ceremony aborted by authenticated complaint(s): ${complaintIDs.sort().join(',')}`);
+	}
   if (!Array.isArray(contributions) || contributions.length !== TOTAL || new Set(contributions.map(item => item.dealerID)).size !== TOTAL) {
     throw new Error('complete unique contribution set required');
   }
@@ -352,5 +405,5 @@ function createVectorPartialDecryption({ privateShare, electionID, encryptedAggr
 module.exports = {
   P_HEX, P, G, Q, THRESHOLD, TOTAL, canonicalize, modPow,
   generateTransportKeyPair, createContribution, finalizeTrusteeShare, finalizeTranscript,
-  createVectorPartialDecryption,
+  createComplaint, validateComplaint, createVectorPartialDecryption,
 };

@@ -1,23 +1,58 @@
-# Mongbas threshold trustee
+# Mongbas DKG trustee tool
 
-This package implements the offline custody layer for a 2-of-3 Feldman DKG.
-Each organization owns an X25519 transport key and an Ed25519 contribution
-signing key. Every dealer creates a random degree-one polynomial, publishes
-Feldman commitments, and encrypts one evaluation to each trustee. A trustee
-decrypts only its addressed envelopes, verifies every evaluation against the
-commitments, and stores only its aggregate scalar share in a mode-`0600` file.
+This dependency-free Node.js tool performs the offline authenticated 2-of-3
+Feldman ceremony and creates external vector partial decryptions. Trustee
+private records and aggregate scalar shares must be stored with mode `0600`.
 
-The public transcript contains the election public key, the three public
-trustee shares, commitments, signed-contribution hashes, algorithm/group
-parameters, and a canonical transcript hash. It never contains a scalar share
-or a complete election private key.
+## Ceremony
 
-This is the first integration stage. Until chaincode election creation consumes
-the public transcript and partial decryptions are produced by these external
-trustee processes, the deployed shared-PDC path remains the active path and the
-ballot-secrecy custody gate remains failed.
+```bash
+node bin/mongbas-trustee.js init --id ElectionCommissionMSP --index 1 \
+  --private /secure/ec-key.json --public ec-public.json
+node bin/mongbas-trustee.js contribute --ceremony election-2026 \
+  --id ElectionCommissionMSP --private /secure/ec-key.json \
+  --participants participants.json --out ec-contribution.json
+```
 
-Run `npm test` in this directory for threshold reconstruction, authentication,
-wrong-recipient, mutation, missing-dealer, wrong-ceremony and forged-public-share
-tests. The CLI refuses to read private records that are not mode `0600` and
-refuses to overwrite any output.
+Every participant exchanges the public descriptor and signed/encrypted
+contribution out of band. Each recipient runs `finalize-share`; only the
+recipient can decrypt its three polynomial evaluations. `finalize-transcript`
+accepts exactly one valid contribution and public share per configured trustee.
+
+## Authenticated complaints
+
+If local verification fails, the trustee can create an attributable public
+complaint without copying its scalar share into the artifact:
+
+```bash
+node bin/mongbas-trustee.js complain --ceremony election-2026 \
+  --id ElectionCommissionMSP --dealer PartyObserverMSP \
+  --reason feldman-equation-failed \
+  --contribution-hash 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef \
+  --evidence-hash abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789 \
+  --private /secure/ec-key.json --participants participants.json \
+  --out ec-complaint.json
+```
+
+Allowed reason codes are `missing-contribution`, `invalid-signature`,
+`incomplete-recipient-set`, `envelope-authentication-failed`,
+`share-out-of-range`, and `feldman-equation-failed`.
+
+Pass a directory of complaint JSON files to transcript finalization with
+`--complaints-dir`. Every complaint is verified against the participant's
+Ed25519 key. A duplicate or any valid complaint aborts finalization with a
+non-zero exit. The current 3-party/threshold-2 protocol never silently excludes
+a dealer or changes its threshold. Robust recovery requires a separately
+specified DKG construction and participant/adversary profile.
+
+## Partial decryption
+
+```bash
+node bin/mongbas-trustee.js partial --election ELECTION_ID \
+  --private-share /secure/ec-share.json --aggregate aggregate.json \
+  --out ec-partial.json
+```
+
+The output contains public `c1^x_i` values and Chaum–Pedersen proofs, never the
+trustee scalar. Chaincode binds the submitting MSP to the trustee index and
+public share before accepting it.

@@ -5,7 +5,7 @@ const assert = require('node:assert/strict');
 const {
   P, G, Q, modPow, generateTransportKeyPair, createContribution,
   finalizeTrusteeShare, finalizeTranscript,
-  createVectorPartialDecryption,
+  createComplaint, validateComplaint, createVectorPartialDecryption,
 } = require('../src/dkg');
 
 function ceremony() {
@@ -142,6 +142,47 @@ test('transcript rejects forged or relabelled public trustee shares', () => {
     ceremonyID: value.ceremonyID, participants: value.participants,
     contributions: value.contributions, publicShares,
   }), /aggregate public share mismatch/);
+});
+
+test('authenticated complaints are attributable and force a fail-closed ceremony abort', () => {
+  const value = ceremony();
+  const contributionHash = require('node:crypto').createHash('sha256')
+    .update(JSON.stringify(value.contributions[1])).digest('hex');
+  const evidenceHash = require('node:crypto').createHash('sha256').update('redacted-local-evidence').digest('hex');
+  const complaint = createComplaint({
+    ceremonyID: value.ceremonyID, complainerID: value.ids[0], dealerID: value.ids[1],
+    reason: 'feldman-equation-failed', contributionHash, evidenceHash,
+    privateRecord: value.keyPairs[0].privateRecord, participants: value.participants,
+  });
+  assert.equal(validateComplaint(complaint, value.ceremonyID, value.participants), complaint.complaintID);
+  assert.throws(() => finalizeTranscript({
+    ceremonyID: value.ceremonyID, participants: value.participants, contributions: value.contributions,
+    publicShares: value.finalized.map(item => item.publicShare), complaints: [complaint],
+  }), new RegExp(`aborted by authenticated complaint.*${complaint.complaintID}`));
+});
+
+test('complaint mutation, relabelling and duplicate artifacts fail closed', () => {
+  const value = ceremony();
+  const crypto = require('node:crypto');
+  const complaint = createComplaint({
+    ceremonyID: value.ceremonyID, complainerID: value.ids[0], dealerID: value.ids[1], reason: 'invalid-signature',
+    contributionHash: crypto.createHash('sha256').update('contribution').digest('hex'),
+    evidenceHash: crypto.createHash('sha256').update('evidence').digest('hex'),
+    privateRecord: value.keyPairs[0].privateRecord, participants: value.participants,
+  });
+  for (const mutate of [
+    item => { item.reason = 'missing-contribution'; },
+    item => { item.dealerID = value.ids[2]; },
+    item => { item.signature = Buffer.alloc(64).toString('base64'); },
+  ]) {
+    const changed = structuredClone(complaint);
+    mutate(changed);
+    assert.throws(() => validateComplaint(changed, value.ceremonyID, value.participants), /complaint/);
+  }
+  assert.throws(() => finalizeTranscript({
+    ceremonyID: value.ceremonyID, participants: value.participants, contributions: value.contributions,
+    publicShares: value.finalized.map(item => item.publicShare), complaints: [complaint, complaint],
+  }), /duplicate DKG complaint/);
 });
 
 test('external vector partial proofs satisfy both Chaum-Pedersen equations', () => {

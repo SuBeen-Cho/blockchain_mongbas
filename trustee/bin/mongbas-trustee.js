@@ -5,13 +5,14 @@ const fs = require('node:fs');
 const path = require('node:path');
 const {
   generateTransportKeyPair, createContribution, finalizeTrusteeShare, finalizeTranscript,
-  createVectorPartialDecryption,
+  createComplaint, createVectorPartialDecryption,
 } = require('../src/dkg');
 
 function usage() {
   process.stderr.write(`Usage:
   mongbas-trustee init --id ID --index 1..3 --private FILE --public FILE
   mongbas-trustee contribute --ceremony ID --id ID --private FILE --participants FILE --out FILE
+  mongbas-trustee complain --ceremony ID --id ID --dealer ID --reason CODE --contribution-hash HEX --evidence-hash HEX --private FILE --participants FILE --out FILE
   mongbas-trustee finalize-share --ceremony ID --id ID --private FILE --participants FILE --contributions-dir DIR --private-out FILE --public-out FILE
   mongbas-trustee finalize-transcript --ceremony ID --participants FILE --contributions-dir DIR --public-shares-dir DIR --out FILE
   mongbas-trustee partial --election ID --private-share FILE --aggregate FILE --out FILE
@@ -86,6 +87,17 @@ function main() {
     process.stdout.write(`CONTRIBUTED: ${contribution.dealerID}\n`);
     return;
   }
+  if (command === 'complain') {
+    const complaint = createComplaint({
+      ceremonyID: requireArg(parsed, 'ceremony'), complainerID: requireArg(parsed, 'id'), dealerID: requireArg(parsed, 'dealer'),
+      reason: requireArg(parsed, 'reason'), contributionHash: requireArg(parsed, 'contribution-hash'),
+      evidenceHash: requireArg(parsed, 'evidence-hash'), privateRecord: readJson(requireArg(parsed, 'private'), { privateFile: true }),
+      participants: readJson(requireArg(parsed, 'participants')),
+    });
+    writeExclusive(requireArg(parsed, 'out'), complaint, 0o644);
+    process.stdout.write(`COMPLAINT: ${complaint.complaintID} dealer=${complaint.dealerID}\n`);
+    return;
+  }
   if (command === 'finalize-share') {
     const ceremonyID = requireArg(parsed, 'ceremony');
     const finalized = finalizeTrusteeShare({
@@ -105,6 +117,7 @@ function main() {
       participants: readJson(requireArg(parsed, 'participants')),
       contributions: readSchemaDirectory(requireArg(parsed, 'contributions-dir'), 'mongbas-feldman-dkg-contribution/v1'),
       publicShares: readSchemaDirectory(requireArg(parsed, 'public-shares-dir'), 'mongbas-dkg-public-share/v1'),
+	  complaints: parsed['complaints-dir'] ? readSchemaDirectory(parsed['complaints-dir'], 'mongbas-dkg-complaint/v1') : [],
     });
     writeExclusive(requireArg(parsed, 'out'), transcript, 0o644);
     process.stdout.write(`FINALIZED_TRANSCRIPT: ${transcript.transcriptHash}\n`);
