@@ -151,6 +151,27 @@ while IFS= read -r tampered; do
   printf '%s\t%s\t%s\n' "${name}" "${status}" "${verdict}" >>"${out}/tamper-results.tsv"
 done < <(find "${out}/tamper-corpus" -maxdepth 1 -type f -name '*.json' ! -name manifest.json | sort)
 
+printf 'stage\telapsedSeconds\tmaxRssKiB\n' >"${out}/resource-metrics.tsv"
+append_metrics() {
+  local stage="$1"
+  local metrics_file="$2"
+  local elapsed max_rss
+  [ -f "${metrics_file}" ] || return 0
+  elapsed="$(awk -F= '$1 == "elapsedSeconds" { print $2 }' "${metrics_file}")"
+  max_rss="$(awk -F= '$1 == "maxRssKiB" { print $2 }' "${metrics_file}")"
+  [ -n "${elapsed}" ] && [ -n "${max_rss}" ] || die "incomplete resource metrics: ${metrics_file}"
+  printf '%s\t%s\t%s\n' "${stage}" "${elapsed}" "${max_rss}" >>"${out}/resource-metrics.tsv"
+}
+append_metrics publish-existing-audit "${out}/publish-existing-audit.metrics.txt"
+append_metrics bundle-source "${out}/bundle-source.metrics.txt"
+append_metrics bundle-build "${out}/bundle-build.metrics.txt"
+append_metrics bundle-sign-ec "${out}/bundle-sign-ec.metrics.txt"
+append_metrics bundle-sign-party "${out}/bundle-sign-party.metrics.txt"
+append_metrics valid-verification "${out}/valid-verification.metrics.txt"
+while IFS= read -r metrics_file; do
+  append_metrics "tamper:$(basename "${metrics_file}" .metrics.txt)" "${metrics_file}"
+done < <(find "${out}/tamper-corpus" -maxdepth 1 -type f -name '*.metrics.txt' | sort)
+
 curl --silent --show-error --fail 'http://127.0.0.1:3000/health' >"${out}/normal-backend-final-health.json"
 (cd "${out}" && find . -type f ! -name sha256-inventory.txt -print0 | sort -z | xargs -0 sha256sum) >"${out}/sha256-inventory.txt"
 log "verifier evidence saved to ${out}"
