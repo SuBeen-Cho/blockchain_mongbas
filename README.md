@@ -45,7 +45,7 @@
 | **Exponential ElGamal 동형 집계** | 개별 ballot 평문을 열지 않고 후보별 암호문을 집계하고 threshold partial proof로 검증 |
 | **Chaum-Pedersen ZKP** | 이접적 OR-증명(CDS'94)으로 투표 유효성을 후보 선택 노출 없이 증명 |
 | **Benaloh Challenge** | AES 준비 ballot의 audit/spoil 상태를 commit하고 브라우저 재검증. 실제 vector-v3 cast와 동일 암호 경로로 통합하는 작업은 진행 중 |
-| **Threshold partial decryption (2-of-3)** | 후보별 집계 암호문에 대한 2개 이상의 검증 가능한 partial share로 최종 개표. dealerless DKG는 아직 미구현 |
+| **Authenticated DKG + threshold decryption (2-of-3)** | X25519-encrypted/Ed25519-signed Feldman contributions, three MSP transcript approvals, trustee-local shares, and CP-proved external partials. Signed complaints abort fail-closed; robust automatic exclusion remains future work |
 | **부인 가능 검증 (Deniable Verification)** | 불투명 lookup capability과 8,192-byte 고정 응답으로 기존 API oracle를 제거. PDC/backend 공모·재투표 패턴은 미해결 |
 | **Merkle Tree 검증** | 투표 포함/배제를 암호학적으로 증명 (E2E Verifiability) |
 | **Nullifier 기반 재투표** | 동일 nullifier로 재투표 시 기존 기록 덮어쓰기 — 강압 후 자유 의사 반영 가능 |
@@ -99,7 +99,7 @@
 
 | 속성 | 현재 구현·증거 | 주요 미해결 조건 |
 |---|---|---|
-| Ballot secrecy | vector ElGamal, threshold partial decryption, ballot proof | dealerless DKG, metadata privacy game, key deletion |
+| Ballot secrecy | vector ElGamal, authenticated DKG, threshold partial decryption, ballot proof, per-Unix-account custody option | separate physical administrators/HSMs, metadata privacy game, key deletion |
 | Cast-as-intended | audit-or-cast 기능 및 E2E 테스트 | 엄격한 상태기계·독립 audit 증거 |
 | Recorded-as-cast | Merkle inclusion, 서명 checkpoint·Mac witness의 prefix/fork 탐지 | complaint protocol과 독립 운영 witness |
 | Tallied-as-recorded | 후보별 동형 집계, 2-of-3 partial proof, tamper tests | 더 넓은 공모·장애 평가 |
