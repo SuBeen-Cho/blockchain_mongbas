@@ -32,9 +32,10 @@ echo "════════════════════════�
 # 서버 상태 확인
 check_server() {
   local health
-  health=$(curl -s "${URL}/health" 2>/dev/null) || { echo "[ERROR] 서버에 연결할 수 없습니다: ${URL}"; exit 1; }
+  health=$(curl --fail --silent --show-error "${URL}/health") || { echo "[ERROR] 서버에 연결할 수 없습니다: ${URL}"; exit 1; }
   echo "$health" | node -e "
     const d = JSON.parse(require('fs').readFileSync('/dev/stdin','utf8'));
+    if (d.status !== 'ok') process.exit(1);
     const i = d.idemix || {};
     console.log('  서버 상태: OK');
     console.log('  인증 모드: enabled=' + i.enabled + ' impl=' + (i.idemixImpl || i.impl || 'N/A'));
@@ -82,8 +83,9 @@ echo " (Ctrl+C로 취소 가능)"
 echo ""
 
 # 현재 서버 설정 감지 후 해당 시나리오 실행
-IMPL=$(curl -s "${URL}/health" | node -e "
+IMPL=$(curl --fail --silent --show-error "${URL}/health" | node -e "
   const d = JSON.parse(require('fs').readFileSync('/dev/stdin','utf8'));
+  if (d.status !== 'ok') process.exit(1);
   const i = d.idemix || {};
   if (!i.enabled) console.log('bypass');
   else if (i.idemixImpl === 'ps') console.log('ps');
