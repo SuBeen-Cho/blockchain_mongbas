@@ -6,6 +6,12 @@
 #
 # 실행 전제: 네트워크 기동 + 체인코드 배포 + API 서버(port 3000) 기동
 # ============================================================
+set -euo pipefail
+
+echo "[UNSUPPORTED] scripts/bench_step45.sh는 현재 credential-bound vector-v3 및 threshold ElGamal 경로 이전의 legacy workload입니다." >&2
+echo "현재 평가는 deploy/linux/benchmark.sh, dkg-live-evaluation.sh, rate-evaluation.sh를 사용하세요." >&2
+echo "이 파일은 HTTP 실패, 빈 share 및 복원 실패를 최종 exit status에 반영하지 않던 이력 때문에 증거 생성이 금지됩니다." >&2
+exit 2
 
 BASE_URL="http://localhost:3000"
 RESULT_DIR="$(dirname "$0")/../docs/performance/bench_results"
