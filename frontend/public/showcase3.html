@@ -266,11 +266,11 @@
   <header class="hero" id="top">
     <div id="unicorn" data-us-project="jGXYSFzNxRakpi9mEF4l"></div>
     <div class="hero-scrim"></div>
-    <div class="hero-wm"><span class="wmrow">MONGBAS<img class="wmlogo" src="/logo/mongbas-symbol-white.svg" alt="Mongbas 로고" /></span><small>하이퍼레저 패브릭 기반 익명 전자투표 구현</small></div>
+    <div class="hero-wm"><span class="wmrow">MONGBAS<img class="wmlogo" src="/logo/mongbas-symbol-white.svg" alt="Mongbas 로고" /></span><small>Hyperledger Fabric 기반 검증가능 전자투표 연구</small></div>
     <div class="wrap">
-      <h1>완벽한 비밀,<br>완벽한 <span class="hl">검증</span>.</h1>
-      <p>한 표는 아무도 못 보지만, 개표는 누구나 검증합니다. 하이퍼레저 패브릭 위 익명 전자투표.</p>
-      <div class="tags"><span class="htag fill">검증의 역설 해소</span><span class="htag">2-of-3 다기관 합의</span><span class="htag">강압 저항</span></div>
+      <h1>비밀투표와<br><span class="hl">검증가능성</span>을 향해.</h1>
+      <p>Hyperledger Fabric과 암호학으로 전자투표의 보안 속성을 구현하고, 공격 시험과 독립 증거로 검증하는 연구 프로토타입입니다.</p>
+      <div class="tags"><span class="htag fill">검증가능성 연구</span><span class="htag">2-of-3 임계 프로토콜</span><span class="htag">속성별 검증 중</span></div>
     </div>
     <div class="scrollcue">SCROLL<div class="b"></div></div>
   </header>
@@ -280,7 +280,7 @@
     <div class="wm reveal">PARADOX</div>
     <div class="kick reveal" style="margin-top:20px">전자투표의 근본 난제</div>
     <h2 class="stmt reveal" style="margin-top:18px">투표는 <span class="ink-i">비밀</span>이어야 한다.<br>그런데 내 표가 제대로 세어졌는지 <span class="ink-i">검증</span>하고 싶다.</h2>
-    <p class="lede reveal">비밀성과 검증가능성 — 오래 양립 불가능한 모순으로 여겨졌습니다. Mongbas는 블록체인(Hyperledger Fabric)과 암호학으로 전자투표 학술 <b style="color:var(--ink)">7대 보안 속성</b>을 모두 충족하며, 이 둘을 <b style="color:var(--ink)">동시에</b> 성립시킵니다.</p>
+    <p class="lede reveal">Mongbas는 블록체인(Hyperledger Fabric)과 암호학을 결합해 비밀성과 검증가능성을 함께 다루고, 전자투표 <b style="color:var(--ink)">7대 보안 속성</b>을 서로 다른 공격자·신뢰 가정·증거로 <b style="color:var(--ink)">분리 검증</b>합니다.</p>
   </div></section>
 
   <!-- 7대 보안 속성 (블루 블록) -->
@@ -300,11 +300,11 @@
         <div class="fhead">투표자 단말 <small>Voter Client · 폰</small></div>
         <div class="fbody">
         <div class="pulse"></div>
-        <div class="fstep"><div class="fbox solid"><span class="fn">1</span>자격증명 제시</div><div class="fnote">누가 찍는지 숨긴 채 ‘자격 있음’만 익명으로 증명</div></div>
+        <div class="fstep"><div class="fbox solid"><span class="fn">1</span>자격증명 제시</div><div class="fnote">선거에 결합된 서명 credential로 투표 자격을 검증</div></div>
         <div class="fstep"><div class="fbox"><span class="fn">2</span>고유표식 생성</div><div class="fnote">1인 1표용 일회용 번호 생성 — 신원은 노출 안 됨</div></div>
         <div class="fstep"><div class="fbox"><span class="fn">3</span>후보 암호화</div><div class="fnote">폰에서 ElGamal로 암호화, 평문은 밖으로 안 나감</div></div>
         <div class="fstep"><div class="fbox"><span class="fn">4</span>영지식 증명</div><div class="fnote">후보값은 숨긴 채 ‘정상 범위의 한 표’를 <span style="white-space:nowrap">수학적으로 증명</span></div></div>
-        <div class="fstep"><div class="fbox"><span class="fn">5</span>비공개 전송</div><div class="fnote">암호문·증명만 전송 — 오더러·공개원장엔 기록 안 됨</div></div>
+        <div class="fstep"><div class="fbox"><span class="fn">5</span>암호화 전송</div><div class="fnote">후보 선택 평문 대신 암호문·증명을 전송</div></div>
         </div>
       </div>
       <div class="fhandoff"><span>핸드오프</span><span class="arr">▶</span><span>암호문·증명만</span></div>
@@ -328,21 +328,21 @@
   <!-- 성능 -->
   <section id="perf"><div class="wrap">
     <div class="kick reveal">Performance — 정량 실측</div>
-    <h2 class="stmt reveal" style="margin-top:14px">프라이버시 보호에도,<br><span class="mark">속도는 그대로.</span></h2>
-    <p class="lede reveal">Apple M2 · Hyperledger Fabric 2.5 · 3개 기관 2-of-3 합의 환경 실측. 강력한 암호 보호를 더했는데도 체감 속도는 그대로입니다.</p>
+    <h2 class="stmt reveal" style="margin-top:14px">기능 소개가 아닌,<br><span class="mark">재현 가능한 실측.</span></h2>
+    <p class="lede reveal">Ubuntu 단일 호스트의 Fabric 복제 토폴로지에서 exact tally·장시간·고정 rate·상태 증가를 따로 측정했습니다. 물리적 다기관 분리나 임의 환경의 용량을 증명하는 결과는 아닙니다.</p>
     <div class="nums">
-      <div class="num reveal"><div class="v"><span data-c="7">0</span><span class="u">/7</span></div><div class="l">학술 보안 속성 — 100% 전부 달성</div>
+      <div class="num reveal"><div class="v"><span data-c="7">0</span><span class="u">개</span></div><div class="l">학술 보안 속성 — 속성별 검증 중</div>
         <div class="tip"><div class="tt">🛡️ <b>7대 보안 속성 검증 목표</b></div>비밀투표·의도대로·기록대로·집계대로·보편검증·자격검증·강압저항을 속성별로 구현·공격 시험·독립 증거로 검증 중입니다. 현재 7/7 완전 검증을 주장하지 않습니다.</div></div>
-      <div class="num reveal"><div class="v"><span data-c="1000">0</span><span class="u">명</span></div><div class="l">동시 접속 — 오류율 0%</div>
-        <div class="tip"><div class="tt">👥 <b>동시 1,000명 · 오류율 0%</b></div>1,000명이 동시에 투표해도 단 한 건의 오류 없이 처리. 대학 학생회·조합·기업 투표 규모를 충분히 감당합니다.</div></div>
-      <div class="num reveal"><div class="v"><span data-c="24">0</span><span class="u">ms</span></div><div class="l">폰 암호화+영지식 증명 — 체감 지연 0</div>
-        <div class="tip"><div class="tt">📱 <b>24ms 클라이언트 연산</b></div>폰에서 투표를 암호화하고 '의도대로 찍었다'는 영지식 증명을 만드는 데 0.024초. 사람은 전혀 느끼지 못합니다.</div></div>
-      <div class="num reveal"><div class="v"><span data-c="0.9" data-dec="1">0</span><span class="u">ms</span></div><div class="l">강압·정상 응답 시간차 — 통계적 비구별(p&gt;0.05)</div>
-        <div class="tip"><div class="tt">🕵️ <b>강압 저항 — 비구별</b></div>협박당해 입력하는 '패닉' 응답과 정상 응답의 시간차가 0.9ms. 통계적으로 구별 불가(p&gt;0.05)라 강압자가 눈치챌 수 없습니다.</div></div>
-      <div class="num reveal pop big"><div class="v"><span data-c="40.7" data-dec="1">0</span><span class="u">TPS</span></div><div class="l">최대 처리량 (초당 트랜잭션) — 동시 1,000명 부하</div>
-        <div class="tip"><div class="tt">⚡ <b>40.7 TPS</b></div>1초에 처리하는 투표 트랜잭션 수. Apple M2 단일 머신·3개 기관 2-of-3 합의 환경, 동시 1,000명 부하에서 측정했습니다.</div></div>
-      <div class="num reveal pop big"><div class="v"><span data-c="0.9" data-dec="1">0</span><span class="u">%</span></div><div class="l">암호 보호 추가 서버 비용 (AES→ElGamal) — 프라이버시는 거의 공짜</div>
-        <div class="tip"><div class="tt">🔐 <b>+0.9% 오버헤드</b></div>기본 암호(AES) 대비 강력한 동형암호(ElGamal)로 바꿔도 서버 지연은 0.9%만 증가. 프라이버시가 사실상 공짜입니다.</div></div>
+      <div class="num reveal"><div class="v"><span data-c="10000">0</span><span class="u">표</span></div><div class="l">상태 증가 실험 — 투표 실패 0건</div>
+        <div class="tip"><div class="tt">👥 <b>10,000표 Linux 실험</b></div>1,000표 선거 10개에서 voter operation 10,000/10,000과 Fabric transaction 20,000/20,000을 커밋하고 exact tally를 확인했습니다.</div></div>
+      <div class="num reveal"><div class="v"><span data-c="7208">0</span><span class="u">초</span></div><div class="l">장시간 실험 — 285개 선거 실패 0</div>
+        <div class="tip"><div class="tt">⏱️ <b>2시간 soak</b></div>7,208초 동안 285개 선거와 2,850표를 처리하고 투표·집계 실패 0건을 기록했습니다.</div></div>
+      <div class="num reveal"><div class="v"><span data-c="8.9" data-dec="1">0</span><span class="u">ops/s</span></div><div class="l">10,000표 실험 지속 voter operation 처리량</div>
+        <div class="tip"><div class="tt">📊 <b>8.918 voter operations/s</b></div>제공 rate 25가 지속 가능량을 넘어 queueing이 발생한 단일-host 실험입니다. 보편적 용량값으로 해석하지 않습니다.</div></div>
+      <div class="num reveal pop big"><div class="v"><span data-c="17.8" data-dec="1">0</span><span class="u">tx/s</span></div><div class="l">10,000표 실험 Fabric transaction 처리량</div>
+        <div class="tip"><div class="tt">⚡ <b>17.835 Fabric transactions/s</b></div>한 voter operation이 prepare와 cast 두 Fabric transaction을 커밋한 측정값입니다.</div></div>
+      <div class="num reveal pop big"><div class="v"><span data-c="0">0</span><span class="u">건</span></div><div class="l">현재 10,000표 workload 투표 실패</div>
+        <div class="tip"><div class="tt">✅ <b>평가 범위 내 실패 0건</b></div>해당 Linux commit·토폴로지·workload에 한정된 결과이며, 무결함이나 임의 부하의 성공을 뜻하지 않습니다.</div></div>
     </div>
   </div></section>
 
@@ -352,7 +352,7 @@
       <div>
         <div class="kick reveal">The Experience</div>
         <h2 class="stmt reveal" style="margin-top:14px">영수증 하나로<br><span class="ink-i">확실한 검증.</span></h2>
-        <p class="lede reveal">QR을 찍고, 메뉴를 고르고, 투표. 끝. 받은 추적번호 하나면 언제든 내 표가 변조 없이 집계됐는지 직접 확인할 수 있습니다.</p>
+        <p class="lede reveal">QR을 통해 투표 흐름에 접속하고, 발급된 영수증으로 기록 포함 증거를 확인하는 데모입니다. 실제 운영 안전성은 별도 신뢰 가정과 분쟁 처리를 필요로 합니다.</p>
       </div>
       <div class="phone reveal">
         <div class="notch"></div>
@@ -370,7 +370,7 @@
               <div style="font-weight:800;font-size:22px">투표 완료</div>
               <div style="color:var(--sub);font-size:13px">내 추적번호</div>
               <div class="code">7F3A-90</div>
-              <div style="color:var(--sub);font-size:12px;padding:0 10px">이 번호로 내 표가 변조 없이<br>집계됐는지 직접 확인</div>
+              <div style="color:var(--sub);font-size:12px;padding:0 10px">이 번호로 내 표의<br>기록 포함 증거를 확인</div>
             </div>
           </div>
         </div>
@@ -382,7 +382,7 @@
   <section id="screens"><div class="wrap">
     <div class="kick reveal">한 손 안에서 · Cast → Tally → Verify</div>
     <h2 class="stmt reveal" style="margin-top:14px">찍고, 세고, <span class="ink-i">검증한다.</span></h2>
-    <p class="lede reveal">폰 하나로 익명 투표의 전 과정이 끝납니다. 평문은 단말을 떠나지 않고, 결과는 2개 기관이 모여야 열리며, 내 표는 비밀키 없이 누구나 검증합니다.</p>
+    <p class="lede reveal">폰에서 후보 선택을 암호화하고, 2-of-3 임계 부분복호화와 독립 번들 verifier로 결과 증거를 확인하는 프로토타입 흐름입니다.</p>
     <div class="phones">
       <figure class="phwrap reveal">
         <div class="ph"><div class="scr">
@@ -435,7 +435,7 @@
         <div class="vr"><span class="m">✓</span>운영자조차 개별 표를 못 본다</div>
         <div class="vr"><span class="m">✓</span>누구나 비밀키 없이 전체 개표 검증</div>
         <div class="vr"><span class="m">✓</span>2-of-3 기관 합의 없인 조작 불가</div>
-        <div class="vr"><span class="m">✓</span>강압당해도 자유의사 반영(패닉)</div></div>
+        <div class="vr"><span class="m">⚠</span>강압저항성은 현재 unverified — 제한된 API 누출 보완만 실험</div></div>
     </div>
   </div></section>
 
@@ -452,7 +452,7 @@
 
   <a class="logomark reveal" href="#top" onclick="event.preventDefault();window.scrollTo({top:0,behavior:'smooth'})" aria-label="맨 위로"><img src="/logo/mongbas-symbol-mono.svg" alt="Mongbas" /><span>MONGBAS</span></a>
 
-  <footer>팀 몽바스 · 2026 캡스톤디자인 · Hyperledger Fabric 기반 익명 전자투표</footer>
+  <footer>팀 몽바스 · 2026 캡스톤디자인 · Hyperledger Fabric 기반 전자투표 연구 프로토타입</footer>
 </main>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
@@ -465,13 +465,13 @@ i.src="https://cdn.jsdelivr.net/gh/hiunicornstudio/unicornstudio.js@v2.2.1/dist/
 i.onload=function(){try{UnicornStudio.init()}catch(e){}};(document.head||document.body).appendChild(i)}})();
 
 const PROPS=[
- {n:"01",img:"vote-8597002",t:"비밀투표",en:"Ballot Secrecy",d:"누가 누구를 찍었는지 아무도 모릅니다. 운영자도, 기관도, 해커도."},
+ {n:"01",img:"vote-8597002",t:"비밀투표",en:"Ballot Secrecy",d:"2-of-3 DKG·부분복호화를 구현했지만, 단일 host root 신뢰 한계가 남아 있습니다."},
  {n:"02",img:"vote-8597093",t:"의도대로 투표",en:"Cast-as-Intended",d:"내가 고른 후보가 그대로 암호화됐는지 제출 전 확인."},
  {n:"03",img:"absentee-ballot-16977065",t:"기록대로 투표",en:"Recorded-as-Cast",d:"내 표가 변조 없이 블록체인에 기록됐는지 영수증으로 추적."},
  {n:"04",img:"conclusion-18648709",t:"기록대로 집계",en:"Tallied-as-Recorded",d:"기록된 표가 결과에 정확히 반영됐음을 수학적으로 증명."},
- {n:"05",img:"coordinate-8965026",t:"누구나 검증",en:"Universal Verifiability",d:"비밀키 없이도 전체 개표를 누구나 공개 검증."},
- {n:"06",img:"validity-18648598",t:"자격 확인",en:"Eligibility",d:"정당한 유권자만 투표. 단, 누가 했는지는 익명."},
- {n:"07",img:"workflow-18648702",t:"강압 저항",en:"Coercion Resistance",d:"협박당해도 패닉 비밀번호로 강압자를 속이고 자유의사 반영."},
+ {n:"05",img:"coordinate-8965026",t:"누구나 검증",en:"Universal Verifiability",d:"독립 번들 verifier를 구현했으며 외부 관찰자·제2 구현 검증이 남아 있습니다."},
+ {n:"06",img:"validity-18648598",t:"자격 확인",en:"Eligibility",d:"선거별 credential·nullifier·폐기 경로를 시험했으며 현재 기본은 완전 익명 credential이 아닙니다."},
+ {n:"07",img:"workflow-18648702",t:"강압 저항",en:"Coercion Resistance",d:"제한된 API transcript 누출을 보완했지만 전체 속성은 현재 unverified입니다."},
 ];
 const FILL=['b','w','b','w','w','b','w']; // 4열 체커보드
 let pgridHTML=PROPS.map((p,i)=>`<div class="pitem ${FILL[i]}"><div class="pn">${p.n} / 07</div><div class="pi"><img src="/icons/free-icon-${p.img}.png" alt=""></div><h3>${p.t}</h3><div class="pen">${p.en}</div><p>${p.d}</p></div>`).join('');
