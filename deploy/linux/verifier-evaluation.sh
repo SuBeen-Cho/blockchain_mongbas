@@ -76,10 +76,16 @@ for _ in $(seq 1 60); do
 done
 [ "${ready}" -eq 1 ] || die "bundle-export backend did not become ready"
 
-MONGBAS_PROBE_URL="http://127.0.0.1:${port}" MONGBAS_PROBE_VOTES=3 MONGBAS_PROBE_AUDIT_BALLOTS=1 MONGBAS_PROBE_PUBLISH_AUDIT=true \
-  node "${MONGBAS_REPO_DIR}/application/scripts/fault-probe.js" >"${out}/live-election.json" 2>"${out}/live-election.stderr.log" \
-  || die "three-ballot live election probe failed"
-election_id="$(node -e 'const value=require(process.argv[1]); if (!/^[A-Za-z0-9._-]+$/.test(value.electionID)) process.exit(1); process.stdout.write(value.electionID)' "${out}/live-election.json")"
+election_id="${MONGBAS_VERIFIER_ELECTION_ID:-}"
+if [ -z "${election_id}" ]; then
+  MONGBAS_PROBE_URL="http://127.0.0.1:${port}" MONGBAS_PROBE_VOTES=3 MONGBAS_PROBE_AUDIT_BALLOTS=1 MONGBAS_PROBE_PUBLISH_AUDIT=true \
+    node "${MONGBAS_REPO_DIR}/application/scripts/fault-probe.js" >"${out}/live-election.json" 2>"${out}/live-election.stderr.log" \
+    || die "three-ballot live election probe failed"
+  election_id="$(node -e 'const value=require(process.argv[1]); if (!/^[A-Za-z0-9._-]+$/.test(value.electionID)) process.exit(1); process.stdout.write(value.electionID)' "${out}/live-election.json")"
+else
+  [[ "${election_id}" =~ ^[A-Za-z0-9._-]+$ ]] || die "MONGBAS_VERIFIER_ELECTION_ID is invalid"
+  printf '{"electionID":"%s","source":"pre-existing"}\n' "${election_id}" >"${out}/live-election.json"
+fi
 curl --silent --show-error --fail "http://127.0.0.1:${port}/api/elections/${election_id}/election-bundle-source" \
   >"${out}/bundle-source.json"
 stop_backend

@@ -7,13 +7,13 @@ const { canonicalize } = require('../src/verify');
 
 const [input, outputDirectory] = process.argv.slice(2);
 if (!input || !outputDirectory) {
-  process.stderr.write('Usage: mongbas-tamper-corpus <valid-vector-v4-bundle.json> <output-directory>\n');
+  process.stderr.write('Usage: mongbas-tamper-corpus <valid-vector-v4-or-v5-bundle.json> <output-directory>\n');
   process.exit(2);
 }
 
 try {
   const bundle = JSON.parse(fs.readFileSync(path.resolve(input), 'utf8'));
-  if (bundle.schema !== 'mongbas-election-bundle/v4' || bundle.ballots?.length < 2) {
+  if (!['mongbas-election-bundle/v4', 'mongbas-election-bundle/v5'].includes(bundle.schema) || bundle.ballots?.length < 2) {
     throw new Error('a vector-v3 bundle with at least two ballots is required');
   }
   const mutations = {
@@ -40,6 +40,16 @@ try {
     'audit-randomness-changed': value => { value.vectorAuditDisclosures[0].randomness[0] = '1'; },
     'audited-ciphertext-changed': value => { value.vectorAuditDisclosures[0].encryptedCandidateVector[0].c2 = '2'; },
   };
+	if (bundle.schema === 'mongbas-election-bundle/v5') {
+	  Object.assign(mutations, {
+		'dkg-approval-deleted': value => { value.keyCeremony.approvals.pop(); },
+		'dkg-transcript-hash-changed': value => { value.keyCeremony.transcriptHash = '00'.repeat(32); },
+		'dkg-commitment-changed': value => { value.keyCeremony.transcript.contributions[0].commitments.linear = '2'; },
+		'dkg-public-share-changed': value => { value.keyCeremony.transcript.publicShares[0].publicKeyY = value.keyCeremony.transcript.publicShares[1].publicKeyY; },
+		'dkg-election-key-changed': value => { value.keyCeremony.transcript.electionPublicKeyY = value.keyCeremony.transcript.publicShares[0].publicKeyY; },
+		'dkg-bundle-share-changed': value => { value.trusteePublicShares[0].publicKeyY = value.trusteePublicShares[1].publicKeyY; },
+	  });
+	}
   fs.mkdirSync(path.resolve(outputDirectory), { recursive: true, mode: 0o700 });
   const manifest = [];
   for (const [name, mutate] of Object.entries(mutations)) {
