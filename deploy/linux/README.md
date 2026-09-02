@@ -78,6 +78,10 @@ MONGBAS_PROFILE=benchmark ./deploy/linux/vector-audit-or-cast-evaluation.sh
 MONGBAS_PROFILE=benchmark ./deploy/linux/benchmark.sh
 MONGBAS_PROFILE=benchmark MONGBAS_CONCURRENCY_LEVELS=1,5,10,25,50 ./deploy/linux/concurrency-benchmark.sh
 MONGBAS_PROFILE=benchmark ./deploy/linux/rate-evaluation.sh
+
+# Incremental ledger/CouchDB growth for exactly 1,000 authoritative vector-v3 ballots
+MONGBAS_PROFILE=benchmark MONGBAS_STATE_GROWTH_BALLOTS=1000 \
+  ./deploy/linux/state-growth-evaluation.sh
 MONGBAS_PROFILE=benchmark ./deploy/linux/fault-evaluation.sh
 MONGBAS_PROFILE=benchmark ./deploy/linux/critical-fault-evaluation.sh
 MONGBAS_RUNTIME_DIR=/home/user1/mongbas-runtime ./deploy/linux/pdc-custody-evaluation.sh
@@ -125,6 +129,8 @@ N=100 측정은 독립된 loopback 벤치마크 백엔드를 `DISABLE_RATE_LIMIT
 `trustee-custody-bootstrap.sh`와 `trustee-custody-evaluation.sh`는 root 권한으로 `mongbas-ec`, `mongbas-party`, `mongbas-civil` non-login 계정을 생성하고 각 계정이 자신의 0600 scalar share만 소유하게 한다. 공개 contribution/transcript만 공유 group으로 교환하며, 일반 operator의 접근 0/3과 trustee 상호 교차 접근 0/6을 모두 요구한다. `os-trustee-live-evaluation.sh`는 소유자별 share로 실제 partial을 생성하고 MSP/index/effective UID/share owner/output owner를 scalar 없이 기록한다. 이는 Unix DAC 경계이지 실제 기관 독립성이 아니다. 같은 호스트의 root는 모든 share에 접근할 수 있으므로 evidence는 `physicalHostIndependent=false`, `rootAdministratorTrusted=true`를 기록한다. 스크립트는 시스템 계정과 `/var/lib/mongbas-trustees`, `/opt/mongbas-trustee`를 생성하므로 실행 전에 운영 범위를 확인한다.
 `longevity-evaluation.sh`는 일반 3000 번 백엔드를 건드리지 않고 loopback 3001 번에 rate-limit을 해제한 독립 측정 백엔드를 기동한다. `steady`는 기본 30분, `soak`는 기본 2시간 동안 반복 라운드의 0건 실패, exact tally, 2개 이상의 partial-decryption proof, 자원·컨테이너 상태를 검증한다. 개발자용 짧은 dry run만 `MONGBAS_LONGEVITY_SECONDS`(60초 이상)로 조정하며, 정식 평가는 기본 시간을 사용한다.
 `rate-evaluation.sh`는 loopback 3002 번의 격리 backend에서 실제 credential-bound nullifier, vector-v3 proof, Fabric commit과 exact threshold tally를 유지하며 고정 offered-rate를 측정한다. 한 유권자 작업은 `prepare-vector`와 `cast-vector` 두 Fabric commit이므로 보고서는 voter-operation TPS와 Fabric transaction TPS, 두 단계 latency를 분리한다. 기본 60초/1회는 자동화 검증용 예비 측정이다. 논문용 실행은 `MONGBAS_RATE_DURATION_SECONDS=600`, `MONGBAS_RATE_REPEATS=5`, `MONGBAS_RATE_LEVELS=1,5,10,25,50`으로 수행하고 raw report와 SHA inventory를 보존한다. 기존 `caliper/workloads/castVote.js`는 bypass credential과 plaintext candidate를 직접 chaincode에 보내는 legacy workload이므로 vector-v3 결과로 인용하지 않는다.
+
+`state-growth-evaluation.sh`는 위의 엄격한 fixed-rate workload를 재사용하고 실행 전후 4개 peer, 4개 orderer, 4개 CouchDB의 영속 디렉터리 크기를 측정한다. 기본은 1,000표이며 `MONGBAS_STATE_GROWTH_BALLOTS`는 100–90,000 범위에서 offered rate로 나누어떨어져야 한다. 결과는 대상별 KiB 델타와 총 bytes/ballot을 보고한다. 이 값은 기존 ledger에 추가된 증분이며, Fabric 선정리·CouchDB compaction·백업을 포함한 운영 용량으로 일반화하지 않는다.
 `verifier-evaluation.sh`는 live vector-v3 선거를 만들거나 `MONGBAS_VERIFIER_ELECTION_ID`로 기존 DKG 선거를 재사용한다. bundle source를 export·임시 2-of-3 Ed25519 서명한 후 `npm pack` clean verifier로 honest exit 0과 모든 corpus exit 1을 요구한다. v4는 22개, DKG v5는 추가 6개를 포함한 28개다. 임시 private key는 result에 저장하지 않고 서명 후 삭제하며, single-host 임시 서명은 기관 독립성 증거로 해석하지 않는다.
 
 `coercion-evaluation.sh`는 격리 backend에서 opaque normal/panic proof capability를 무작위 균형 순서로 조회한다. target nullifier 노출, byte size, latency를 raw JSONL로 보존하고, 훈련/평가를 분리한 threshold classifier와 Wilson 95% CI를 보고한다. 이 gate는 동일 호스트 API transcript만 평가하며 PDC/backend 공모, 공개 revote pattern, compromised client를 증명하지 않는다.
