@@ -30,8 +30,8 @@ ls bin/cryptogen      # 설치 확인 (cryptogen·configtxgen·peer·orderer)
 
 ### 0-4. 의존성 설치 + 환경변수
 ```bash
-cd application && cp .env.example .env && npm install   # .env 값(SESSION_SECRET 등) 설정
-cd ../frontend && npm install
+cd application && cp .env.example .env && npm ci --omit=optional   # .env 값(SESSION_SECRET 등) 설정
+cd ../frontend && npm ci
 cd ..
 ```
 
