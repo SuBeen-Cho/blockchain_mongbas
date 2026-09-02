@@ -12,9 +12,8 @@
  *
  * [C단계] BBS+ on BLS12-381 — 개선 Idemix (IDEMIX_IMPL=bbs)
  *   - IRTF CFRG BBS 표준 (draft-irtf-cfrg-bbs-signatures)
- *   - 선택적 공개: voterEligible만 공개, electionID/exp는 ZKP로 숨김
- *   - 매 요청마다 새로운 proof → 완전 비연결성
- *   - Rust WASM 구현 → 순수 JS 대비 4-8x 빠름
+ *   - 현재 프로토타입은 proof 검증에 필요한 속성을 모두 전송한다.
+ *   - 비연결성·선택적 공개·비교 속도는 별도 보안/성능 검증 없이 주장하지 않는다.
  *
  * 엔드포인트:
  *   POST /api/credential/idemix       — 자격증명 발급

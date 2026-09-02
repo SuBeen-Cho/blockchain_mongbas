@@ -16,7 +16,14 @@
 'use strict';
 
 const http = require('http');
-const fs   = require('fs');
+const {
+  isSuccessfulHttpStatus,
+  requireHttpSuccess,
+  isAcceptedAuth,
+  requireExactSuccess,
+  requireRequestSeries,
+  writeJsonEvidenceExclusive,
+} = require('./evidence-contract');
 
 const args = {};
 process.argv.slice(2).forEach((a, i, arr) => {
@@ -89,7 +96,7 @@ function stats(arr) {
 // ── TPS 측정 ──────────────────────────────────────────────────
 async function measureTPS(label, url, headers, concurrency, durationMs) {
   const latencies = [];
-  let total = 0, errors = 0, finished = false;
+  let total = 0, successCount = 0, overloadErrorCount = 0, contractErrorCount = 0, finished = false;
 
   async function worker() {
     while (!finished) {
@@ -97,24 +104,38 @@ async function measureTPS(label, url, headers, concurrency, durationMs) {
       try {
         const u = new URL(url);
         await new Promise(resolve => {
+          let settled = false;
+          const finish = kind => {
+            if (settled) return;
+            settled = true;
+            total++;
+            if (kind === 'success') successCount++;
+            else if (kind === 'overload') overloadErrorCount++;
+            else contractErrorCount++;
+            resolve();
+          };
           const req = http.request({
             hostname: u.hostname, port: u.port || 80,
             path: u.pathname, method: 'GET', headers,
           }, res => {
-            res.resume();
+            let buf = '';
+            res.on('data', chunk => { buf += chunk; });
             res.on('end', () => {
-              total++;
               const ms = Number(process.hrtime.bigint() - t) / 1e6;
-              if (res.statusCode >= 200 && res.statusCode < 400) latencies.push(ms);
-              else errors++;
-              resolve();
+              let body;
+              try { body = JSON.parse(buf); } catch { body = null; }
+              if (isAcceptedAuth({ status: res.statusCode, body })) {
+                latencies.push(ms);
+                finish('success');
+              } else if (res.statusCode >= 500) finish('overload');
+              else finish('contract');
             });
           });
-          req.on('error', () => { errors++; total++; resolve(); });
-          req.setTimeout(10000, () => { req.destroy(); errors++; total++; resolve(); });
+          req.on('error', () => finish('overload'));
+          req.setTimeout(10000, () => { req.destroy(); finish('overload'); });
           req.end();
         });
-      } catch { errors++; total++; }
+      } catch { total++; overloadErrorCount++; }
     }
   }
 
@@ -128,15 +149,18 @@ async function measureTPS(label, url, headers, concurrency, durationMs) {
   return {
     label, concurrency,
     durationSec:  +elapsed.toFixed(2),
-    tps:          +(total / elapsed).toFixed(1),
-    errorCount:   errors,
-    errorRate:    +((errors / Math.max(total, 1)) * 100).toFixed(2),
+    total, successCount, overloadErrorCount, contractErrorCount,
+    tps:          +(successCount / elapsed).toFixed(1),
+    successTps:   +(successCount / elapsed).toFixed(1),
+    attemptTps:   +(total / elapsed).toFixed(1),
+    errorCount:   overloadErrorCount + contractErrorCount,
+    errorRate:    +(((overloadErrorCount + contractErrorCount) / Math.max(total, 1)) * 100).toFixed(2),
     latency:      stats(latencies),
   };
 }
 
 // ── 발급 레이턴시 측정 ─────────────────────────────────────────
-async function measureIssuance(n = 50) {
+async function measureIssuance(n = 50, expectedCredType) {
   const latencies = [];
   let sample = null;
   for (let i = 0; i < n; i++) {
@@ -144,13 +168,14 @@ async function measureIssuance(n = 50) {
       enrollmentID: 'voter1', enrollmentSecret: 'voter1pw',
       electionID: `BENCH_ISSUE_${i}`,
     });
-    if (r.status === 200 && r.body?.credential) {
+    if (isSuccessfulHttpStatus(r.status) && typeof r.body?.credential === 'string' &&
+        r.body.credential.length > 0 && r.body.credType === expectedCredType) {
       latencies.push(r.ms);
       if (!sample) sample = r.body;
     }
   }
   return {
-    n, latency: stats(latencies),
+    n, successCount: latencies.length, failureCount: n - latencies.length, latency: stats(latencies),
     credType: sample?.credType || 'unknown',
     credSizeBytes: sample ? Buffer.byteLength(sample.credential, 'utf8') : 0,
   };
@@ -159,11 +184,13 @@ async function measureIssuance(n = 50) {
 // ── 인증 레이턴시 측정 (단일) ─────────────────────────────────
 async function measureAuthLatency(url, headers, n = 50) {
   const latencies = [];
+  let errorCount = 0;
   for (let i = 0; i < n; i++) {
     const r = await get(url, headers);
-    if (r.status < 500) latencies.push(r.ms);
+    if (isAcceptedAuth(r)) latencies.push(r.ms);
+    else errorCount++;
   }
-  return { n, latency: stats(latencies) };
+  return { n, successCount: latencies.length, errorCount, latency: stats(latencies) };
 }
 
 // ── 서버 대기 ─────────────────────────────────────────────────
@@ -171,7 +198,10 @@ async function waitForServer() {
   for (let i = 0; i < 30; i++) {
     try {
       const r = await get(`${BASE_URL}/health`);
-      if (r.status === 200) return r.body;
+      if (r.status === 200 && r.body?.status === 'ok' &&
+          r.body?.benchmark?.authEndpointEnabled === true &&
+          r.body?.benchmark?.rateLimitsDisabled === true &&
+          r.body?.benchmark?.demoCredentialsEnabled === true) return r.body;
     } catch { /* retry */ }
     await new Promise(r => setTimeout(r, 500));
   }
@@ -192,10 +222,28 @@ async function runPhase(phaseName, note) {
   const authURL = `${BASE_URL}/api/bench/auth`;
   const result  = { phase: phaseName, note, idemixInfo: idemix, timestamp: new Date().toISOString() };
 
+  let credential = null;
+  const expectedCredType = {
+    HMAC: 'HMAC-SHA256', Ed25519: 'Ed25519-asym', B: 'PS-BN254', C: 'BBS+-BLS12381',
+  }[phaseName] || null;
+  if (idemix.mode !== 'bypass') {
+    const cr = requireHttpSuccess(await post(`${BASE_URL}/api/credential/idemix`, {
+      enrollmentID: 'voter1', enrollmentSecret: 'voter1pw', electionID: 'BENCH_FIXED',
+    }), 'fixed credential issuance');
+    if (typeof cr.body?.credential !== 'string' || cr.body.credential.length === 0 ||
+        cr.body.credType !== expectedCredType) {
+      throw new Error(`fixed credential issuance: expected nonempty ${expectedCredType} credential`);
+    }
+    credential = cr.body.credential;
+  }
+  const authHeaders = credential ? { 'x-idemix-credential': credential } : {};
+
   // ── [1] Credential 발급 레이턴시 ────────────────────────────
   if (idemix.mode !== 'bypass') {
     console.log('\n  [1/4] Credential 발급 레이턴시 (50회 순차)...');
-    result.issuance = await measureIssuance(50);
+    result.issuance = await measureIssuance(50, expectedCredType);
+    requireExactSuccess('credential issuance', result.issuance.n,
+      result.issuance.successCount, result.issuance.failureCount);
     const s = result.issuance.latency;
     console.log(`  → avg: ${s.avg}ms  P95: ${s.p95}ms  min: ${s.min}ms  max: ${s.max}ms`);
     console.log(`  → credType: ${result.issuance.credType}  size: ${result.issuance.credSizeBytes}B`);
@@ -205,17 +253,10 @@ async function runPhase(phaseName, note) {
   }
 
   // ── [2] 자격증명 획득 + 인증 레이턴시 ───────────────────────
-  let credential = null;
-  if (idemix.mode !== 'bypass') {
-    const cr = await post(`${BASE_URL}/api/credential/idemix`, {
-      enrollmentID: 'voter1', enrollmentSecret: 'voter1pw', electionID: 'BENCH_FIXED',
-    });
-    credential = cr.body?.credential || null;
-  }
-  const authHeaders = credential ? { 'x-idemix-credential': credential } : {};
-
   console.log('\n  [2/4] 인증 레이턴시 분포 (50회 순차)...');
   result.authLatency = await measureAuthLatency(authURL, authHeaders, 50);
+  requireExactSuccess('sequential authentication', result.authLatency.n,
+    result.authLatency.successCount, result.authLatency.errorCount);
   const s = result.authLatency.latency;
   console.log(`  → avg: ${s.avg}ms  P50: ${s.p50}ms  P95: ${s.p95}ms  P99: ${s.p99}ms`);
 
@@ -225,6 +266,7 @@ async function runPhase(phaseName, note) {
   for (const c of [1, 5, 10, 20]) {
     process.stdout.write(`  workers=${c}... `);
     const r = await measureTPS(`${phaseName}-c${c}`, authURL, authHeaders, c, STEP_SEC * 1000);
+    requireRequestSeries(`${phaseName} concurrency ${c}`, r);
     result.concurrencyTPS.push(r);
     console.log(`TPS=${r.tps}  avg=${r.latency.avg}ms  P99=${r.latency.p99}ms  err=${r.errorCount}`);
   }
@@ -232,12 +274,15 @@ async function runPhase(phaseName, note) {
   // ── [4] 스트레스 테스트 ──────────────────────────────────────
   console.log('\n  [4/4] 스트레스 테스트 (20 workers × 15초)...');
   result.stressTest = await measureTPS(`${phaseName}-stress`, authURL, authHeaders, 20, 15000);
+  requireRequestSeries(`${phaseName} stress`, result.stressTest);
   const st = result.stressTest;
   console.log(`  → TPS=${st.tps}  avg=${st.latency.avg}ms  P99=${st.latency.p99}ms  에러율=${st.errorRate}%`);
 
   // 메모리 최종 스냅샷
   const mem = await get(`${BASE_URL}/health`);
   result.memoryAfter = mem.body?.memory || null;
+
+  result.evidenceValid = true;
 
   return result;
 }
@@ -298,8 +343,7 @@ function printSummary(phases) {
     console.log(`  인증 레이턴시: ${bAuth}ms → ${cAuth}ms  (${(bAuth/cAuth).toFixed(2)}x 향상)`);
     console.log(`  발급 레이턴시: ${bIssue}ms → ${cIssue}ms  (${(bIssue/cIssue).toFixed(2)}x 향상)`);
     console.log(`  스트레스 TPS:  ${bTps} → ${cTps}  (${(cTps/bTps).toFixed(2)}x 향상)`);
-    console.log(`  비연결성: B=결정론적 h, C=매 요청 fresh nonce proof`);
-    console.log(`  선택적 공개: B=전체 속성 노출, C=voterEligible만 공개`);
+    console.log('  보안 속성(비연결성/선택적 공개)은 이 성능 벤치마크로 입증하지 않음');
   }
   console.log('═'.repeat(70));
 }
@@ -317,7 +361,7 @@ async function main() {
   } else if (impl === 'ps') {
     phaseName = 'B'; note = 'PS-BN254 credential prototype (Fabric Idemix 호환성 미주장)';
   } else if (impl === 'bbs') {
-    phaseName = 'C'; note = 'BBS+-BLS12381 (IRTF CFRG 표준, 선택적 공개 ZKP)';
+    phaseName = 'C'; note = 'BBS+-BLS12381 credential prototype (현재 구현 실측)';
   } else if (idemix.asymEnabled) {
     phaseName = 'Ed25519'; note = 'Ed25519 공개키 credential (체인코드 직접 검증 기준선)';
   } else {
@@ -328,7 +372,7 @@ async function main() {
   printSummary([phaseResult]);
 
   if (OUT_FILE) {
-    fs.writeFileSync(OUT_FILE, JSON.stringify(phaseResult, null, 2));
+    writeJsonEvidenceExclusive(OUT_FILE, phaseResult);
     console.log(`\n  결과 저장: ${OUT_FILE}`);
   }
 }

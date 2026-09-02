@@ -142,7 +142,11 @@ app.get('/health', (_req, res) => {
     status:    'ok',
     timestamp: new Date().toISOString(),
     idemix:    idemixStatus(),
-    benchmark: { rateLimitsDisabled: DISABLE_RATE_LIMITS },
+    benchmark: {
+      authEndpointEnabled: runtimeSecurity.benchEndpoints,
+      rateLimitsDisabled: DISABLE_RATE_LIMITS,
+      demoCredentialsEnabled: process.env.ENABLE_DEMO_CREDENTIALS === 'true',
+    },
     demo: { endpointsEnabled: demoEndpointsEnabled() },
     fabricConcurrency: fabricConcurrencyGate.status(),
     memory: {

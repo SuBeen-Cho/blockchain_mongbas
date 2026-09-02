@@ -21,6 +21,14 @@
 const http = require('http');
 const fs   = require('fs');
 const path = require('path');
+const {
+  isSuccessfulHttpStatus,
+  requireHttpSuccess,
+  isAcceptedAuth,
+  requireExactSuccess,
+  requireRequestSeries,
+  writeJsonEvidenceExclusive,
+} = require('./evidence-contract');
 
 const args = {};
 process.argv.slice(2).forEach((a, i, arr) => {
@@ -95,7 +103,7 @@ function stats(arr) {
 // ── TPS 측정 (단일 동시성 수준) ───────────────────────────────
 async function measureTPS(label, url, headers, concurrency, durationMs) {
   const latencies = [];
-  let total = 0, errors = 0, finished = false;
+  let total = 0, successCount = 0, overloadErrorCount = 0, contractErrorCount = 0, finished = false;
 
   async function worker() {
     while (!finished) {
@@ -103,24 +111,38 @@ async function measureTPS(label, url, headers, concurrency, durationMs) {
       try {
         const u = new URL(url);
         await new Promise(resolve => {
+          let settled = false;
+          const finish = kind => {
+            if (settled) return;
+            settled = true;
+            total++;
+            if (kind === 'success') successCount++;
+            else if (kind === 'overload') overloadErrorCount++;
+            else contractErrorCount++;
+            resolve();
+          };
           const req = http.request({
             hostname: u.hostname, port: u.port || 80,
             path: u.pathname, method: 'GET', headers,
           }, res => {
-            res.resume();
+            let buf = '';
+            res.on('data', chunk => { buf += chunk; });
             res.on('end', () => {
-              total++;
               const ms = Number(process.hrtime.bigint() - start) / 1e6;
-              if (res.statusCode < 500) latencies.push(ms);
-              else errors++;
-              resolve();
+              let body;
+              try { body = JSON.parse(buf); } catch { body = null; }
+              if (isAcceptedAuth({ status: res.statusCode, body })) {
+                latencies.push(ms);
+                finish('success');
+              } else if (res.statusCode >= 500) finish('overload');
+              else finish('contract');
             });
           });
-          req.on('error', () => { errors++; total++; resolve(); });
-          req.setTimeout(5000, () => { req.destroy(); errors++; total++; resolve(); });
+          req.on('error', () => finish('overload'));
+          req.setTimeout(5000, () => { req.destroy(); finish('overload'); });
           req.end();
         });
-      } catch { errors++; total++; }
+      } catch { total++; overloadErrorCount++; }
     }
   }
 
@@ -135,15 +157,21 @@ async function measureTPS(label, url, headers, concurrency, durationMs) {
     label,
     concurrency,
     durationSec:  +elapsed.toFixed(2),
-    tps:          +(total / elapsed).toFixed(1),
-    errorCount:   errors,
-    errorRate:    +((errors / Math.max(total, 1)) * 100).toFixed(2),
+    total,
+    successCount,
+    overloadErrorCount,
+    contractErrorCount,
+    tps:          +(successCount / elapsed).toFixed(1),
+    successTps:   +(successCount / elapsed).toFixed(1),
+    attemptTps:   +(total / elapsed).toFixed(1),
+    errorCount:   overloadErrorCount + contractErrorCount,
+    errorRate:    +(((overloadErrorCount + contractErrorCount) / Math.max(total, 1)) * 100).toFixed(2),
     latency:      stats(latencies),
   };
 }
 
 // ── Credential 발급 레이턴시 측정 ─────────────────────────────
-async function measureCredIssuance(n = 100) {
+async function measureCredIssuance(n = 100, expectedCredType) {
   const results = [];
   let sample = null;
 
@@ -152,7 +180,8 @@ async function measureCredIssuance(n = 100) {
       enrollmentID: 'voter1', enrollmentSecret: 'voter1pw',
       electionID: `BENCH_${i}`,
     });
-    if (r.status === 200 && r.body?.credential) {
+    if (isSuccessfulHttpStatus(r.status) && typeof r.body?.credential === 'string' &&
+        r.body.credential.length > 0 && r.body.credType === expectedCredType) {
       results.push(r.ms);
       if (!sample) sample = r.body;
     }
@@ -160,6 +189,8 @@ async function measureCredIssuance(n = 100) {
 
   return {
     n,
+    successCount: results.length,
+    failureCount: n - results.length,
     successRate: +((results.length / n) * 100).toFixed(1),
     latency:     stats(results),
     credType:    sample?.credType || 'unknown',
@@ -177,12 +208,14 @@ async function measureCredIssuance(n = 100) {
 // ── Cold Start 측정 ───────────────────────────────────────────
 async function measureColdStart(url, headers, n = 20) {
   const latencies = [];
+  let errorCount = 0;
   for (let i = 0; i < n; i++) {
     const r = await get(url, headers);
-    if (r.status < 500) latencies.push(r.ms);
+    if (isAcceptedAuth(r)) latencies.push(r.ms);
+    else errorCount++;
     await new Promise(r => setTimeout(r, 50)); // 50ms 간격
   }
-  return { n, latency: stats(latencies) };
+  return { n, successCount: latencies.length, errorCount, latency: stats(latencies) };
 }
 
 // ── 서버 메모리 조회 ──────────────────────────────────────────
@@ -199,7 +232,10 @@ async function waitForServer(maxWaitMs = 15000) {
   while (Date.now() < deadline) {
     try {
       const r = await get(`${BASE_URL}/health`);
-      if (r.status === 200) return r.body;
+      if (r.status === 200 && r.body?.status === 'ok' &&
+          r.body?.benchmark?.authEndpointEnabled === true &&
+          r.body?.benchmark?.rateLimitsDisabled === true &&
+          r.body?.benchmark?.demoCredentialsEnabled === true) return r.body;
     } catch { /* retry */ }
     await new Promise(r => setTimeout(r, 300));
   }
@@ -219,15 +255,35 @@ async function runPhase(phaseName, note) {
   const authURL   = `${BASE_URL}/api/bench/auth`;
   const result    = { phase: phaseName, note, idemixInfo, timestamp: new Date().toISOString() };
 
+  let credential = null;
+  const expectedCredType = idemixInfo.mode === 'bypass' ? null : {
+    hmac: 'HMAC-SHA256', ed25519: 'Ed25519-asym', ps: 'PS-BN254', bbs: 'BBS+-BLS12381',
+  }[idemixInfo.idemixImpl === 'hmac' && idemixInfo.asymEnabled ? 'ed25519' : idemixInfo.idemixImpl];
+  if (idemixInfo.mode !== 'bypass') {
+    const cr = requireHttpSuccess(await post(`${BASE_URL}/api/credential/idemix`, {
+      enrollmentID: 'voter1', enrollmentSecret: 'voter1pw', electionID: 'BENCH_FIXED',
+    }), 'fixed credential issuance');
+    if (typeof cr.body?.credential !== 'string' || cr.body.credential.length === 0 ||
+        cr.body.credType !== expectedCredType) {
+      throw new Error(`fixed credential issuance: expected nonempty ${expectedCredType} credential`);
+    }
+    credential = cr.body.credential;
+  }
+  const authHeaders = credential ? { 'x-idemix-credential': credential } : {};
+
   // ── 1. Cold Start ────────────────────────────────────────────
   console.log('\n  [1/6] Cold Start 레이턴시 (20회, 50ms 간격)...');
-  result.coldStart = await measureColdStart(authURL, {}, 20);
+  result.coldStart = await measureColdStart(authURL, authHeaders, 20);
+  requireExactSuccess('cold-start authentication', result.coldStart.n,
+    result.coldStart.successCount, result.coldStart.errorCount);
   console.log(`  → avg: ${result.coldStart.latency.avg}ms  min: ${result.coldStart.latency.min}ms  max: ${result.coldStart.latency.max}ms`);
 
   // ── 2. Credential 발급 측정 (bypass 단계는 skip) ─────────────
   if (idemixInfo.mode !== 'bypass') {
     console.log('\n  [2/6] Credential 발급 레이턴시 (100회)...');
-    result.credIssuance = await measureCredIssuance(100);
+    result.credIssuance = await measureCredIssuance(100, expectedCredType);
+    requireExactSuccess('credential issuance', result.credIssuance.n,
+      result.credIssuance.successCount, result.credIssuance.failureCount);
     console.log(`  → avg: ${result.credIssuance.latency.avg}ms  P95: ${result.credIssuance.latency.p95}ms`);
     console.log(`  → 크기: ${result.credIssuance.credSizeBytes} bytes  타입: ${result.credIssuance.credType}`);
     console.log(`  → payload 필드: [${result.credIssuance.payloadFields.join(', ')}]`);
@@ -236,22 +292,13 @@ async function runPhase(phaseName, note) {
     result.credIssuance = null;
   }
 
-  // ── 3. credential 헤더 준비 ──────────────────────────────────
-  let credential = null;
-  if (idemixInfo.mode !== 'bypass') {
-    const cr = await post(`${BASE_URL}/api/credential/idemix`, {
-      enrollmentID: 'voter1', enrollmentSecret: 'voter1pw', electionID: 'BENCH_FIXED',
-    });
-    credential = cr.body?.credential || null;
-  }
-  const authHeaders = credential ? { 'x-idemix-credential': credential } : {};
-
   // ── 4. 동시성별 TPS 곡선 ─────────────────────────────────────
   console.log('\n  [3/6] 동시성별 TPS 측정 (1→5→10→20→50 workers)...');
   result.concurrencyTPS = [];
   for (const c of [1, 5, 10, 20, 50]) {
     process.stdout.write(`  workers=${c}... `);
     const r = await measureTPS(`${phaseName}-c${c}`, authURL, authHeaders, c, STEP_SEC * 1000);
+    requireRequestSeries(`${phaseName} concurrency ${c}`, r);
     result.concurrencyTPS.push(r);
     console.log(`TPS=${r.tps}  avg=${r.latency.avg}ms  P99=${r.latency.p99}ms  err=${r.errorCount}`);
   }
@@ -261,6 +308,7 @@ async function runPhase(phaseName, note) {
     console.log('\n  [4/6] 캐시 비교 — 동일 credential 반복 요청 (500회, 단일 워커)...');
     const noCache = [];
     const withCache = [];
+    let cacheErrors = 0;
 
     // 캐시 없이 500회 (서버 IDEMIX_CACHE_ENABLED 값 그대로)
     for (let i = 0; i < 500; i++) {
@@ -268,17 +316,21 @@ async function runPhase(phaseName, note) {
       const cr = await post(`${BASE_URL}/api/credential/idemix`, {
         enrollmentID: 'voter1', enrollmentSecret: 'voter1pw', electionID: `CACHE_TEST_${i}`,
       });
-      if (cr.body?.credential) {
+      if (isSuccessfulHttpStatus(cr.status) && cr.body?.credential) {
         const r = await get(authURL, { 'x-idemix-credential': cr.body.credential });
-        noCache.push(r.ms);
-      }
+        if (isAcceptedAuth(r)) noCache.push(r.ms);
+        else cacheErrors++;
+      } else cacheErrors++;
     }
 
     // 동일 credential 반복 (캐시 히트 유도)
     for (let i = 0; i < 500; i++) {
       const r = await get(authURL, { 'x-idemix-credential': credential });
-      withCache.push(r.ms);
+      if (isAcceptedAuth(r)) withCache.push(r.ms);
+      else cacheErrors++;
     }
+
+    requireExactSuccess('cache comparison', 1000, noCache.length + withCache.length, cacheErrors);
 
     result.cacheComparison = {
       differentCredentials: stats(noCache),
@@ -296,6 +348,7 @@ async function runPhase(phaseName, note) {
   // ── 6. 스트레스 테스트 (50 workers, 20초) ───────────────────
   console.log('\n  [5/6] 스트레스 테스트 (50 workers × 20초)...');
   result.stressTest = await measureTPS(`${phaseName}-stress`, authURL, authHeaders, 50, 20000);
+  requireRequestSeries(`${phaseName} stress`, result.stressTest);
   console.log(`  → TPS=${result.stressTest.tps}  P99=${result.stressTest.latency.p99}ms  P99.9=${result.stressTest.latency.p999}ms  에러율=${result.stressTest.errorRate}%`);
 
   // ── 7. 서버 메모리 ────────────────────────────────────────────
@@ -307,6 +360,7 @@ async function runPhase(phaseName, note) {
     console.log(`  → (서버 메모리 엔드포인트 없음 — health 응답에 memory 필드 추가 권장)`);
   }
 
+  result.evidenceValid = true;
   return result;
 }
 
@@ -382,9 +436,10 @@ async function main() {
   // 서버는 외부에서 모드별로 실행됨 — 지금 연결된 서버 단계만 측정
   const health = await get(`${BASE_URL}/health`);
   const idemix = health.body?.idemix;
-  const mode   = idemix?.enabled
-    ? (idemix?.asymEnabled ? 'C단계 (Ed25519)' : 'B단계 (HMAC)')
-    : 'A단계 (bypass)';
+  const mode = !idemix?.enabled ? 'A단계 (bypass)'
+    : idemix.idemixImpl === 'ps' ? 'B단계 (PS-BN254)'
+      : idemix.idemixImpl === 'bbs' ? 'C단계 (BBS+-BLS12381)'
+        : idemix.asymEnabled ? 'Ed25519 기준선' : 'HMAC 개발 기준선';
 
   console.log(`\n  현재 서버 모드: ${mode}`);
   const phaseResult = await runPhase(mode, idemix?.impl || 'bypass');
@@ -396,7 +451,7 @@ async function main() {
   const reportsDir = path.join(__dirname, '..', 'benchmark-reports');
   fs.mkdirSync(reportsDir, { recursive: true });
   const outPath = OUT_FILE || path.join(reportsDir, `full-bench-${Date.now()}.json`);
-  fs.writeFileSync(outPath, JSON.stringify(allResults, null, 2));
+  writeJsonEvidenceExclusive(outPath, allResults);
   console.log(`\n  ✅ JSON 저장: ${outPath}`);
   console.log('═'.repeat(60) + '\n');
 }

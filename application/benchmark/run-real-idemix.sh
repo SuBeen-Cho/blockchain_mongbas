@@ -21,7 +21,6 @@ err()  { echo -e "${RED}[$(date +%H:%M:%S)] $*${NC}"; }
 
 start_server() {
   local mode=$1; shift
-  local env_vars="$*"
   local expected_health_mode expected_health_impl
   case "${mode}" in
     A단계) expected_health_mode=bypass; expected_health_impl=HMAC-SHA256 ;;
@@ -32,15 +31,21 @@ start_server() {
     *) err "알 수 없는 측정 모드: ${mode}"; exit 1 ;;
   esac
   log "서버 기동: $mode"
-  info "  env: $env_vars"
-  eval "env DISABLE_RATE_LIMITS=true SESSION_SECRET=bench-session-secret CREDENTIAL_SECRET=bench-credential-secret $env_vars node src/app.js > /tmp/mongbas-server.log 2>&1 &"
+  info "  env: $*"
+  env NODE_ENV=development ENABLE_BENCH_ENDPOINTS=true ENABLE_DEMO_CREDENTIALS=true \
+    DISABLE_RATE_LIMITS=true SESSION_SECRET=bench-session-secret \
+    CREDENTIAL_SECRET=bench-credential-secret "$@" \
+    node src/app.js > /tmp/mongbas-server.log 2>&1 &
   SERVER_PID=$!
   local attempts=0
   until curl --fail --silent --show-error http://localhost:3000/health | \
     EXPECTED_HEALTH_MODE="${expected_health_mode}" EXPECTED_HEALTH_IMPL="${expected_health_impl}" node -e '
     const health = JSON.parse(require("node:fs").readFileSync(0, "utf8"));
     process.exit(health.status === "ok" && health.idemix?.mode === process.env.EXPECTED_HEALTH_MODE &&
-      health.idemix?.impl === process.env.EXPECTED_HEALTH_IMPL ? 0 : 1);
+      health.idemix?.impl === process.env.EXPECTED_HEALTH_IMPL &&
+      health.benchmark?.authEndpointEnabled === true &&
+      health.benchmark?.rateLimitsDisabled === true &&
+      health.benchmark?.demoCredentialsEnabled === true ? 0 : 1);
   ' >/dev/null 2>&1; do
     sleep 0.5
     attempts=$((attempts + 1))
@@ -58,6 +63,8 @@ start_server() {
   "
 }
 
+trap stop_server EXIT INT TERM
+
 stop_server() {
   if [ -n "${SERVER_PID:-}" ]; then
     log "서버 종료 (PID=$SERVER_PID)"
@@ -68,9 +75,10 @@ stop_server() {
   fi
 }
 
-# 기존 서버 정리
-lsof -ti:3000 | xargs kill -9 2>/dev/null || true
-sleep 1
+if lsof -ti:3000 >/dev/null 2>&1; then
+  err "TCP 3000 포트를 이미 사용 중입니다. 기존 프로세스를 임의로 종료하지 않습니다."
+  exit 1
+fi
 
 echo ""
 echo "╔══════════════════════════════════════════════════════════════════╗"
@@ -84,7 +92,7 @@ echo "╚═══════════════════════�
 # ════════════════════════════════════════════════════════════════
 echo ""
 log "========== A단계: bypass =========="
-start_server "A단계" "IDEMIX_ENABLED=false"
+start_server "A단계" IDEMIX_ENABLED=false
 
 node benchmark/real-idemix-bench.js \
   --out "${REPORTS_DIR}/real-A-${TIMESTAMP}.json" \
@@ -96,7 +104,7 @@ stop_server
 # HMAC: 대칭키 개발 기준
 echo ""
 log "========== HMAC: HMAC-SHA256 credential =========="
-start_server "HMAC" "IDEMIX_ENABLED=true ASYM_CRED_ENABLED=false IDEMIX_CACHE_ENABLED=false"
+start_server "HMAC" IDEMIX_ENABLED=true ASYM_CRED_ENABLED=false IDEMIX_CACHE_ENABLED=false
 
 node benchmark/real-idemix-bench.js \
   --out "${REPORTS_DIR}/real-HMAC-${TIMESTAMP}.json" \
@@ -108,7 +116,7 @@ stop_server
 # Ed25519: 최종 보안 기준선
 echo ""
 log "========== Ed25519: 체인코드 직접 검증 기준선 =========="
-start_server "Ed25519" "IDEMIX_ENABLED=true ASYM_CRED_ENABLED=true IDEMIX_CACHE_ENABLED=false"
+start_server "Ed25519" IDEMIX_ENABLED=true ASYM_CRED_ENABLED=true IDEMIX_CACHE_ENABLED=false
 
 node benchmark/real-idemix-bench.js \
   --out "${REPORTS_DIR}/real-Ed25519-${TIMESTAMP}.json" \
@@ -128,7 +136,7 @@ stop_server
 # ════════════════════════════════════════════════════════════════
 echo ""
 log "========== B단계: PS-BN254 credential prototype =========="
-start_server "B단계" "IDEMIX_ENABLED=true IDEMIX_IMPL=ps IDEMIX_CACHE_ENABLED=false"
+start_server "B단계" IDEMIX_ENABLED=true IDEMIX_IMPL=ps IDEMIX_CACHE_ENABLED=false
 
 node benchmark/real-idemix-bench.js \
   --out "${REPORTS_DIR}/real-B-${TIMESTAMP}.json" \
@@ -142,15 +150,12 @@ stop_server
 #
 #   개선 근거:
 #   - IRTF CFRG draft-irtf-cfrg-bbs-signatures (Boneh et al.)
-#   - BLS12-381 곡선 (128-bit 보안, BN254와 동등)
-#   - Rust WASM 구현 → JS 대비 4-8x 빠른 실행
-#   - 속성 수 무관 O(1) 검증 (BN254는 O(k))
-#   - 완전 비연결성: 매 요청 fresh nonce ZKP proof
-#   - 선택적 공개: voterEligible만 공개, electionID 숨김
+#   여기서는 현재 구현의 실측치만 비교한다.
+#   보안 수준·복잡도·비연결성·선택적 공개는 별도 검증 없이 성능 결과로 주장하지 않는다.
 # ════════════════════════════════════════════════════════════════
 echo ""
 log "========== C단계: BBS+-BLS12381 (개선 Idemix) =========="
-start_server "C단계" "IDEMIX_ENABLED=true IDEMIX_IMPL=bbs IDEMIX_CACHE_ENABLED=false"
+start_server "C단계" IDEMIX_ENABLED=true IDEMIX_IMPL=bbs IDEMIX_CACHE_ENABLED=false
 
 node benchmark/real-idemix-bench.js \
   --out "${REPORTS_DIR}/real-C-${TIMESTAMP}.json" \
