@@ -41,17 +41,27 @@ export async function computeNullifier(nullifierMaterial, electionID, blindingFa
 }
 
 /**
- * 비밀번호 해시를 계산합니다 (Deniable Verification용).
- * passwordHash = SHA256(password + nullifierHash)
- *
- * 평문 비밀번호는 서버로 전송되지 않습니다.
- *
- * @param {string} password      - 평문 비밀번호
- * @param {string} nullifierHash - 계산된 Nullifier 해시
- * @returns {Promise<string>} passwordHash (hex)
+ * Derive an opaque deniable-proof lookup capability. The receipt nonce is not
+ * a public ballot nullifier and the password never leaves the browser.
  */
-export async function computePasswordHash(password, nullifierHash) {
-  return sha256(password + nullifierHash);
+export async function computeDeniableLookupToken(password, verificationNonce, electionID) {
+  if (typeof password !== 'string' || password.length < 8) throw new Error('비밀번호는 8자 이상이어야 합니다.');
+  if (!/^[0-9a-f]{64}$/.test(verificationNonce || '')) throw new Error('검증 receipt 형식이 올바르지 않습니다.');
+  if (!electionID) throw new Error('선거 ID가 필요합니다.');
+  const fields = ['mongbas-deniable-lookup-v1', electionID, verificationNonce, password];
+  const encoded = fields.map(field => new TextEncoder().encode(field));
+  const size = encoded.reduce((sum, bytes) => sum + 4 + bytes.length, 0);
+  const joined = new Uint8Array(size);
+  const view = new DataView(joined.buffer);
+  let offset = 0;
+  for (const bytes of encoded) {
+    view.setUint32(offset, bytes.length, false);
+    offset += 4;
+    joined.set(bytes, offset);
+    offset += bytes.length;
+  }
+  const digest = await crypto.subtle.digest('SHA-256', joined);
+  return Array.from(new Uint8Array(digest)).map(byte => byte.toString(16).padStart(2, '0')).join('');
 }
 
 /**

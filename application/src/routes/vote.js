@@ -34,6 +34,7 @@ const { submitTransactionAndWait } = require('../lib/submitTransaction');
 const liveCount = require('../lib/liveCount');  // [부스 시연] 라이브 투표 카운터
 const demoLive  = require('../lib/demoLive');   // [부스 시연] 라이브 암호문 표 + 셔플 + 이벤트 버스
 const { demoEndpointsEnabled } = require('../lib/demoFeatures');
+const { isCanonicalToken } = require('../lib/deniableProof');
 
 const router = express.Router();
 
@@ -76,6 +77,7 @@ router.post('/', async (req, res) => {
           encryptedCandidateID,
           encryptedCandidateVector,
           normalPWHash, panicPWHash, panicCandidateID,
+          normalLookupToken, panicLookupToken,
           credentialType,
           ballotValidityProof,
           vectorBallotValidityProof } = req.body;
@@ -91,6 +93,11 @@ router.post('/', async (req, res) => {
     return res.status(400).json({
       error: 'candidateID, encryptedCandidateID, encryptedCandidateVector 중 하나가 필요합니다.',
     });
+  }
+  if (normalLookupToken !== undefined || panicLookupToken !== undefined) {
+    if (!isCanonicalToken(normalLookupToken) || !isCanonicalToken(panicLookupToken) || normalLookupToken === panicLookupToken) {
+      return res.status(400).json({ error: 'normal/panic lookup token은 서로 다른 64자 소문자 SHA-256 hex여야 합니다.' });
+    }
   }
 
   // ── [MED-07 FIX] 서버 사이드 Panic Mode 제거 ───────────────────
@@ -164,10 +171,12 @@ router.post('/', async (req, res) => {
 
     // Panic Mode 비밀번호 해시가 제공된 경우 PDC에 함께 저장
     // 클라이언트가 SHA256(password + nullifierHash) 계산 후 전달 (평문 전달 금지)
-    if (normalPWHash && panicPWHash) {
+    if ((normalLookupToken && panicLookupToken) || (normalPWHash && panicPWHash)) {
       const voterPWData = {
         normalPWHash,
         panicPWHash,
+        normalLookupToken,
+        panicLookupToken,
         panicCandidateID: panicCandidateID || '',
       };
       transientData.voterPW = Buffer.from(JSON.stringify(voterPWData));
@@ -210,7 +219,7 @@ router.post('/', async (req, res) => {
         : '투표가 완료되었습니다.',
       electionID,
       candidateID: isBlindMode ? '(blind)' : candidateID,
-      nullifierHash,
+      ...((normalLookupToken && panicLookupToken) ? {} : { nullifierHash }),
       blindMode: isBlindMode,
       isRevote: evictCount > 0,
       evictCount,
@@ -221,7 +230,8 @@ router.post('/', async (req, res) => {
     }
     // 재투표 불가 시 체인코드가 에러 반환
     if (err.message && err.message.includes('이미 투표')) {
-      return res.status(409).json({ error: '이미 투표한 선거입니다.', nullifierHash });
+      return res.status(409).json({ error: '이미 투표한 선거입니다.',
+        ...((normalLookupToken && panicLookupToken) ? {} : { nullifierHash }) });
     }
     console.error('[vote] CastVote error:', err.message);
     res.status(500).json({ error: '투표 처리 중 오류가 발생했습니다.' });
@@ -305,9 +315,14 @@ router.post('/audit-vector', async (req, res) => {
 // Casts only the exact bytes previously committed under ballotID.
 router.post('/cast-vector', async (req, res) => {
   const { electionID, ballotID, nullifierHash, encryptedCandidateVector, vectorBallotValidityProof,
-          credentialType, normalPWHash, panicPWHash, panicCandidateID } = req.body;
+          credentialType, normalPWHash, panicPWHash, normalLookupToken, panicLookupToken, panicCandidateID } = req.body;
   if (!electionID || !ballotID || !nullifierHash || !Array.isArray(encryptedCandidateVector) || !vectorBallotValidityProof) {
     return res.status(400).json({ error: 'prepared vector-v3 cast 필드가 누락되었습니다.' });
+  }
+  if (normalLookupToken !== undefined || panicLookupToken !== undefined) {
+    if (!isCanonicalToken(normalLookupToken) || !isCanonicalToken(panicLookupToken) || normalLookupToken === panicLookupToken) {
+      return res.status(400).json({ error: 'normal/panic lookup token은 서로 다른 64자 소문자 SHA-256 hex여야 합니다.' });
+    }
   }
   const credential = buildCredentialTransient(req, electionID);
   if (credential.error) return res.status(403).json({ error: credential.error });
@@ -321,8 +336,9 @@ router.post('/cast-vector', async (req, res) => {
     vectorBallotValidityProof: Buffer.from(JSON.stringify(vectorBallotValidityProof)),
   };
   if (credentialType === 'panic') transientData.credentialType = Buffer.from('panic');
-  if (normalPWHash && panicPWHash) {
-    transientData.voterPW = Buffer.from(JSON.stringify({ normalPWHash, panicPWHash, panicCandidateID: panicCandidateID || '' }));
+  if ((normalLookupToken && panicLookupToken) || (normalPWHash && panicPWHash)) {
+    transientData.voterPW = Buffer.from(JSON.stringify({ normalPWHash, panicPWHash, normalLookupToken, panicLookupToken,
+      panicCandidateID: panicCandidateID || '' }));
   }
   let releaseFabricSlot;
   let gateway;
@@ -344,7 +360,8 @@ router.post('/cast-vector', async (req, res) => {
       try { demoLive.recordVote(electionID, { nullifierHash, ciphertext: '[vector-v3]', zkpValid: true }); } catch (_) { /* display-only */ }
     }
     res.json({ message: evictCount > 0 ? '재투표가 완료되었습니다.' : '투표가 완료되었습니다.',
-      electionID, ballotID, nullifierHash, blindMode: true, isRevote: evictCount > 0, evictCount });
+      electionID, ballotID, ...((normalLookupToken && panicLookupToken) ? {} : { nullifierHash }),
+      blindMode: true, isRevote: evictCount > 0, evictCount });
   } catch (err) {
     if (err.code === 'FABRIC_QUEUE_FULL' || err.code === 'FABRIC_QUEUE_TIMEOUT') {
       return res.status(503).json({ error: '투표 요청이 많습니다. 잠시 후 다시 시도해 주세요.' });

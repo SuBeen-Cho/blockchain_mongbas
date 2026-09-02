@@ -6,6 +6,7 @@ const crypto = require('crypto');
 const path = require('path');
 require('dotenv').config({ path: path.join(__dirname, '../.env') });
 const { generateVectorBallot } = require('../src/lib/vectorElgamal');
+const { deriveLookupToken, RESPONSE_BYTES } = require('../src/lib/deniableProof');
 
 const BASE_URL = (process.env.E2E_BASE_URL || 'http://localhost:3000').replace(/\/$/, '');
 const ELECTION_ID = process.env.E2E_ELECTION_ID || `full-e2e-${Date.now()}`;
@@ -28,7 +29,7 @@ async function requestJson(path, options = {}) {
   const text = await res.text();
   let body = null;
   try { body = text ? JSON.parse(text) : null; } catch { body = { raw: text }; }
-  return { status: res.status, ok: res.ok, body };
+  return { status: res.status, ok: res.ok, body, bodyBytes: Buffer.byteLength(text, 'utf8') };
 }
 
 async function assertOk(label, promise) {
@@ -207,12 +208,18 @@ async function main() {
   // ── Phase 5: 투표 제출 (3명 레거시 + 1명 blind) ─────────────
   console.log('\n── Phase 5: Vote Submission ──');
   const nullifiers = [];
+  const deniableReceipt = crypto.randomBytes(32).toString('hex');
+  const normalPW = 'normal-password-test';
+  const panicPW = 'panic-password-test';
+  const normalLookupToken = deriveLookupToken(normalPW, deniableReceipt, ELECTION_ID);
+  const panicLookupToken = deriveLookupToken(panicPW, deniableReceipt, ELECTION_ID);
   for (let i = 0; i < voters.length; i++) {
     const nh = makeNullifier(credentialMaterials[i]);
+    const deniable = i === 0 ? { normalLookupToken, panicLookupToken, panicCandidateID: 'CANDIDATE_B' } : {};
     await assertOk(`vote (${voters[i].id} -> ${voters[i].candidate})`, requestJson('/api/vote', {
       method: 'POST',
       headers: { 'x-idemix-credential': credentials[i] },
-      body: JSON.stringify({ electionID: ELECTION_ID, candidateID: voters[i].candidate, nullifierHash: nh }),
+      body: JSON.stringify({ electionID: ELECTION_ID, candidateID: voters[i].candidate, nullifierHash: nh, ...deniable }),
     }));
     nullifiers.push(nh);
   }
@@ -408,31 +415,37 @@ async function main() {
   // ── Phase 10: Panic Password Deniable Proof ───────────────
   console.log('\n── Phase 10: Deniable Verification (Panic Mode) ──');
   // Normal password로 proof 조회
-  const normalPW = 'normal-password-test';
-  const normalPWHash = sha256Hex(normalPW + nullifiers[0]);
-  const normalProofResp = await assertOk('deniable proof (normal)', requestJson(`/api/elections/${encodeURIComponent(ELECTION_ID)}/proof`, {
+  const normalProofRaw = await requestJson(`/api/elections/${encodeURIComponent(ELECTION_ID)}/proof`, {
     method: 'POST',
-    body: JSON.stringify({ nullifierHash: nullifiers[0], passwordHash: normalPWHash }),
-  }));
+    body: JSON.stringify({ lookupToken: normalLookupToken }),
+  });
+  const normalProofResp = await assertOk('deniable proof (normal)', Promise.resolve(normalProofRaw));
   console.log(`[INFO] normal proof returned (has proof: ${!!normalProofResp.proof})`);
 
   // Panic password로 proof 조회 — 다른 proof가 반환되어야 함
-  const panicPW = 'panic-password-test';
-  const panicPWHash = sha256Hex(panicPW + nullifiers[0]);
-  const panicProofResp = await assertOk('deniable proof (panic)', requestJson(`/api/elections/${encodeURIComponent(ELECTION_ID)}/proof`, {
+  const panicProofRaw = await requestJson(`/api/elections/${encodeURIComponent(ELECTION_ID)}/proof`, {
     method: 'POST',
-    body: JSON.stringify({ nullifierHash: nullifiers[0], passwordHash: panicPWHash }),
-  }));
+    body: JSON.stringify({ lookupToken: panicLookupToken }),
+  });
+  const panicProofResp = await assertOk('deniable proof (panic)', Promise.resolve(panicProofRaw));
   console.log(`[INFO] panic proof returned (has proof: ${!!panicProofResp.proof})`);
 
   // 두 응답 모두 동일한 구조를 가져야 함 (강압자 구분 불가)
   const normalKeys = Object.keys(normalProofResp).sort().join(',');
   const panicKeys = Object.keys(panicProofResp).sort().join(',');
-  if (normalKeys === panicKeys) {
-    console.log('[OK] normal/panic proof have identical response structure (indistinguishable)');
-  } else {
+  if (normalKeys !== panicKeys) {
     throw new Error(`normal/panic response structure differs: normal=${normalKeys}, panic=${panicKeys}`);
   }
+  if (normalProofRaw.bodyBytes !== RESPONSE_BYTES || panicProofRaw.bodyBytes !== RESPONSE_BYTES) {
+    throw new Error(`deniable response size mismatch: normal=${normalProofRaw.bodyBytes}, panic=${panicProofRaw.bodyBytes}`);
+  }
+  if (JSON.stringify(normalProofResp).includes(nullifiers[0]) || JSON.stringify(panicProofResp).includes(nullifiers[0])) {
+    throw new Error('deniable response exposed the real public nullifier');
+  }
+  if (normalProofResp.proof?.leafHash === panicProofResp.proof?.leafHash) {
+    throw new Error('normal and panic lookup unexpectedly resolved to the same proof target');
+  }
+  console.log(`[OK] opaque proofs omit target nullifier and are exactly ${RESPONSE_BYTES} bytes`);
 
   // ── Phase 11: Security Properties (PAPER-5) ─────────────────
   console.log('\n── Phase 11: Security Properties ──');

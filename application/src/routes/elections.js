@@ -21,6 +21,7 @@ const { submitTransactionAndWait } = require('../lib/submitTransaction');
 const liveCount = require('../lib/liveCount');  // [부스 시연] 라이브 투표 카운터
 const demoLive  = require('../lib/demoLive');   // [부스 시연] 라이브 암호문 표 + 셔플 + 이벤트 버스
 const { demoEndpointsEnabled, requireDemoEndpoint } = require('../lib/demoFeatures');
+const { isCanonicalToken, serializeFixedProof } = require('../lib/deniableProof');
 
 const router = express.Router();
 
@@ -540,32 +541,27 @@ router.get('/:id/proof/:nullifier', async (req, res) => {
 });
 
 // ── POST /api/elections/:id/proof ─────────────────────────────
-// Deniable Verification: 비밀번호로 Normal/Panic 모드 구분
+// Deniable Verification: opaque lookup capability로 증명 조회.
 //
 // Body:
-//   nullifierHash : string — SHA256(nullifierMaterial + electionID + blindingFactor)
-//   passwordHash  : string — SHA256(password + nullifierHash)
-//                            클라이언트에서 계산 (서버에 평문 비밀번호 전달 금지)
-//
-// Normal Mode: 실제 투표의 Merkle 포함 증명 반환
-// Panic Mode:  더미 nullifier의 포함 증명 반환 (강압자 기만)
-//              두 응답이 동일한 구조 → 강압자가 구분 불가
+// Body: lookupToken — 클라이언트가 영역분리된 password+receipt로 계산한 32-byte capability.
+// 실제 nullifier를 요청하거나 응답하지 않고, 관찰 가능한 JSON을 고정 크기로 직렬화한다.
 router.post('/:id/proof', async (req, res) => {
   const { id } = req.params;
-  const { nullifierHash, passwordHash } = req.body;
+  const { lookupToken } = req.body || {};
 
-  if (!nullifierHash || !passwordHash) {
-    return res.status(400).json({ error: 'nullifierHash, passwordHash 필드가 필요합니다.' });
+  if (!isCanonicalToken(lookupToken)) {
+    return res.status(400).json({ error: 'lookupToken은 64자 소문자 SHA-256 hex여야 합니다.' });
   }
 
   const { gateway, contract } = await connectGateway();
   try {
     const result = await contract.evaluateTransaction(
-      'GetMerkleProofWithPassword', id, nullifierHash, passwordHash
+      'GetMerkleProofWithLookup', id, lookupToken
     );
     const proof = JSON.parse(Buffer.from(result).toString('utf8'));
-    // 두 모드가 동일한 응답 구조 반환 (의도적 설계)
-    res.json({ electionID: id, nullifierHash, proof });
+    const serialized = serializeFixedProof(id, proof);
+    res.status(200).type('application/json').send(serialized);
   } catch (err) {
     res.status(400).json({ error: sanitizeError(err) });
   } finally {

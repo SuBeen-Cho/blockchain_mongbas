@@ -15,6 +15,7 @@
  */
 
 const crypto = require('crypto');
+const { deriveLookupToken } = require('../src/lib/deniableProof');
 
 const BASE_URL = (process.env.BENCH_BASE_URL || 'http://localhost:3000').replace(/\/$/, '');
 const ADMIN_API_TOKEN = process.env.ADMIN_API_TOKEN || '';
@@ -139,11 +140,15 @@ async function main() {
   console.log('── [2] CastVote Legacy Mode Latency ──');
   const legacyTimes = [];
   const nullifiers = [];
+  const deniableLookups = [];
   for (let i = 0; i < ITERATIONS; i++) {
     const voterSecret = `bench-legacy-${i}-${Date.now()}`;
     const blinding = (await requestJson(`/api/elections/${ELECTION_ID}/blinding-factor`)).body.blindingFactor;
     const nullifierHash = sha256Hex(voterSecret + ELECTION_ID + blinding);
     const candidateID = CANDIDATES[i % CANDIDATES.length];
+    const receipt = crypto.randomBytes(32).toString('hex');
+    const normalLookupToken = deriveLookupToken(`normal-password-${i}`, receipt, ELECTION_ID);
+    const panicLookupToken = deriveLookupToken(`panic-password-${i}`, receipt, ELECTION_ID);
 
     const m = await measure('castLegacy', () =>
       requestJson('/api/vote', {
@@ -152,14 +157,15 @@ async function main() {
           electionID: ELECTION_ID,
           candidateID,
           nullifierHash,
-          normalPWHash: sha256Hex('normal' + nullifierHash),
-          panicPWHash: sha256Hex('panic' + nullifierHash),
+          normalLookupToken,
+          panicLookupToken,
           panicCandidateID: CANDIDATES[(i + 1) % CANDIDATES.length],
         }),
       })
     );
     legacyTimes.push(m.elapsed);
     nullifiers.push(nullifierHash);
+    deniableLookups.push({ normalLookupToken, panicLookupToken });
   }
   results['CastVote_Legacy'] = stats(legacyTimes);
   console.log(`   avg=${results['CastVote_Legacy'].avg.toFixed(1)}ms p95=${results['CastVote_Legacy'].p95.toFixed(1)}ms\n`);
@@ -274,14 +280,12 @@ async function main() {
   const normalTimes = [];
   const panicTimes = [];
   for (let i = 0; i < Math.min(ITERATIONS, 10); i++) {
-    const nh = nullifiers[i];
-    const normalPWHash = sha256Hex('normal' + nh);
-    const panicPWHash = sha256Hex('panic' + nh);
+    const { normalLookupToken, panicLookupToken } = deniableLookups[i];
 
     const nm = await measure('normalProof', () =>
       requestJson(`/api/elections/${ELECTION_ID}/proof`, {
         method: 'POST',
-        body: JSON.stringify({ nullifierHash: nh, passwordHash: normalPWHash }),
+        body: JSON.stringify({ lookupToken: normalLookupToken }),
       })
     );
     normalTimes.push(nm.elapsed);
@@ -289,7 +293,7 @@ async function main() {
     const pm = await measure('panicProof', () =>
       requestJson(`/api/elections/${ELECTION_ID}/proof`, {
         method: 'POST',
-        body: JSON.stringify({ nullifierHash: nh, passwordHash: panicPWHash }),
+        body: JSON.stringify({ lookupToken: panicLookupToken }),
       })
     );
     panicTimes.push(pm.elapsed);

@@ -3,7 +3,7 @@
  */
 
 import { useState, useRef, useEffect } from 'react';
-import { computeMerkleRootFromProof, computePasswordHash, verifyBulletinBoard, verifyChaumPedersen } from '../utils/crypto.js';
+import { computeMerkleRootFromProof, computeDeniableLookupToken, verifyBulletinBoard, verifyChaumPedersen } from '../utils/crypto.js';
 import HashDisplay from '../components/HashDisplay.jsx';
 import Alert from '../components/Alert.jsx';
 import MerkleTreeDiagram from '../components/verify-animations/MerkleTreeDiagram.jsx';
@@ -16,7 +16,7 @@ const API = '/api';
 
 const MODES = [
   { id: 'simple',       label: 'Merkle 검증',     desc: '투표 포함 증명',           icon: 'M4 5a1 1 0 011-1h14a1 1 0 011 1v2a1 1 0 01-1 1H5a1 1 0 01-1-1V5zM4 13a1 1 0 011-1h6a1 1 0 011 1v6a1 1 0 01-1 1H5a1 1 0 01-1-1v-6zM16 13a1 1 0 011-1h2a1 1 0 011 1v6a1 1 0 01-1 1h-2a1 1 0 01-1-1v-6z' },
-  { id: 'deniable',     label: 'Deniable',        desc: '강압 대응 검증',           icon: 'M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z' },
+  { id: 'deniable',     label: 'Deniable',        desc: '불투명 증명 조회(제한)', icon: 'M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z' },
   { id: 'bulletin',     label: 'Bulletin Board',  desc: '공개 재집계 검증',         icon: 'M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01' },
   { id: 'receipt-free', label: 'Receipt-Free',    desc: '포함 여부만 확인',         icon: 'M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z' },
   { id: 'elgamal-zkp',  label: 'ElGamal ZKP',     desc: '영지식 증명 검증',         icon: 'M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z' },
@@ -58,17 +58,17 @@ export default function VerifyPage() {
       // Step 1: Nullifier 조회
       setVerifySteps(['nullifier']);
       let hash = nullifierHash;
-      if (!hash) throw new Error('투표 완료 시 받은 nullifierHash가 필요합니다.');
+      if (!hash) throw new Error(mode === 'deniable' ? 'Deniable 검증 receipt가 필요합니다.' : '투표 완료 시 받은 nullifierHash가 필요합니다.');
       setVerifySteps(s => [...s, 'nullifier_done']);
 
       // Step 2: Merkle Proof 수신
       setVerifySteps(s => [...s, 'proof']);
       let res, data;
       if (mode === 'deniable' && password) {
-        const pwHash = await computePasswordHash(password, hash);
+        const lookupToken = await computeDeniableLookupToken(password, hash, electionID);
         res = await fetch(`${API}/elections/${electionID}/proof`, {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ nullifierHash: hash, passwordHash: pwHash }),
+          body: JSON.stringify({ lookupToken }),
         });
       } else {
         res = await fetch(`${API}/elections/${electionID}/proof/${hash}`);
@@ -97,7 +97,7 @@ export default function VerifyPage() {
       setVerifySteps(s => [...s, 'compare_done']);
 
       setResult({
-        nullifierHash: hash, ...data,
+        ...(mode === 'deniable' ? { verificationReceipt: hash } : { nullifierHash: hash }), ...data,
         localVerification: { ok: localVerified, computedRoot, chainRoot, leafHash },
       });
     } catch (e) { setError(e.message); }
@@ -248,11 +248,11 @@ export default function VerifyPage() {
         {mode === 'deniable' && (
           <>
             <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1.5">nullifierHash</label>
+              <label className="block text-sm font-medium text-slate-700 mb-1.5">Deniable 검증 Receipt</label>
               <input
                 className="w-full h-11 px-4 border border-slate-200 rounded-lg text-sm font-mono bg-white
                   focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 outline-none transition-colors duration-200"
-                placeholder="투표 완료 시 받은 추적 번호"
+                placeholder="투표 완료 시 받은 deniable receipt"
                 value={nullifierHash}
                 onChange={e => setNullifierHash(e.target.value)}
               />
@@ -268,7 +268,7 @@ export default function VerifyPage() {
                 onChange={e => setPassword(e.target.value)}
               />
             </div>
-            <p className="text-xs text-slate-400">Normal 비밀번호 → 실제 투표 증명 / Panic 비밀번호 → 가짜 증명 (강압 대응)</p>
+            <p className="text-xs text-slate-400">Normal/Panic 비밀번호는 서버에 전송되지 않습니다. 이 API 흐름만으로 PDC 운영자 공모나 재투표 패턴까지 해결되는 것은 아닙니다.</p>
           </>
         )}
 
@@ -345,14 +345,15 @@ export default function VerifyPage() {
               <p className="font-bold text-emerald-800">검증 성공</p>
               <p className="text-xs text-emerald-600">투표가 집계에 포함됨 — Merkle proof 검증 완료
                 {mode === 'deniable'
-                  ? <span className="ml-2 px-1.5 py-0.5 bg-red-200/60 text-red-800 rounded text-[10px] font-bold">Coercion Resistance</span>
+                  ? <span className="ml-2 px-1.5 py-0.5 bg-red-200/60 text-red-800 rounded text-[10px] font-bold">Deniable API Proof</span>
                   : <span className="ml-2 px-1.5 py-0.5 bg-emerald-200/60 text-emerald-800 rounded text-[10px] font-bold">Recorded-as-Cast</span>
                 }
               </p>
             </div>
           </div>
           <div className="p-6 space-y-4">
-            <HashDisplay label="Nullifier Hash" value={result.nullifierHash} />
+            {result.nullifierHash && <HashDisplay label="Nullifier Hash" value={result.nullifierHash} />}
+            {result.verificationReceipt && <HashDisplay label="Deniable 검증 Receipt" value={result.verificationReceipt} />}
             {(result.leafHash || result.proof?.leafHash) && (
               <HashDisplay label="Merkle Leaf Hash" value={result.leafHash || result.proof?.leafHash} />
             )}

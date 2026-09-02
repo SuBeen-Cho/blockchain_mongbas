@@ -453,9 +453,20 @@ type DecryptionProof struct {
 // panicPWHash   : SHA256(panicPassword   + nullifierHash) — 강압 대응용 (더미 증명 반환)
 // panicCandidateID : Panic Mode에서 보여줄 가짜 후보자 ID
 type VoterPWPrivate struct {
-	NormalPWHash     string `json:"normalPWHash"`
-	PanicPWHash      string `json:"panicPWHash"`
-	PanicCandidateID string `json:"panicCandidateID"` // 강압자에게 보여줄 가짜 후보
+	NormalPWHash      string `json:"normalPWHash"`
+	PanicPWHash       string `json:"panicPWHash"`
+	NormalLookupToken string `json:"normalLookupToken,omitempty"`
+	PanicLookupToken  string `json:"panicLookupToken,omitempty"`
+	PanicCandidateID  string `json:"panicCandidateID"` // 강압자에게 보여줄 가짜 후보
+}
+
+// DeniableLookupPrivate is addressed by an opaque, password-derived token.
+// The public API never needs the ballot nullifier to retrieve a proof. This
+// removes the direct request-nullifier/response-target oracle, but does not
+// hide the mapping from peers authorized to read VotePrivatePDC.
+type DeniableLookupPrivate struct {
+	ElectionID          string `json:"electionID"`
+	TargetNullifierHash string `json:"targetNullifierHash"`
 }
 
 // BallotValidityProof [PAPER-13] Disjunctive Chaum-Pedersen ZKP
@@ -1965,6 +1976,62 @@ func (c *VotingContract) castVoteInternal(
 		if pwPrivate.PanicCandidateID != "" && !contains(election.Candidates, pwPrivate.PanicCandidateID) {
 			return fmt.Errorf("유효하지 않은 panicCandidateID: %s", pwPrivate.PanicCandidateID)
 		}
+		lookupTokensPresent := pwPrivate.NormalLookupToken != "" || pwPrivate.PanicLookupToken != ""
+		if lookupTokensPresent {
+			if !isCanonicalSHA256Hex(pwPrivate.NormalLookupToken) || !isCanonicalSHA256Hex(pwPrivate.PanicLookupToken) {
+				return fmt.Errorf("deniable lookup token은 64자 소문자 SHA-256 hex여야 합니다")
+			}
+			if subtle.ConstantTimeCompare([]byte(pwPrivate.NormalLookupToken), []byte(pwPrivate.PanicLookupToken)) == 1 {
+				return fmt.Errorf("normal/panic lookup token은 서로 달라야 합니다")
+			}
+			lookups := []struct {
+				token string
+				mode  string
+			}{
+				{pwPrivate.NormalLookupToken, "normal"},
+				{pwPrivate.PanicLookupToken, "panic"},
+			}
+			for _, item := range lookups {
+				key := "PROOF_LOOKUP_" + electionID + "_" + item.token
+				existing, getErr := ctx.GetStub().GetPrivateData(VotePrivatePDC, key)
+				if getErr != nil {
+					return fmt.Errorf("deniable lookup 중복 확인 실패: %w", getErr)
+				}
+				if existing != nil {
+					return fmt.Errorf("deniable lookup token이 이미 사용되었습니다")
+				}
+				targetHash := nullifierHash
+				if item.mode == "panic" {
+					dummyCandID := pwPrivate.PanicCandidateID
+					if dummyCandID == "" && len(election.Candidates) > 0 {
+						dummyCandID = election.Candidates[0]
+					}
+					selector := sha256.Sum256([]byte("mongbas-deniable-dummy-v1\x00" + electionID + "\x00" + item.token))
+					dummyIdx := int(new(big.Int).SetBytes(selector[:]).Int64()) % PanicDummyCount
+					if dummyIdx < 0 {
+						dummyIdx = -dummyIdx
+					}
+					dummyKey := fmt.Sprintf("DUMMY_IDX_%s_%s_%d", electionID, dummyCandID, dummyIdx)
+					dummyBytes, dummyErr := ctx.GetStub().GetState(dummyKey)
+					if dummyErr != nil || dummyBytes == nil {
+						dummyKey = fmt.Sprintf("DUMMY_IDX_%s_%s_0", electionID, dummyCandID)
+						dummyBytes, dummyErr = ctx.GetStub().GetState(dummyKey)
+						if dummyErr != nil || dummyBytes == nil {
+							return fmt.Errorf("더미 Nullifier를 찾을 수 없습니다")
+						}
+					}
+					targetHash = string(dummyBytes)
+				}
+				record := DeniableLookupPrivate{ElectionID: electionID, TargetNullifierHash: targetHash}
+				encoded, marshalErr := json.Marshal(record)
+				if marshalErr != nil {
+					return fmt.Errorf("deniable lookup 직렬화 실패: %w", marshalErr)
+				}
+				if putErr := ctx.GetStub().PutPrivateData(VotePrivatePDC, key, encoded); putErr != nil {
+					return fmt.Errorf("deniable lookup PDC 저장 실패: %w", putErr)
+				}
+			}
+		}
 		pwKey := "VOTER_PW_" + nullifierHash
 		pwData, err := json.Marshal(pwPrivate)
 		if err != nil {
@@ -3167,6 +3234,64 @@ func (c *VotingContract) GetMerkleProofWithPassword(
 		return nil, fmt.Errorf("Nullifier candidateID 조회 실패: %s", targetHash)
 	}
 
+	return &MerkleProofResult{
+		NullifierHash:        targetHash,
+		CandidateID:          resolveCandidateID(ctx, electionID, n),
+		CandidateCommitment:  n.CandidateCommitment,
+		EncryptedCandidateID: n.EncryptedCandidateID,
+		LeafHash:             computeMerkleLeafHash(n),
+		Proof:                proof,
+	}, nil
+}
+
+// GetMerkleProofWithLookup retrieves a deniable proof through an opaque
+// password-derived capability. Unlike GetMerkleProofWithPassword, neither the
+// proposal arguments nor the HTTP request disclose the voter's public
+// nullifier. Authorized PDC peers can still observe the private mapping, so
+// this function is an API-transcript mitigation rather than a complete
+// coercion-resistant construction.
+func (c *VotingContract) GetMerkleProofWithLookup(
+	ctx contractapi.TransactionContextInterface,
+	electionID string,
+	lookupToken string,
+) (*MerkleProofResult, error) {
+	if !isCanonicalSHA256Hex(lookupToken) {
+		return nil, fmt.Errorf("deniable lookup token 형식이 올바르지 않습니다")
+	}
+	merkleKey := "MERKLE_ROOT_" + electionID
+	mrBytes, err := ctx.GetStub().GetState(merkleKey)
+	if err != nil {
+		return nil, fmt.Errorf("MerkleRoot 조회 실패: %w", err)
+	}
+	if mrBytes == nil {
+		return nil, fmt.Errorf("Merkle Tree가 구축되지 않았습니다")
+	}
+
+	key := "PROOF_LOOKUP_" + electionID + "_" + lookupToken
+	encoded, err := ctx.GetStub().GetPrivateData(VotePrivatePDC, key)
+	if err != nil {
+		return nil, fmt.Errorf("deniable lookup PDC 조회 실패: %w", err)
+	}
+	if encoded == nil {
+		return nil, fmt.Errorf("deniable lookup token이 일치하지 않습니다")
+	}
+	var lookup DeniableLookupPrivate
+	if err := json.Unmarshal(encoded, &lookup); err != nil {
+		return nil, fmt.Errorf("deniable lookup 역직렬화 실패: %w", err)
+	}
+	if lookup.ElectionID != electionID || !isCanonicalSHA256Hex(lookup.TargetNullifierHash) {
+		return nil, fmt.Errorf("deniable lookup 결합값이 올바르지 않습니다")
+	}
+	targetHash := lookup.TargetNullifierHash
+
+	proof, err := c.GetMerkleProof(ctx, electionID, targetHash)
+	if err != nil {
+		return nil, err
+	}
+	n, err := c.GetNullifier(ctx, targetHash)
+	if err != nil || n == nil {
+		return nil, fmt.Errorf("deniable proof 대상 조회 실패")
+	}
 	return &MerkleProofResult{
 		NullifierHash:        targetHash,
 		CandidateID:          resolveCandidateID(ctx, electionID, n),

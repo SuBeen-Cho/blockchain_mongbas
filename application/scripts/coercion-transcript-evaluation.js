@@ -5,6 +5,7 @@ const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
 const { evaluateThreshold, trainThreshold, wilsonInterval } = require('../src/lib/coercionClassifier');
+const { deriveLookupToken } = require('../src/lib/deniableProof');
 
 const BASE_URL = (process.env.E2E_BASE_URL || 'http://127.0.0.1:3005').replace(/\/$/, '');
 const ADMIN_API_TOKEN = process.env.ADMIN_API_TOKEN || '';
@@ -80,33 +81,33 @@ async function main() {
   const nullifierHash = sha256Hex(issued.nullifierMaterial + electionID + blinding.blindingFactor);
   const normalPassword = crypto.randomBytes(32).toString('hex');
   const panicPassword = crypto.randomBytes(32).toString('hex');
-  const normalPWHash = sha256Hex(normalPassword + nullifierHash);
-  const panicPWHash = sha256Hex(panicPassword + nullifierHash);
+  const verificationNonce = crypto.randomBytes(32).toString('hex');
+  const normalLookupToken = deriveLookupToken(normalPassword, verificationNonce, electionID);
+  const panicLookupToken = deriveLookupToken(panicPassword, verificationNonce, electionID);
   await ok('cast', requestJson('/api/vote', { method: 'POST', headers: { 'x-idemix-credential': issued.credential }, body: JSON.stringify({
-    electionID, candidateID: CANDIDATES[0], nullifierHash, normalPWHash, panicPWHash, panicCandidateID: CANDIDATES[1],
+    electionID, candidateID: CANDIDATES[0], nullifierHash, normalLookupToken, panicLookupToken, panicCandidateID: CANDIDATES[1],
   }) }));
   await ok('close', requestJson(`/api/elections/${encodeURIComponent(electionID)}/close`, { method: 'POST', body: '{}' }));
   await ok('merkle', requestJson(`/api/elections/${encodeURIComponent(electionID)}/merkle`, { method: 'POST', body: '{}' }));
 
-  const hashes = { normal: normalPWHash, panic: panicPWHash };
+  const lookupTokens = { normal: normalLookupToken, panic: panicLookupToken };
   for (const label of ['normal', 'panic', 'normal', 'panic']) {
     await ok(`warmup-${label}`, requestJson(`/api/elections/${encodeURIComponent(electionID)}/proof`, {
-      method: 'POST', body: JSON.stringify({ nullifierHash, passwordHash: hashes[label] }),
+      method: 'POST', body: JSON.stringify({ lookupToken: lookupTokens[label] }),
     }));
   }
   const rows = [];
   for (const [sequence, label] of shuffledLabels(SAMPLES_PER_CLASS).entries()) {
     const result = await requestJson(`/api/elections/${encodeURIComponent(electionID)}/proof`, {
-      method: 'POST', body: JSON.stringify({ nullifierHash, passwordHash: hashes[label] }),
+      method: 'POST', body: JSON.stringify({ lookupToken: lookupTokens[label] }),
     });
     if (!result.ok) throw new Error(`sample ${sequence} ${label}: HTTP ${result.status} ${JSON.stringify(result.body)}`);
     const proof = result.body?.proof;
     rows.push({ sequence, label, elapsedMs: result.elapsedMs, bodyBytes: result.bodyBytes, status: result.status,
       topLevelKeys: Object.keys(result.body || {}).sort(), proofKeys: Object.keys(proof || {}).sort(),
-      targetEqualsInput: proof?.nullifierHash === nullifierHash,
+      exposesTargetNullifier: Object.hasOwn(proof || {}, 'nullifierHash') || Object.hasOwn(result.body || {}, 'nullifierHash'),
       merklePathLength: Array.isArray(proof?.proof) ? proof.proof.length : -1 });
   }
-  const directCorrect = rows.filter(row => row.targetEqualsInput === (row.label === 'normal')).length;
   const { training, testing } = splitBalanced(rows);
   const timingModel = trainThreshold(training, 'elapsedMs');
   const sizeModel = trainThreshold(training, 'bodyBytes');
@@ -114,12 +115,12 @@ async function main() {
     schema: 'mongbas-coercion-transcript-evaluation/v1', electionID, samplesPerClass: SAMPLES_PER_CLASS,
     totalSamples: rows.length,
     responseKeyShapes: [...new Set(rows.map(row => JSON.stringify([row.topLevelKeys, row.proofKeys])))].length,
-    directEqualityClassifier: { correct: directCorrect, total: rows.length, accuracy: directCorrect / rows.length,
-      confidence95: wilsonInterval(directCorrect, rows.length) },
+    targetNullifierExposure: { exposedSamples: rows.filter(row => row.exposesTargetNullifier).length, total: rows.length },
     timingClassifier: { model: timingModel, test: evaluateThreshold(timingModel, testing) },
     bodySizeClassifier: { model: sizeModel, test: evaluateThreshold(sizeModel, testing) },
-    securityGatePass: directCorrect / rows.length <= 0.55,
-    limitation: 'Same-host HTTP evaluation; network and independent-operator acquisition remain required.',
+    securityGatePass: rows.every(row => !row.exposesTargetNullifier) &&
+      evaluateThreshold(sizeModel, testing).accuracy <= 0.60 && evaluateThreshold(timingModel, testing).accuracy <= 0.60,
+    limitation: 'Same-host API-transcript evaluation only. PDC/backend collusion, public revote patterns, compromised clients and independent network acquisition remain separate failing or untested games.',
   };
   fs.writeFileSync(path.join(OUTPUT_DIR, 'samples.jsonl'), `${rows.map(row => JSON.stringify(row)).join('\n')}\n`, { mode: 0o600 });
   fs.writeFileSync(path.join(OUTPUT_DIR, 'summary.json'), `${JSON.stringify(summary, null, 2)}\n`, { mode: 0o600 });

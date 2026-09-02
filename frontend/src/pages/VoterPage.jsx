@@ -13,7 +13,7 @@ import { useState, useEffect } from 'react';
 import {
   sha256,
   computeNullifier,
-  computePasswordHash,
+  computeDeniableLookupToken,
   encryptCandidateID,
   verifyBenalohAudit,
   elgamalEncrypt,
@@ -154,6 +154,7 @@ export default function VoterPage() {
 
       const body = { electionID, nullifierHash };
       let vectorClientNonce = '';
+      let verificationReceipt = '';
 
       // Step 2: Encrypt
       setEncProgress(p => [...p, 'encrypt']);
@@ -186,8 +187,11 @@ export default function VoterPage() {
       }
 
       if (normalPassword && panicPassword) {
-        body.normalPWHash     = await computePasswordHash(normalPassword, nullifierHash);
-        body.panicPWHash      = await computePasswordHash(panicPassword,  nullifierHash);
+        const receiptBytes = new Uint8Array(32);
+        crypto.getRandomValues(receiptBytes);
+        verificationReceipt = Array.from(receiptBytes, byte => byte.toString(16).padStart(2, '0')).join('');
+        body.normalLookupToken = await computeDeniableLookupToken(normalPassword, verificationReceipt, electionID);
+        body.panicLookupToken = await computeDeniableLookupToken(panicPassword, verificationReceipt, electionID);
         body.panicCandidateID = panicCandidate || candidateID;
       }
       if (panicCredential) body.credentialType = 'panic';
@@ -216,7 +220,7 @@ export default function VoterPage() {
 
       // 완료 시각화를 2초간 보여준 후 결과 화면으로 전환
       await new Promise(resolve => setTimeout(resolve, 2000));
-      setResult({ nullifierHash, blindMode, ...data });
+      setResult({ nullifierHash: verificationReceipt ? '' : nullifierHash, verificationReceipt, blindMode, ...data });
       setStep(5); // 완료 단계로
     } catch (e) { setError(e.message); }
     finally { setLoading(false); setShowEncComplete(false); }
@@ -896,6 +900,12 @@ export default function VoterPage() {
               <div className="bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 text-xs text-amber-700 text-center">
                 <span className="font-semibold">투표 추적 번호를 안전하게 보관하세요.</span> 검증 탭에서 투표 포함 여부를 확인할 때 사용합니다.
               </div>
+            </div>
+          )}
+          {result.verificationReceipt && (
+            <div className="space-y-2">
+              <HashDisplay label="Deniable 검증 Receipt" value={result.verificationReceipt} />
+              <p className="text-xs text-slate-400 text-center">이 receipt와 Normal/Panic 비밀번호로 실제 nullifier를 노출하지 않고 포함 증명을 조회합니다.</p>
             </div>
           )}
 
