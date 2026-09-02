@@ -5,14 +5,18 @@ source "$(cd "$(dirname "$0")" && pwd)/lib.sh"
 ensure_runtime
 load_runtime_env
 require_cmd docker
+require_cmd df
 require_cmd git
 require_cmd node
 require_cmd sha256sum
 [ "${MONGBAS_PROFILE}" = benchmark ] || die "set MONGBAS_PROFILE=benchmark for state-growth evaluation"
 
 ballots="${MONGBAS_STATE_GROWTH_BALLOTS:-1000}"
-rate="${MONGBAS_STATE_GROWTH_RATE:-25}"
-[[ "${ballots}" =~ ^[0-9]+$ ]] && [ "${ballots}" -ge 100 ] && [ "${ballots}" -le 90000 ] || die "ballots must be 100..90000"
+[[ "${ballots}" =~ ^[0-9]+$ ]] && [ "${ballots}" -ge 100 ] && [ "${ballots}" -le 100000 ] || die "ballots must be 100..100000"
+rate="${MONGBAS_STATE_GROWTH_RATE:-}"
+if [ -z "${rate}" ]; then
+  if [ "${ballots}" -gt 90000 ]; then rate=50; else rate=25; fi
+fi
 [[ "${rate}" =~ ^[0-9]+$ ]] && [ "${rate}" -ge 1 ] && [ "${rate}" -le 200 ] || die "rate must be 1..200"
 [ $((ballots % rate)) -eq 0 ] || die "ballots must be exactly divisible by rate"
 duration=$((ballots / rate))
@@ -24,6 +28,26 @@ install -d -m 0700 "${out}/workload-results"
 git -C "${MONGBAS_REPO_DIR}" status --porcelain=v1 >"${out}/git-status.txt"
 git -C "${MONGBAS_REPO_DIR}" rev-parse HEAD >"${out}/git-commit.txt"
 [ ! -s "${out}/git-status.txt" ] || die "state-growth evaluation requires a clean worktree"
+
+# The default is deliberately above the observed 10k replicated-topology
+# growth (558,722.662 bytes/ballot). It is a launch safety gate, not a
+# capacity prediction; the report must retain the actual before/after data.
+estimated_bytes_per_ballot="${MONGBAS_STATE_GROWTH_ESTIMATED_BYTES_PER_BALLOT:-600000}"
+disk_safety_factor="${MONGBAS_STATE_GROWTH_DISK_SAFETY_FACTOR:-2}"
+[[ "${estimated_bytes_per_ballot}" =~ ^[0-9]+$ ]] && [ "${estimated_bytes_per_ballot}" -ge 100000 ] && \
+  [ "${estimated_bytes_per_ballot}" -le 5000000 ] || die "estimated bytes per ballot must be 100000..5000000"
+[[ "${disk_safety_factor}" =~ ^[0-9]+$ ]] && [ "${disk_safety_factor}" -ge 1 ] && \
+  [ "${disk_safety_factor}" -le 5 ] || die "disk safety factor must be 1..5"
+available_bytes="$(df -B1 --output=avail "${MONGBAS_RUNTIME_DIR}" | awk 'NR == 2 { gsub(/[[:space:]]/, "", $0); print }')"
+[[ "${available_bytes}" =~ ^[0-9]+$ ]] || die "could not measure available runtime filesystem bytes"
+estimated_growth_bytes=$((ballots * estimated_bytes_per_ballot))
+required_available_bytes=$((estimated_growth_bytes * disk_safety_factor))
+printf 'ballots\testimatedBytesPerBallot\testimatedGrowthBytes\tsafetyFactor\trequiredAvailableBytes\tactualAvailableBytes\n' \
+  >"${out}/disk-preflight.tsv"
+printf '%s\t%s\t%s\t%s\t%s\t%s\n' "${ballots}" "${estimated_bytes_per_ballot}" "${estimated_growth_bytes}" \
+  "${disk_safety_factor}" "${required_available_bytes}" "${available_bytes}" >>"${out}/disk-preflight.tsv"
+[ "${available_bytes}" -ge "${required_available_bytes}" ] || \
+  die "insufficient disk headroom: require ${required_available_bytes} bytes, have ${available_bytes}; evidence retained in ${out}"
 
 targets=(
   'peer0.civil.voting.example.com|ledger|/var/hyperledger/production'
