@@ -4,7 +4,7 @@
 const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
-const { createC2spSubmissionFromV3Log, createWitnessRequest, parseAndVerifySignedCheckpoint,
+const { advanceCheckpointAnchor, createC2spSubmissionFromV3Log, createWitnessRequest, parseAndVerifySignedCheckpoint,
   submitWitnessRequest, verifyWitnessCosignatures } = require('../src/c2sp-adapter');
 const { readBoundedRegularFile, MAX_PRIVATE_KEY_BYTES } = require('../src/input');
 const { parseCanonicalLog } = require('../src/witness');
@@ -18,6 +18,8 @@ function usage() {
   console.error('Usage: mongbas-c2sp publish <checkpoint-v3.jsonl> <witness-trust.json> <origin> <log-operator-private.pem> <state-directory> <request-output>');
   console.error('       mongbas-c2sp submit <request> <signed-checkpoint.note> <https-add-checkpoint-url> <log-trust.json> <witness-policy.json> <cosigned-output.note>');
   console.error('       mongbas-c2sp verify-cosignatures <cosigned-checkpoint.note> <log-trust.json> <witness-policy.json>');
+  console.error('       mongbas-c2sp initialize-anchor <request> <cosigned-checkpoint.note> <log-trust.json> <witness-policy.json> <anchor.json>');
+  console.error('       mongbas-c2sp advance-anchor <request> <cosigned-checkpoint.note> <log-trust.json> <witness-policy.json> <anchor.json>');
   process.exit(2);
 }
 
@@ -144,11 +146,38 @@ async function submit(requestFile, signedCheckpointFile, endpoint, logTrustFile,
   console.log(`C2SP WITNESS ACCEPTED: quorum=${result.quorumResult.acceptedWitnesses.length}/${result.quorumResult.quorum} ids=${result.quorumResult.acceptedWitnesses.join(',')}`);
 }
 
+function updateAnchor(initialize, requestFile, noteFile, logTrustFile, policyFile, anchorFile) {
+  const resolvedAnchor = path.resolve(anchorFile);
+  ensureStateDirectory(path.dirname(resolvedAnchor));
+  if (initialize === fs.existsSync(resolvedAnchor)) {
+    throw new Error(initialize ? 'C2SP checkpoint anchor already exists' : 'C2SP checkpoint anchor does not exist; initialize it explicitly');
+  }
+  const lockFile = `${resolvedAnchor}.lock`;
+  const lock = fs.openSync(lockFile, fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_WRONLY | NOFOLLOW, 0o600);
+  try {
+    const request = readBoundedRegularFile(requestFile, 'C2SP witness request', 128 * 1024, { encoding: 'utf8' });
+    const note = readBoundedRegularFile(noteFile, 'cosigned checkpoint', MAX_NOTE_BYTES, { encoding: 'utf8' });
+    const logTrust = readJson(logTrustFile, 'C2SP log trust');
+    const policy = strictPolicy(readJson(policyFile, 'C2SP witness policy'), logTrust);
+    const previousAnchor = initialize ? null : readJson(resolvedAnchor, 'C2SP checkpoint anchor');
+    const result = advanceCheckpointAnchor({ cosignedCheckpoint: note, request, logTrust,
+      witnessPolicy: policy, previousAnchor });
+    const encoded = `${JSON.stringify(result.anchor)}\n`;
+    if (initialize) exclusiveWrite(resolvedAnchor, encoded); else replaceState(resolvedAnchor, encoded);
+    console.log(`C2SP ANCHOR ${initialize ? 'INITIALIZED' : 'ADVANCED'}: treeSize=${result.anchor.treeSize} quorum=${result.quorumResult.acceptedWitnesses.length}/${result.quorumResult.quorum}`);
+  } finally {
+    fs.closeSync(lock);
+    fs.unlinkSync(lockFile);
+  }
+}
+
 async function main() {
   const [command, ...args] = process.argv.slice(2);
   if (command === 'publish' && args.length === 6) publish(...args);
   else if (command === 'submit' && args.length === 6) await submit(...args);
   else if (command === 'verify-cosignatures' && args.length === 3) verifyCosignatures(...args);
+  else if (command === 'initialize-anchor' && args.length === 5) updateAnchor(true, ...args);
+  else if (command === 'advance-anchor' && args.length === 5) updateAnchor(false, ...args);
   else usage();
 }
 

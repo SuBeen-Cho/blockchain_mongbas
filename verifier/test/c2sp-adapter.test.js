@@ -9,6 +9,7 @@ const path = require('node:path');
 const { spawn, spawnSync } = require('node:child_process');
 const test = require('node:test');
 const {
+  advanceCheckpointAnchor,
   createSignedCheckpoint,
   createWitnessRequest,
   createC2spSubmissionFromV3Log,
@@ -299,6 +300,82 @@ test('known invalid, duplicate and insufficient C2SP cosignatures fail closed', 
   assert.throws(() => verifyWitnessCosignatures(broken, { witnesses: policy, quorum: 1, nowSeconds: 2_100 }), /invalid.*cosignature/);
   const unknown = [{ id: 'other', name: 'witness.example/other', publicKeyDer: policy[0].publicKeyDer }];
   assert.throws(() => verifyWitnessCosignatures(signed, { witnesses: unknown, quorum: 1, nowSeconds: 2_100 }), /quorum not met/);
+});
+
+test('external C2SP anchor advances only through a quorum-signed consistency proof', () => {
+  const operator = crypto.generateKeyPairSync('ed25519');
+  const witness = crypto.generateKeyPairSync('ed25519');
+  const origin = 'mongbas.example/cast-history/anchor';
+  const now = Math.floor(Date.now() / 1000);
+  const policy = { witnesses: [{ id: 'one', name: 'witness.example/one',
+    publicKeyDer: witness.publicKey.export({ format: 'der', type: 'spki' }).toString('base64') }], quorum: 1 };
+  const trust = { origin, publicKeyDer: operator.publicKey.export({ format: 'der', type: 'spki' }).toString('base64') };
+  const hash = value => crypto.createHash('sha256').update(value).digest();
+  const left = hash(Buffer.concat([Buffer.from([0]), Buffer.from('one')]));
+  const right = hash(Buffer.concat([Buffer.from([0]), Buffer.from('two')]));
+  const root = hash(Buffer.concat([Buffer.from([1]), left, right]));
+  const firstSigned = createSignedCheckpoint({ origin, treeSize: 1, rootHash: left.toString('hex'), privateKeyPem: pem(operator) });
+  const firstCosigned = appendCosignature(firstSigned, 'witness.example/one', witness, now);
+  const first = advanceCheckpointAnchor({ cosignedCheckpoint: firstCosigned,
+    request: createWitnessRequest({ oldSize: 0, consistencyPath: [], signedCheckpoint: firstSigned }),
+    logTrust: trust, witnessPolicy: policy });
+  assert.equal(first.anchor.treeSize, 1);
+  assert.deepEqual(first.quorumResult.acceptedWitnesses, ['one']);
+
+  const secondSigned = createSignedCheckpoint({ origin, treeSize: 2, rootHash: root.toString('hex'), privateKeyPem: pem(operator) });
+  const secondCosigned = appendCosignature(secondSigned, 'witness.example/one', witness, now);
+  const secondRequest = createWitnessRequest({ oldSize: 1, consistencyPath: [right.toString('hex')], signedCheckpoint: secondSigned });
+  const second = advanceCheckpointAnchor({ cosignedCheckpoint: secondCosigned, request: secondRequest,
+    logTrust: trust, witnessPolicy: policy, previousAnchor: first.anchor });
+  assert.equal(second.anchor.treeSize, 2);
+  assert.equal(second.anchor.rootHash, root.toString('hex'));
+
+  assert.throws(() => advanceCheckpointAnchor({ cosignedCheckpoint: firstCosigned,
+    request: createWitnessRequest({ oldSize: 1, consistencyPath: [], signedCheckpoint: firstSigned }),
+    logTrust: trust, witnessPolicy: policy, previousAnchor: second.anchor }), /rollback/);
+  const forkSigned = createSignedCheckpoint({ origin, treeSize: 2, rootHash: 'ab'.repeat(32), privateKeyPem: pem(operator) });
+  const forkCosigned = appendCosignature(forkSigned, 'witness.example/one', witness, now);
+  assert.throws(() => advanceCheckpointAnchor({ cosignedCheckpoint: forkCosigned,
+    request: createWitnessRequest({ oldSize: 2, consistencyPath: [], signedCheckpoint: forkSigned }),
+    logTrust: trust, witnessPolicy: policy, previousAnchor: second.anchor }), /fork/);
+  const thirdSigned = createSignedCheckpoint({ origin, treeSize: 3, rootHash: 'cd'.repeat(32), privateKeyPem: pem(operator) });
+  const thirdCosigned = appendCosignature(thirdSigned, 'witness.example/one', witness, now);
+  assert.throws(() => advanceCheckpointAnchor({ cosignedCheckpoint: thirdCosigned,
+    request: createWitnessRequest({ oldSize: 2, consistencyPath: ['ef'.repeat(32)], signedCheckpoint: thirdSigned }),
+    logTrust: trust, witnessPolicy: policy, previousAnchor: second.anchor }), /consistency proof/);
+});
+
+test('C2SP anchor CLI requires explicit initialization and preserves state on rollback', t => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'mongbas-c2sp-anchor-'));
+  fs.chmodSync(directory, 0o700);
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+  const operator = crypto.generateKeyPairSync('ed25519');
+  const witness = crypto.generateKeyPairSync('ed25519');
+  const origin = 'mongbas.example/cast-history/anchor-cli';
+  const now = Math.floor(Date.now() / 1000);
+  const trust = { origin, publicKeyDer: operator.publicKey.export({ format: 'der', type: 'spki' }).toString('base64') };
+  const policy = { schema: 'mongbas-c2sp-witness-policy/v1', quorum: 1, witnesses: [{ id: 'one', name: 'witness.example/one',
+    publicKeyDer: witness.publicKey.export({ format: 'der', type: 'spki' }).toString('base64') }] };
+  const leaf = crypto.createHash('sha256').update(Buffer.concat([Buffer.from([0]), Buffer.from('one')])).digest('hex');
+  const signed = createSignedCheckpoint({ origin, treeSize: 1, rootHash: leaf, privateKeyPem: pem(operator) });
+  const cosigned = appendCosignature(signed, 'witness.example/one', witness, now);
+  const files = { request: path.join(directory, 'request'), note: path.join(directory, 'note'),
+    trust: path.join(directory, 'trust'), policy: path.join(directory, 'policy'), anchor: path.join(directory, 'anchor.json') };
+  fs.writeFileSync(files.request, createWitnessRequest({ oldSize: 0, consistencyPath: [], signedCheckpoint: signed }));
+  fs.writeFileSync(files.note, cosigned); fs.writeFileSync(files.trust, JSON.stringify(trust));
+  fs.writeFileSync(files.policy, JSON.stringify(policy));
+  const cli = path.join(__dirname, '../bin/mongbas-c2sp.js');
+  const beforeInit = spawnSync(process.execPath, [cli, 'advance-anchor', files.request, files.note, files.trust, files.policy, files.anchor], { encoding: 'utf8' });
+  assert.equal(beforeInit.status, 1); assert.match(beforeInit.stderr, /initialize it explicitly/);
+  const initialized = spawnSync(process.execPath, [cli, 'initialize-anchor', files.request, files.note, files.trust, files.policy, files.anchor], { encoding: 'utf8' });
+  assert.equal(initialized.status, 0, initialized.stderr); assert.equal(fs.statSync(files.anchor).mode & 0o777, 0o600);
+  const original = fs.readFileSync(files.anchor, 'utf8');
+  const duplicateInit = spawnSync(process.execPath, [cli, 'initialize-anchor', files.request, files.note, files.trust, files.policy, files.anchor], { encoding: 'utf8' });
+  assert.equal(duplicateInit.status, 1); assert.match(duplicateInit.stderr, /already exists/);
+  const rollback = spawnSync(process.execPath, [cli, 'advance-anchor', files.request, files.note, files.trust, files.policy, files.anchor], { encoding: 'utf8' });
+  assert.equal(rollback.status, 1); assert.match(rollback.stderr, /does not start at previous size/);
+  assert.equal(fs.readFileSync(files.anchor, 'utf8'), original);
+  assert.equal(fs.existsSync(`${files.anchor}.lock`), false);
 });
 
 test('C2SP CLI verifies both the pinned log signature and witness quorum', t => {

@@ -1,6 +1,7 @@
 'use strict';
 
 const crypto = require('node:crypto');
+const { verifyConsistencyProof } = require('./history');
 
 const MAX_NOTE_BYTES = 64 * 1024;
 const MAX_SIGNATURES = 16;
@@ -226,6 +227,43 @@ function requireExactWitnessRequest(request, signedCheckpoint) {
   });
   const canonical = createWitnessRequest({ oldSize: Number(sizeMatch[1]), consistencyPath, signedCheckpoint });
   if (canonical !== request) throw new Error('C2SP witness request is not canonical');
+  return { oldSize: Number(sizeMatch[1]), consistencyPath };
+}
+
+function advanceCheckpointAnchor({ cosignedCheckpoint, request, logTrust, witnessPolicy, previousAnchor = null }) {
+  const checkpoint = parseAndVerifySignedCheckpoint(cosignedCheckpoint, logTrust);
+  const quorum = verifyWitnessCosignatures(cosignedCheckpoint, {
+    witnesses: witnessPolicy?.witnesses, quorum: witnessPolicy?.quorum,
+  });
+  if (typeof request !== 'string') throw new Error('C2SP anchor request is malformed');
+  const separator = request.indexOf('\n\n');
+  if (separator < 0) throw new Error('C2SP anchor request is malformed');
+  const submittedCheckpoint = request.slice(separator + 2);
+  const submitted = parseAndVerifySignedCheckpoint(submittedCheckpoint, logTrust);
+  if (submitted.origin !== checkpoint.origin || submitted.treeSize !== checkpoint.treeSize ||
+      submitted.rootHash !== checkpoint.rootHash) throw new Error('C2SP anchor request checkpoint mismatch');
+  const proof = requireExactWitnessRequest(request, submittedCheckpoint);
+
+  if (previousAnchor !== null) {
+    if (!previousAnchor || typeof previousAnchor !== 'object' || Array.isArray(previousAnchor) ||
+        Object.keys(previousAnchor).sort().join('\0') !== 'checkpointSha256\0origin\0rootHash\0schema\0treeSize' ||
+        previousAnchor.schema !== 'mongbas-c2sp-checkpoint-anchor/v1' || previousAnchor.origin !== checkpoint.origin ||
+        !Number.isSafeInteger(previousAnchor.treeSize) || previousAnchor.treeSize < 0 ||
+        !HASH_RE.test(previousAnchor.rootHash) || !HASH_RE.test(previousAnchor.checkpointSha256)) {
+      throw new Error('invalid previous C2SP checkpoint anchor');
+    }
+    if (checkpoint.treeSize < previousAnchor.treeSize) throw new Error('C2SP checkpoint anchor rollback');
+    if (proof.oldSize !== previousAnchor.treeSize) throw new Error('C2SP anchor request does not start at previous size');
+    if (checkpoint.treeSize === previousAnchor.treeSize) {
+      if (checkpoint.rootHash !== previousAnchor.rootHash) throw new Error('C2SP checkpoint anchor fork');
+    } else if (!verifyConsistencyProof({ oldSize: previousAnchor.treeSize, newSize: checkpoint.treeSize,
+      oldRootHash: previousAnchor.rootHash, newRootHash: checkpoint.rootHash,
+      consistencyPath: proof.consistencyPath })) throw new Error('C2SP checkpoint anchor consistency proof is invalid');
+  }
+  const anchor = { schema: 'mongbas-c2sp-checkpoint-anchor/v1', origin: checkpoint.origin,
+    treeSize: checkpoint.treeSize, rootHash: checkpoint.rootHash,
+    checkpointSha256: crypto.createHash('sha256').update(cosignedCheckpoint).digest('hex') };
+  return { anchor, quorumResult: quorum };
 }
 
 async function readBoundedResponse(response, maximumBytes = MAX_WITNESS_RESPONSE_BYTES) {
@@ -323,6 +361,7 @@ module.exports = {
   MAX_NOTE_BYTES,
   MAX_WITNESS_REQUEST_BYTES,
   MAX_WITNESS_RESPONSE_BYTES,
+  advanceCheckpointAnchor,
   createC2spSubmissionFromV3Log,
   createSignedCheckpoint,
   createWitnessRequest,

@@ -211,7 +211,7 @@ The process exits `0` only when every implemented check passes, `1` for an inval
 - can submit a bounded request only to an exact HTTPS `/add-checkpoint` URL with redirects disabled and a bounded timeout/response; and
 - accepts a response only after the pinned log signature and configured timestamped witness quorum both verify.
 
-This is an adapter library and local state-transition primitive, not a deployed C2SP HTTP witness. The HTTP transport is covered with both an injected response harness for conflict/malformed/oversized cases and a real loopback TLS round trip through a separate CLI process. It has not yet interoperated with an independently developed external witness implementation. Consequently the project does not yet claim C2SP compatibility. Existing Mongbas checkpoint-v3 JSON and signature semantics are unchanged.
+This is an adapter library and local state-transition primitive, not a deployed C2SP HTTP witness. The HTTP transport is covered with both an injected response harness and a real loopback TLS round trip. It also interoperated with the official `transparency-dev/witness` implementation at pinned commit `f8056f8`: opening, `0→1`, non-empty-proof `1→2`, stale-size, same-size fork and malformed-proof paths behaved as expected. This establishes the tested wire/proof interoperability only; it does not establish full C2SP conformance or an independently governed production witness. Existing Mongbas checkpoint-v3 JSON and signature semantics are unchanged.
 
 The local publication CLI persists the operator-signed checkpoint with fsync plus atomic rename before releasing a non-overwriting request artifact. Its state directory is mode `0700`, its checkpoint/request files are mode `0600`, and a lock serializes publishers. Re-running the same verified source produces the same request without replacing state. Publication itself does not transmit anything.
 
@@ -231,7 +231,7 @@ node bin/mongbas-c2sp.js submit \
   log-trust.json witness-policy.json cosigned-checkpoint.note
 ```
 
-`submit` is an explicit outbound network operation. Its presence is not evidence that an external witness has been exercised or that the configured operators are independent.
+`submit` is an explicit outbound network operation. A passing command is evidence only for the exact configured endpoint and keys; it does not establish that their operators are institutionally independent.
 
 A received cosigned checkpoint can be checked against a separately pinned log key and a strict `mongbas-c2sp-witness-policy/v1` k-of-n policy. The verifier accepts at most 32 distinct witness identities/names/Ed25519 keys, ignores unknown signatures, rejects a malformed signature whose known name and key ID match, rejects duplicate cosignatures and zero/future timestamps, and never counts the log key as a witness key.
 
@@ -241,6 +241,20 @@ node bin/mongbas-c2sp.js verify-cosignatures \
 ```
 
 This fixed k-of-n policy is intentionally narrower than the full C2SP policy language. It does not establish that the listed operators are institutionally independent.
+
+Witness database rollback can invalidate append-only guarantees even when every signature key remains uncompromised. Keep a checkpoint anchor outside the witness database. Initialization is deliberately separate from advancement so a missing anchor cannot silently become trust-on-first-use during normal operation. Both commands verify the pinned log signature, witness quorum, exact request binding and Merkle consistency before atomically writing a mode-`0600` anchor; advancement fails if the anchor is absent, smaller, forked or inconsistent.
+
+```bash
+node bin/mongbas-c2sp.js initialize-anchor \
+  request.txt cosigned-checkpoint.note log-trust.json witness-policy.json \
+  /separate-state/c2sp-anchor.json
+
+node bin/mongbas-c2sp.js advance-anchor \
+  next-request.txt next-cosigned-checkpoint.note log-trust.json witness-policy.json \
+  /separate-state/c2sp-anchor.json
+```
+
+The anchor must be stored on a separately protected or immutable system and compared before a witness resumes signing. Keeping it beside the same rollback-prone database does not mitigate host compromise or storage rollback.
 
 ## Implemented checks
 
