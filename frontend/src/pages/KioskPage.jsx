@@ -6,7 +6,7 @@ import {
   generateBallotValidityProof,
   generateVectorBallotV3,
 } from '../utils/crypto.js';
-import { browserCryptoReady } from '../utils/kioskUrl.js';
+import { browserCryptoReady, consumeKioskAdmission } from '../utils/kioskUrl.js';
 
 /**
  * KioskPage — 부스 시연용 폰 투표 (Editorial Cobalt · 라이트)
@@ -24,24 +24,13 @@ async function J(path, opts = {}) {
   return j;
 }
 
-function getDemoVoter() {
-  // Session scope avoids leaving a durable demo credential identifier on the phone.
-  localStorage.removeItem('mongbas_demo_voter');
-  for (let index = localStorage.length - 1; index >= 0; index -= 1) {
-    const key = localStorage.key(index);
-    if (key?.startsWith('mongbas_hist_')) localStorage.removeItem(key);
-  }
-  let id = sessionStorage.getItem('mongbas_demo_voter');
-  if (!id) { id = `demo${String(1 + Math.floor(Math.random() * 100)).padStart(3, '0')}`; sessionStorage.setItem('mongbas_demo_voter', id); }
-  return id;
-}
-
 const C = {
   font: '"Pretendard Variable",Pretendard,-apple-system,system-ui,"Apple SD Gothic Neo","Malgun Gothic",sans-serif',
   bg: '#f5f7ff', card: '#ffffff', ink: '#0a0f24', sub: '#54607a', line: '#d7dcfb', blue: '#2440F2', blueD: '#1A2BC9', soft: '#eef1ff',
 };
 
 export default function KioskPage({ electionId }) {
+  const [admissionToken] = useState(() => consumeKioskAdmission(window));
   const [election, setElection] = useState(null);
   const [pub, setPub] = useState(null);
   const [bf, setBf] = useState(null);
@@ -57,6 +46,7 @@ export default function KioskPage({ electionId }) {
   useEffect(() => {
     (async () => {
       if (!electionId) { setErr('선거 ID가 없습니다. QR을 다시 스캔하세요.'); setPhase('error'); return; }
+      if (!admissionToken) { setErr('만료되었거나 잘못된 QR입니다. 새 QR을 스캔하세요.'); setPhase('error'); return; }
       if (!browserCryptoReady(window)) { setErr('이 투표 화면은 HTTPS 보안 연결과 Web Crypto가 필요합니다. QR URL을 확인하세요.'); setPhase('error'); return; }
       try {
         const el = await J(`/elections/${encodeURIComponent(electionId)}`);
@@ -64,15 +54,15 @@ export default function KioskPage({ electionId }) {
         setElection(el);
         if (el.encryptionMode === 'elgamal' || el.encryptionMode === 'elgamal-vector-v3') setPub((await J(`/elections/${encodeURIComponent(electionId)}/elgamal-pubkey`)).pubKey);
         setBf((await J(`/elections/${encodeURIComponent(electionId)}/blinding-factor`)).blindingFactor);
-        const voter = getDemoVoter();
-        const issued = await J('/credential/idemix', { method: 'POST', body: JSON.stringify({ enrollmentID: voter, enrollmentSecret: `${voter}pw`, electionID: electionId }) });
+        const issued = await J('/credential/demo-admission/redeem', { method: 'POST',
+          body: JSON.stringify({ electionID: electionId, token: admissionToken }) });
         if (!issued.credential || !issued.nullifierMaterial) throw new Error('자격증명 nullifier 바인딩 재료가 누락됐습니다.');
         setCred(issued.credential);
         setNullifierMaterial(issued.nullifierMaterial);
         setPhase('choose');
       } catch (e) { setErr(e.message); setPhase('error'); }
     })();
-  }, [electionId]);
+  }, [electionId, admissionToken]);
 
   async function vote() {
     if (pick == null) return;

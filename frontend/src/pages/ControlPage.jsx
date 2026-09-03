@@ -14,8 +14,6 @@ import { buildSecureKioskUrl } from '../utils/kioskUrl.js';
  */
 const API = '/api';
 const CANDIDATES = ['치킨', '피자', '떡볶이'];
-// External relay is disabled unless an operator explicitly supplies a build-time URL.
-const KIOSK_RELAY_URL = String(import.meta.env.VITE_KIOSK_RELAY_URL || '').trim();
 let activeControlAdminToken = '';
 
 const T = {
@@ -24,9 +22,9 @@ const T = {
   paper: '#ffffff', paper2: '#eef1ff', ink: '#0a0f24', sub: '#54607a', line: '#d7dcfb', panel: '#f5f7ff',
 };
 const tr = (s, n = 10) => (s ? `${s.slice(0, n)}…${s.slice(-4)}` : '—');
-function kioskURL(electionID) {
+function kioskURL(electionID, admissionToken = '') {
   const configured = String(import.meta.env.VITE_PUBLIC_VOTER_ORIGIN || '').trim();
-  return buildSecureKioskUrl(electionID, window.location.origin, configured);
+  return buildSecureKioskUrl(electionID, window.location.origin, configured, admissionToken);
 }
 
 async function J(path, opts = {}) {
@@ -91,6 +89,7 @@ export default function ControlPage() {
   const [results, setResults] = useState(null);
   const [decrypted, setDecrypted] = useState(false);
   const [qr, setQr] = useState('');
+  const [admission, setAdmission] = useState(null);
   const [busy, setBusy] = useState('');
   const [log, setLog] = useState([]);
   const [vres, setVres] = useState(null);          // 검증 결과
@@ -102,8 +101,8 @@ export default function ControlPage() {
   const [narrow, setNarrow] = useState(typeof window !== 'undefined' && window.innerWidth < 860);
   const pollRef = useRef(null); const evRef = useRef(0);
   let kioskUrl = ''; let kioskUrlError = '';
-  if (eid) {
-    try { kioskUrl = kioskURL(eid); } catch (error) { kioskUrlError = error.message; }
+  if (eid && admission?.token) {
+    try { kioskUrl = kioskURL(eid, admission.token); } catch (error) { kioskUrlError = error.message; }
   }
   useEffect(() => { const f = () => setNarrow(window.innerWidth < 860); window.addEventListener('resize', f); return () => window.removeEventListener('resize', f); }, []);
   const addLog = useCallback((m) => setLog((l) => [`${new Date().toLocaleTimeString()} ${m}`, ...l].slice(0, 10)), []);
@@ -112,6 +111,13 @@ export default function ControlPage() {
     if (kioskUrl) QRCode.toDataURL(kioskUrl, { width: 320, margin: 1, color: { dark: '#0a0f24', light: '#ffffff' } }).then(setQr).catch(() => setQr(''));
     else setQr('');
   }, [kioskUrl]);
+
+  useEffect(() => {
+    if (!admission?.expiresAt) return undefined;
+    const delay = Math.max(0, admission.expiresAt - Date.now());
+    const timer = setTimeout(() => setAdmission(null), delay);
+    return () => clearTimeout(timer);
+  }, [admission]);
 
   // ── 폴링: 라이브 카운트/표 + 모바일 이벤트 ──
   useEffect(() => {
@@ -146,13 +152,10 @@ export default function ControlPage() {
       const now = Math.floor(Date.now() / 1000);
       await J('/elections', { method: 'POST', body: JSON.stringify({ electionID: id, title: '2026 모의 선거', candidates: CANDIDATES, encryptionMode: 'elgamal-vector-v3', endTime: now + 24 * 3600 }) });
       await J(`/elections/${id}/activate`, { method: 'POST' });
+      const issuedAdmission = await J('/credential/demo-admission', { method: 'POST', body: JSON.stringify({ electionID: id, ttlSeconds: 120 }) });
+      setAdmission(issuedAdmission);
       setEid(id); setStatus('ACTIVE'); setLive(0); setVotes([]); setShuffled(false);
       setResults(null); setDecrypted(false); setView('session'); setVres(null); setVfail(''); setRootHash(''); setTallyMath(null); evRef.current = 0;
-      // Optional showcase relay. It is off by default because it discloses the election URL externally.
-      const ku = kioskURL(id);
-      if (KIOSK_RELAY_URL) {
-        try { fetch(KIOSK_RELAY_URL, { method: 'PUT', body: JSON.stringify({ url: ku, electionID: id, ts: Date.now() }) }).catch(() => {}); } catch { /* noop */ }
-      }
       addLog(`새 세션 시작: ${id}`);
     } catch (e) { addLog('오류: ' + e.message); }
     setBusy('');

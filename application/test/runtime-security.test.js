@@ -5,7 +5,7 @@ const assert = require('node:assert/strict');
 const { parseTrustProxyHops, validateRuntimeSecurity, apiRequestShapeGuard } = require('../src/lib/runtimeSecurity');
 
 test('production refuses benchmark/demo/rate-limit bypass flags', () => {
-  for (const flag of ['ALLOW_INSECURE_ADMIN_API', 'ALLOW_BYPASS_CREDENTIAL', 'DISABLE_RATE_LIMITS', 'ENABLE_BENCH_ENDPOINTS', 'ENABLE_DEMO_CREDENTIALS', 'ENABLE_DEMO_ENDPOINTS']) {
+  for (const flag of ['ALLOW_INSECURE_ADMIN_API', 'ALLOW_BYPASS_CREDENTIAL', 'DISABLE_RATE_LIMITS', 'ENABLE_BENCH_ENDPOINTS', 'ENABLE_DEMO_CREDENTIALS', 'ENABLE_DEMO_ENDPOINTS', 'REQUIRE_DEMO_ADMISSION']) {
     assert.throws(() => validateRuntimeSecurity({ NODE_ENV: 'production', CORS_ORIGIN: 'https://vote.example', ASYM_CRED_ENABLED: 'true', [flag]: 'true' }), new RegExp(flag));
   }
 });
@@ -34,6 +34,12 @@ test('CORS accepts exact origins and rejects wildcard/path/userinfo', () => {
 test('benchmark endpoint requires explicit non-production enablement', () => {
   assert.equal(validateRuntimeSecurity({ ENABLE_BENCH_ENDPOINTS: 'true' }).benchEndpoints, true);
   assert.equal(validateRuntimeSecurity({}).benchEndpoints, false);
+});
+
+test('QR admission enforcement requires the demo endpoint profile', () => {
+  assert.throws(() => validateRuntimeSecurity({ REQUIRE_DEMO_ADMISSION: 'true' }), /ENABLE_DEMO_ENDPOINTS/);
+  const profile = validateRuntimeSecurity({ REQUIRE_DEMO_ADMISSION: 'true', ENABLE_DEMO_ENDPOINTS: 'true' });
+  assert.equal(profile.demoAdmissionRequired, true);
 });
 
 function invokeGuard({ method = 'POST', headers = {}, contentType = 'application/json' } = {}) {

@@ -37,6 +37,10 @@ const ASYM_CRED_ENABLED  = process.env.ASYM_CRED_ENABLED === 'true';
 const IDEMIX_IMPL        = process.env.IDEMIX_IMPL        || '';   // 'ps' | 'bbs' | ''
 const { getEd25519Keys } = require('../lib/asym-keys');
 const { logCredentialIssuance, logCredentialFailure } = require('../lib/audit-log');
+const { requireAdmin } = require('../middleware/admin');
+const { requireDemoEndpoint } = require('../lib/demoFeatures');
+const { DemoAdmissionStore, MAX_TTL_MS } = require('../lib/demoAdmission');
+const path = require('path');
 
 // PS/BBS 모듈은 필요할 때만 로드
 let _psIdemix  = null;
@@ -47,6 +51,7 @@ function getBbsIdemix() { return _bbsIdemix || (_bbsIdemix = require('../lib/bbs
 // ── 등록 유권자 DB (운영 시 실제 DB로 교체) ─────────────────────
 const VOTER_REGISTRY = new Map();
 const ENABLE_DEMO_CREDENTIALS = process.env.ENABLE_DEMO_CREDENTIALS === 'true';
+const REQUIRE_DEMO_ADMISSION = process.env.REQUIRE_DEMO_ADMISSION === 'true';
 const registryFile = process.env.VOTER_REGISTRY_FILE || '';
 if (registryFile) {
   const records = JSON.parse(fs.readFileSync(registryFile, 'utf8'));
@@ -192,6 +197,50 @@ async function issueCredentialAuto(voterID, electionID) {
   return { token: tok, credType: 'HMAC-SHA256', sizeBytes: Buffer.byteLength(tok, 'utf8'), nullifierMaterial };
 }
 
+let demoAdmissionStore;
+function getDemoAdmissionStore() {
+  if (!demoAdmissionStore) {
+    const configured = process.env.DEMO_ADMISSION_FILE || path.join(__dirname, '../../.runtime/demo-admissions.json');
+    demoAdmissionStore = new DemoAdmissionStore(configured);
+  }
+  return demoAdmissionStore;
+}
+
+// The QR admission is a demo access capability, not voter eligibility. Creation
+// is administrator-only and redemption atomically consumes the raw fragment token.
+router.post('/demo-admission', requireDemoEndpoint, requireAdmin, (req, res) => {
+  const { electionID, ttlSeconds = 120 } = req.body || {};
+  if (!Number.isSafeInteger(ttlSeconds) || ttlSeconds < 1 || ttlSeconds * 1000 > MAX_TTL_MS) {
+    return res.status(400).json({ error: 'QR admission TTL이 유효하지 않습니다.' });
+  }
+  try {
+    const issued = getDemoAdmissionStore().issue(electionID, { ttlMs: ttlSeconds * 1000 });
+    return res.status(201).json({ token: issued.token, electionID, expiresAt: issued.expiresAt });
+  } catch (error) {
+    return res.status(400).json({ error: error.message });
+  }
+});
+
+router.post('/demo-admission/redeem', requireDemoEndpoint, async (req, res) => {
+  const { electionID, token } = req.body || {};
+  try {
+    const admission = getDemoAdmissionStore().redeem(electionID, token);
+    const { token: credential, credType, sizeBytes, nullifierMaterial } =
+      await issueCredentialAuto(`admission:${admission.admissionID}`, electionID);
+    logCredentialIssuance({
+      credentialHash: crypto.createHash('sha256').update(credential).digest('hex'),
+      electionID,
+      credType,
+      expiresAt: Date.now() + CREDENTIAL_TTL_MS,
+      success: true,
+    });
+    return res.json({ credential, expiresIn: CREDENTIAL_TTL_MS / 1000, credType, sizeBytes, nullifierMaterial });
+  } catch {
+    logCredentialFailure({ electionID, reason: 'demo-admission-unavailable' });
+    return res.status(401).json({ error: 'QR admission이 유효하지 않거나 이미 사용됐습니다.' });
+  }
+});
+
 // ── POST /api/credential/idemix ──────────────────────────────────
 router.post('/idemix', async (req, res) => {
   const { enrollmentID, enrollmentSecret, electionID } = req.body || {};
@@ -211,6 +260,12 @@ router.post('/idemix', async (req, res) => {
   if (!voter.eligible) {
     logCredentialFailure({ electionID, reason: 'not-eligible' });
     return res.status(403).json({ error: '투표 자격이 없는 계정입니다.' });
+  }
+  // QR booth mode must not be bypassable with the predictable demo accounts.
+  // Registered non-demo voters keep using this endpoint normally.
+  if (voter.demo && REQUIRE_DEMO_ADMISSION) {
+    logCredentialFailure({ electionID, reason: 'demo-admission-required' });
+    return res.status(403).json({ error: '이 시연에서는 QR admission을 통해 자격증명을 발급받아야 합니다.' });
   }
 
   const { token, credType, sizeBytes, nullifierMaterial } = await issueCredentialAuto(enrollmentID, electionID);
@@ -259,4 +314,4 @@ if (ENABLE_DEMO_CREDENTIALS && process.env.NODE_ENV !== 'production') {
   });
 }
 
-module.exports = { router, issueCredential, issueAsymCredential, getEd25519Keys, CREDENTIAL_SECRET, ASYM_CRED_ENABLED };
+module.exports = { router, issueCredential, issueAsymCredential, issueCredentialAuto, getEd25519Keys, CREDENTIAL_SECRET, ASYM_CRED_ENABLED };

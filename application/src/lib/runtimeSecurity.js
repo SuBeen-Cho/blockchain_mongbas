@@ -16,9 +16,13 @@ function validateRuntimeSecurity(env = process.env) {
     'ENABLE_BENCH_ENDPOINTS',
     'ENABLE_DEMO_CREDENTIALS',
     'ENABLE_DEMO_ENDPOINTS',
+    'REQUIRE_DEMO_ADMISSION',
   ].filter(key => env[key] === 'true');
   if (production && unsafeProductionFlags.length) {
     throw new Error(`production forbids unsafe flags: ${unsafeProductionFlags.join(', ')}`);
+  }
+  if (env.REQUIRE_DEMO_ADMISSION === 'true' && env.ENABLE_DEMO_ENDPOINTS !== 'true') {
+    throw new Error('REQUIRE_DEMO_ADMISSION=true requires ENABLE_DEMO_ENDPOINTS=true');
   }
   if (production && !env.CORS_ORIGIN) throw new Error('production requires explicit CORS_ORIGIN');
   if (production && env.ASYM_CRED_ENABLED !== 'true' && !['ps', 'bbs'].includes(env.IDEMIX_IMPL || '')) {
@@ -42,6 +46,7 @@ function validateRuntimeSecurity(env = process.env) {
     allowedOrigins,
     benchEndpoints: !production && env.ENABLE_BENCH_ENDPOINTS === 'true',
     hsts: production || env.ENABLE_HSTS === 'true',
+    demoAdmissionRequired: !production && env.REQUIRE_DEMO_ADMISSION === 'true',
   };
 }
 

@@ -22,18 +22,18 @@ cd mongbas
 > 공개 Quick Tunnel은 사용자 승인을 받은 일시 시험에만 사용한다. 발표/장기 운영은 named tunnel, vote/admin 경로 분리와 관리자 인증을 적용한다. cloudflared 미설치: `brew install cloudflared`.
 > 공개 터널에서도 rate limit을 끄지 않는다. `live-count`, `live-votes`, `demo-events`는 관제판이 전송하는 관리자 bearer token이 있어야 조회된다. 관제판도 터널 URL로 열어야 QR에 해당 HTTPS origin이 들어간다.
 >
-> 현재 QR은 선거 ID만 포함하며 만료되거나 1회 사용으로 소진되는 admission token이 아니다. 또한 `ENABLE_DEMO_CREDENTIALS=true`의 `demo###` 계정과 비밀번호는 공개 코드에서 예측 가능한 시연용 데이터다. 따라서 이 경로는 UI·암호 투표·원장 연동 재현용일 뿐 실제 유권자 자격 또는 ballot-stuffing 저항 증거가 아니다. 승인된 단기 시험 외에는 인터넷 공개 터널로 노출하지 않는다.
+> QR 시연 프로필에서는 `REQUIRE_DEMO_ADMISSION=true`를 반드시 사용한다. 관제판이 관리자 인증으로 120초짜리 일회용 admission을 발급하고, 폰은 URL fragment의 토큰을 즉시 지운 뒤 한 번만 교환한다. 이 admission은 실제 유권자 자격 증명이 아니며 eligibility 또는 ballot-stuffing 저항의 증거가 아니다. 승인된 단기 시험 외에는 인터넷 공개 터널로 노출하지 않는다.
 
 화면 3개:
 - **관제판(노트북)**: `http://localhost:3000/?app=control` (또는 터널 URL + `/?app=control`)
 - **내 표 추적(노트북)**: `http://localhost:3000/?app=track`
-- **폰 키오스크**: 관제판이 띄우는 QR (터널 URL `/?app=kiosk&e=<선거ID>`)
+- **폰 키오스크**: 관제판이 띄우는 단기 QR (`/?app=kiosk&e=<선거ID>#a=<일회용 토큰>`)
 
 **전시용 쇼케이스(서브 컴퓨터)**: `https://mongbas-blockchain.netlify.app/` (Netlify 배포)
 - 또는 로컬/터널에서 `http://localhost:3000/showcase3.html` (`https://<tunnel>/showcase3.html`).
 - 소스: `frontend/public/showcase3.html` (구 showcase.html/showcase2.html 시안은 제거됨).
 - 일반인/부스 참여자용 전시 페이지. 인터넷 연결 필요(폰트·애니메이션 CDN, QR·Firebase 동기화).
-- **QR 자동 동기화**: 대시보드 [새 세션] 시 키오스크 URL이 Firebase에 기록되어, 쇼케이스 하단 QR이 자동 갱신됨(서브 컴퓨터가 어디든 동작).
+- **QR 갱신**: 대시보드 [새 세션] 시 서버에서 일회용 admission을 발급해 로컬 화면의 QR을 갱신한다. 원시 토큰은 Firebase나 다른 외부 relay로 전송하지 않는다.
 
 ---
 

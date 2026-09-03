@@ -147,7 +147,10 @@ app.get('/health', (_req, res) => {
       rateLimitsDisabled: DISABLE_RATE_LIMITS,
       demoCredentialsEnabled: process.env.ENABLE_DEMO_CREDENTIALS === 'true',
     },
-    demo: { endpointsEnabled: demoEndpointsEnabled() },
+    demo: {
+      endpointsEnabled: demoEndpointsEnabled(),
+      admissionRequired: runtimeSecurity.demoAdmissionRequired,
+    },
     fabricConcurrency: fabricConcurrencyGate.status(),
     memory: {
       heapUsed:  mem.heapUsed,
