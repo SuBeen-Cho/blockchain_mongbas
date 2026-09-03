@@ -206,6 +206,31 @@ test('C2SP witness transport rejects unsafe endpoints without making a request',
   assert.equal(calls, 0);
 });
 
+test('C2SP witness transport validates trust, policy and exact request before network access', async () => {
+  const operator = crypto.generateKeyPairSync('ed25519');
+  const witness = crypto.generateKeyPairSync('ed25519');
+  const origin = 'mongbas.example/cast-history/election-a';
+  const signedCheckpoint = createSignedCheckpoint({ origin, treeSize: 0,
+    rootHash: crypto.createHash('sha256').update(Buffer.alloc(0)).digest('hex'), privateKeyPem: pem(operator) });
+  const request = createWitnessRequest({ oldSize: 0, consistencyPath: [], signedCheckpoint });
+  const trust = { origin, publicKeyDer: operator.publicKey.export({ format: 'der', type: 'spki' }).toString('base64') };
+  const policy = { quorum: 1, witnesses: [{ id: 'one', name: 'witness.example/one',
+    publicKeyDer: witness.publicKey.export({ format: 'der', type: 'spki' }).toString('base64') }] };
+  let calls = 0;
+  const fetchImpl = async () => { calls += 1; throw new Error('network must not be reached'); };
+  const base = { endpoint: 'https://witness.example/add-checkpoint', request, signedCheckpoint,
+    logTrust: trust, witnessPolicy: policy, fetchImpl };
+  await assert.rejects(submitWitnessRequest({ ...base,
+    logTrust: { ...trust, publicKeyDer: witness.publicKey.export({ format: 'der', type: 'spki' }).toString('base64') } }),
+  /trusted signature/);
+  await assert.rejects(submitWitnessRequest({ ...base, witnessPolicy: { ...policy, quorum: 2 } }), /valid k-of-n/);
+  await assert.rejects(submitWitnessRequest({ ...base, request: request.replace(/^old 0/, 'old 00') }), /request/);
+  await assert.rejects(submitWitnessRequest({ ...base, request: `old 0\n${Buffer.alloc(32).toString('base64')}\n\n${signedCheckpoint}` }),
+    /empty/);
+  await assert.rejects(submitWitnessRequest({ ...base, request: `garbage\n\n${signedCheckpoint}` }), /request/);
+  assert.equal(calls, 0);
+});
+
 test('C2SP witness transport fails closed on conflicts, status and bounded response violations', async () => {
   const operator = crypto.generateKeyPairSync('ed25519');
   const origin = 'mongbas.example/cast-history/election-a';

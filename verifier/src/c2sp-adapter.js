@@ -211,6 +211,23 @@ function requireWitnessEndpoint(value) {
   return endpoint.href;
 }
 
+function requireExactWitnessRequest(request, signedCheckpoint) {
+  if (typeof request !== 'string' || typeof signedCheckpoint !== 'string' ||
+      Buffer.byteLength(request) > MAX_WITNESS_REQUEST_BYTES) throw new Error('invalid C2SP witness request input');
+  const separator = request.indexOf('\n\n');
+  if (separator < 0 || request.slice(separator + 2) !== signedCheckpoint) throw new Error('C2SP witness request is not bound to its checkpoint');
+  const proofLines = request.slice(0, separator).split('\n');
+  const sizeMatch = /^old (0|[1-9][0-9]*)$/.exec(proofLines.shift() || '');
+  if (!sizeMatch) throw new Error('C2SP witness request old size is not canonical');
+  const consistencyPath = proofLines.map((line, index) => {
+    const node = exactBase64(line, `C2SP witness request consistency node ${index}`);
+    if (node.length !== 32) throw new Error(`C2SP witness request consistency node ${index} must be 32 bytes`);
+    return node.toString('hex');
+  });
+  const canonical = createWitnessRequest({ oldSize: Number(sizeMatch[1]), consistencyPath, signedCheckpoint });
+  if (canonical !== request) throw new Error('C2SP witness request is not canonical');
+}
+
 async function readBoundedResponse(response, maximumBytes = MAX_WITNESS_RESPONSE_BYTES) {
   const declared = response.headers.get('content-length');
   if (declared !== null && (!/^(?:0|[1-9][0-9]*)$/.test(declared) || Number(declared) > maximumBytes)) {
@@ -237,9 +254,11 @@ async function readBoundedResponse(response, maximumBytes = MAX_WITNESS_RESPONSE
 async function submitWitnessRequest({ endpoint, request, signedCheckpoint, logTrust, witnessPolicy,
   timeoutMs = 10_000, fetchImpl = globalThis.fetch }) {
   const url = requireWitnessEndpoint(endpoint);
-  if (typeof request !== 'string' || Buffer.byteLength(request) > MAX_WITNESS_REQUEST_BYTES ||
-      !request.endsWith(signedCheckpoint) || typeof fetchImpl !== 'function') throw new Error('invalid C2SP witness submission input');
+  if (typeof fetchImpl !== 'function') throw new Error('invalid C2SP witness submission input');
   if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1_000 || timeoutMs > 60_000) throw new Error('C2SP witness timeout is invalid');
+  requireExactWitnessRequest(request, signedCheckpoint);
+  parseAndVerifySignedCheckpoint(signedCheckpoint, logTrust);
+  requireWitnessPolicy(witnessPolicy?.witnesses, witnessPolicy?.quorum);
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   let response;
