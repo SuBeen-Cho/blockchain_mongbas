@@ -67,3 +67,28 @@ test('witness CLI writes separate transition and trust-v2 artifacts without over
     assert.notEqual(second.status, 0);
   } finally { fs.rmSync(directory, { recursive: true, force: true }); }
 });
+
+test('witness CLI atomically publishes a key-policy directory', () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'mongbas-key-policy-'));
+  try {
+    const oldPair = crypto.generateKeyPairSync('ed25519'), newPair = crypto.generateKeyPairSync('ed25519');
+    const oldPath = path.join(directory, 'old.pem'), newPath = path.join(directory, 'new.pem');
+    const logPath = path.join(directory, 'log.jsonl'), policyPath = path.join(directory, 'policy-v2');
+    fs.writeFileSync(oldPath, pem(oldPair), { mode: 0o600 });
+    fs.writeFileSync(newPath, pem(newPair), { mode: 0o600 });
+    const opening = createOpeningCheckpoint({ electionID: 'election-a', electionContextHash: 'a'.repeat(64),
+      witnessID: 'observer', privateKeyPem: pem(oldPair) });
+    fs.writeFileSync(logPath, `${require('../src/verify').canonicalize(opening)}\n`, { mode: 0o600 });
+    const cli = path.join(__dirname, '../bin/mongbas-witness.js');
+    const args = ['authorize-cast-history-key-policy', logPath, oldPath, newPath, policyPath];
+    const first = spawnSync(process.execPath, [cli, ...args], { encoding: 'utf8' });
+    assert.equal(first.status, 0, first.stderr);
+    assert.deepEqual(fs.readdirSync(policyPath).sort(), ['transition.json', 'trust.json']);
+    const trust = JSON.parse(fs.readFileSync(path.join(policyPath, 'trust.json'), 'utf8'));
+    assert.equal(trust.witnesses[0].transitions.length, 1);
+    assert.equal(validateWitnessKeyTransition(JSON.parse(fs.readFileSync(path.join(policyPath, 'transition.json'), 'utf8'))), true);
+    const second = spawnSync(process.execPath, [cli, ...args], { encoding: 'utf8' });
+    assert.notEqual(second.status, 0);
+    assert.match(second.stderr, /refusing to overwrite/);
+  } finally { fs.rmSync(directory, { recursive: true, force: true }); }
+});

@@ -75,6 +75,7 @@ function usage(exitCode = 2) {
   console.error('  mongbas-witness open-cast-history <election-id> <context-hash> <epoch-seconds> <checkpoint.jsonl> <witness-id> <ed25519-private.pem>');
   console.error('  mongbas-witness observe-cast-history <history.json> <bundle.json> <checkpoint.jsonl> <witness-id> <ed25519-private.pem>');
   console.error('  mongbas-witness authorize-cast-history-key <checkpoint.jsonl> <old-private.pem> <new-private.pem> <trust-v2.json> <transition.json>');
+  console.error('  mongbas-witness authorize-cast-history-key-policy <checkpoint.jsonl> <old-private.pem> <new-private.pem> <policy-directory> [previous-trust-v2.json]');
   console.error('  mongbas-witness observe-cast-history-rotated <history.json> <bundle.json> <checkpoint.jsonl> <witness-id> <new-private.pem> <trust-v2.json>');
   console.error('  mongbas-witness verify <checkpoint.jsonl> <witness-trust.json>');
   console.error('  mongbas-witness verify-bundle <bundle.json> <checkpoint.jsonl> <witness-trust.json> <sequence>');
@@ -156,6 +157,58 @@ function authorizeCastHistoryKey(logPath, oldKeyPath, newKeyPath, trustPath, tra
     ed25519PublicKeyDer: previous.witnessPublicKeyDer }] });
   writeExclusivePrivateJSON(transitionPath, transition, 'transitionPath');
   writeExclusivePrivateJSON(trustPath, trust, 'trustPath');
+}
+
+function publishKeyPolicyDirectory(directoryPath, trust, transition) {
+  const target = path.resolve(directoryPath);
+  if (fs.existsSync(target)) throw new Error('refusing to overwrite key policy directory');
+  const parent = path.dirname(target);
+  fs.mkdirSync(parent, { recursive: true, mode: 0o700 });
+  const stage = fs.mkdtempSync(path.join(parent, `.${path.basename(target)}.tmp.`));
+  try {
+    fs.chmodSync(stage, 0o700);
+    for (const [name, value] of [['trust.json', trust], ['transition.json', transition]]) {
+      const file = path.join(stage, name);
+      const fd = fs.openSync(file, fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL | NOFOLLOW, 0o600);
+      try { fs.writeSync(fd, `${canonicalize(value)}\n`); fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
+    }
+    syncDirectory(stage);
+    fs.renameSync(stage, target);
+    syncDirectory(parent);
+  } catch (error) {
+    try { fs.rmSync(stage, { recursive: true, force: true }); } catch (_) { /* preserve original error */ }
+    throw error;
+  }
+  console.log(`policyDirectory=${target}`);
+}
+
+function authorizeCastHistoryKeyPolicy(logPath, oldKeyPath, newKeyPath, policyDirectory, previousTrustPath = null) {
+  const entries = parseCanonicalLog(readLog(logPath));
+  const previous = entries.at(-1);
+  if (previous?.schema !== CHECKPOINT_V3_SCHEMA) throw new Error('key rotation requires a checkpoint-v3 log');
+  const oldPrivateKeyPem = readPrivateKey(oldKeyPath);
+  const oldPublicKey = publicKeyDer(oldPrivateKeyPem);
+  let trust;
+  if (previousTrustPath) {
+    trust = readTrust(previousTrustPath);
+    if (trust.schema !== 'mongbas-witness-trust/v2') throw new Error('previous rotation policy must use trust v2');
+    verifyCheckpointLog(entries, trust);
+  } else {
+    trust = { schema: 'mongbas-witness-trust/v2', witnesses: [{ id: previous.witnessID,
+      initialEd25519PublicKeyDer: oldPublicKey, transitions: [] }] };
+    verifyCheckpointLog(entries, { schema: TRUST_SCHEMA,
+      witnesses: [{ id: previous.witnessID, ed25519PublicKeyDer: oldPublicKey }] });
+  }
+  if (previous.witnessPublicKeyDer !== oldPublicKey) throw new Error('old transition key is not the current checkpoint key');
+  const transition = createWitnessKeyTransition({ previousCheckpoint: previous, oldPrivateKeyPem,
+    newPrivateKeyPem: readPrivateKey(newKeyPath) });
+  const updated = structuredClone(trust);
+  const witness = updated.witnesses.find(item => item.id === previous.witnessID);
+  if (!witness) throw new Error('previous trust policy does not contain the witness');
+  witness.transitions.push(transition);
+  // Validate the complete old log and the newly appended, future-effective transition policy.
+  verifyCheckpointLog(entries, updated);
+  publishKeyPolicyDirectory(policyDirectory, updated, transition);
 }
 
 function initTrust(witnessID, keyPath, trustPath) {
@@ -345,6 +398,8 @@ try {
   else if (command === 'open-cast-history' && args.length === 6) openCastHistory(args[0], args[1], args[2], path.resolve(args[3]), args[4], path.resolve(args[5]));
   else if (command === 'observe-cast-history' && args.length === 5) observeCastHistory(path.resolve(args[0]), path.resolve(args[1]), path.resolve(args[2]), args[3], path.resolve(args[4]));
   else if (command === 'authorize-cast-history-key' && args.length === 5) authorizeCastHistoryKey(...args.map(value => path.resolve(value)));
+  else if (command === 'authorize-cast-history-key-policy' && (args.length === 4 || args.length === 5)) authorizeCastHistoryKeyPolicy(
+    path.resolve(args[0]), path.resolve(args[1]), path.resolve(args[2]), path.resolve(args[3]), args[4] ? path.resolve(args[4]) : null);
   else if (command === 'observe-cast-history-rotated' && args.length === 6) observeCastHistory(path.resolve(args[0]), path.resolve(args[1]), path.resolve(args[2]), args[3], path.resolve(args[4]), path.resolve(args[5]));
   else if (command === 'verify' && args.length === 2) verify(...args.map(value => path.resolve(value)));
   else if (command === 'verify-bundle' && args.length === 4) verifyBundleCheckpoint(path.resolve(args[0]), path.resolve(args[1]), path.resolve(args[2]), args[3]);
