@@ -18,8 +18,14 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-NETWORK_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-PROJECT_DIR="$(cd "$NETWORK_DIR/.." && pwd)"
+DEFAULT_NETWORK_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+PROJECT_DIR="$(cd "$DEFAULT_NETWORK_DIR/.." && pwd)"
+NETWORK_DIR="${FABRIC_NETWORK_DIR:-$DEFAULT_NETWORK_DIR}"
+CHAINCODE_SOURCE_DIR="${MONGBAS_CHAINCODE_SOURCE_DIR:-$PROJECT_DIR/chaincode/voting}"
+case "$NETWORK_DIR" in /*) ;; *) echo "FABRIC_NETWORK_DIR must be absolute" >&2; exit 1 ;; esac
+case "$CHAINCODE_SOURCE_DIR" in /*) ;; *) echo "MONGBAS_CHAINCODE_SOURCE_DIR must be absolute" >&2; exit 1 ;; esac
+[ -f "$NETWORK_DIR/docker-compose.yaml" ] || { echo "Fabric network artifacts missing: $NETWORK_DIR" >&2; exit 1; }
+[ -f "$CHAINCODE_SOURCE_DIR/Dockerfile" ] || { echo "chaincode source missing: $CHAINCODE_SOURCE_DIR" >&2; exit 1; }
 
 # Linux bootstrap이 private runtime에 설치한 검증된 pinned toolset을
 # 최우선한다. 기존 repo-local/Mac fabric-samples 경로는 하위 호환이다.
@@ -38,7 +44,7 @@ export PATH="${FABRIC_BIN}:${PATH}"
 CHANNEL_NAME="voting-channel"
 CHAINCODE_NAME="voting"
 CHAINCODE_VERSION="1.0"
-CHAINCODE_PATH="${PROJECT_DIR}/chaincode/voting"
+CHAINCODE_PATH="${CHAINCODE_SOURCE_DIR}"
 CHAINCODE_LABEL="${CHAINCODE_NAME}_${CHAINCODE_VERSION}"
 FABRIC_CFG_PATH="${NETWORK_DIR}"
 
@@ -264,7 +270,15 @@ cmd_deploy() {
   # A CCAAS package contains connection metadata only. Rebuild the executable
   # image so a lifecycle upgrade never restarts stale chaincode code.
   step "[배포 0/7] 현재 소스로 CCAAS 이미지 재빌드..."
-  docker compose -f "${NETWORK_DIR}/docker-compose.yaml" build voting-chaincode
+  if [ "${NETWORK_DIR}" = "${DEFAULT_NETWORK_DIR}" ] && [ "${CHAINCODE_PATH}" = "${PROJECT_DIR}/chaincode/voting" ]; then
+    docker compose -f "${NETWORK_DIR}/docker-compose.yaml" build voting-chaincode
+  else
+    # A feature checkout may intentionally keep Fabric identities and channel
+    # artifacts in a protected operational checkout. Build the executable from
+    # the explicitly selected source instead of the compose file's relative
+    # context, which may otherwise rebuild stale main-branch code.
+    docker build -t voting-chaincode:1.0 "${CHAINCODE_PATH}"
+  fi
 
   step "[배포 1/7] CCAAS 패키지 생성..."
   CCAAS_PKG="/tmp/voting_ccaas_pkg"
