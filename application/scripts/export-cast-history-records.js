@@ -5,6 +5,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { connectGateway } = require('../src/gateway');
 const { collectCastHistoryRecordsResilient } = require('../src/lib/castHistoryFabric');
+const { publishFileNoReplace } = require('../src/lib/atomicFile');
 
 function option(name) {
   const index = process.argv.indexOf(`--${name}`);
@@ -35,8 +36,6 @@ async function main() {
   if (!output || startBlock > endBlock) throw new Error('--output is required and start-block must not exceed end-block');
   const target = path.resolve(output);
   if (fs.existsSync(target)) throw new Error(`refusing to overwrite existing output: ${target}`);
-  const parent = path.dirname(target);
-  const temporary = path.join(parent, `.${path.basename(target)}.${process.pid}.tmp`);
   const { gateway, network, contract } = await connectGateway();
   try {
     const records = await collectCastHistoryRecordsResilient({
@@ -44,12 +43,10 @@ async function main() {
       contract, electionID, startBlock, endBlock, maxRecords, maxReconnects,
     });
     const document = { schema: 'mongbas-fabric-cast-history-input/v1', electionID, startBlock, endBlock, records };
-    fs.writeFileSync(temporary, `${JSON.stringify(document, null, 2)}\n`, { flag: 'wx', mode: 0o600 });
-    fs.renameSync(temporary, target);
+    publishFileNoReplace(target, `${JSON.stringify(document, null, 2)}\n`);
     process.stdout.write(`${JSON.stringify({ output: target, records: records.length })}\n`);
   } finally {
     gateway.close();
-    try { fs.unlinkSync(temporary); } catch (error) { if (error.code !== 'ENOENT') throw error; }
   }
 }
 
