@@ -109,6 +109,13 @@ decryption, cast/audited receipt binding, disclosed-randomness re-encryption,
 Merkle root, and organization signatures. DKG-bearing v5 remains a separate
 unimplemented cross-verification layer.
 
+`reference/python_bundle_v5_verify.py` adds that DKG-v5 layer: canonical
+transcript hashing, Ed25519/X25519 SPKI algorithm binding, the fixed 2-of-3 MSP
+roster and approvals, dealer Feldman commitments, election-key multiplication,
+all published-share equations, bundled-share equality, and the original v5
+organization signatures. Together the Python references cover every currently
+supported bundle schema except the intentionally unsupported historical v3.
+
 To build and sign an exported source without sending private keys to the server:
 
 ```bash

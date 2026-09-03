@@ -492,6 +492,39 @@ test('verifies a DKG v5 bundle and recomputes every public commitment equation',
   }
 });
 
+test('independent Python/OpenSSL verifier checks the complete DKG-v5 bundle', () => {
+  const bundle = buildVectorBundle({ dkg: true });
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'mongbas-python-bundle-v5-'));
+  const referencePath = path.join(__dirname, '../reference/python_bundle_v5_verify.py');
+  const run = value => {
+    const bundlePath = path.join(directory, `bundle-${crypto.randomUUID()}.json`);
+    fs.writeFileSync(bundlePath, canonicalize(value));
+    return spawnSync('python3', [referencePath, bundlePath], { encoding: 'utf8', timeout: 120_000 });
+  };
+  try {
+    const accepted = run(bundle);
+    assert.equal(accepted.status, 0, accepted.stderr);
+    assert.deepEqual(JSON.parse(accepted.stdout), {
+      auditDisclosures: 1, ballots: 4, dkgParticipants: 3, schema: 'mongbas-election-bundle/v5',
+      valid: true, validPartials: 2, validSignatures: 2,
+    });
+    const mutations = [
+      value => { value.keyCeremony.approvals.pop(); },
+      value => { value.keyCeremony.transcriptHash = '00'.repeat(32); },
+      value => { value.keyCeremony.transcript.participants[0].transportPublicKeyDer = value.keyCeremony.transcript.participants[0].signingPublicKeyDer; },
+      value => { value.keyCeremony.transcript.publicShares[0].publicKeyY = value.keyCeremony.transcript.publicShares[1].publicKeyY; },
+      value => { value.signatures[0].signature = Buffer.alloc(64).toString('base64'); },
+    ];
+    for (const mutate of mutations) {
+      const changed = structuredClone(bundle);
+      mutate(changed);
+      assert.equal(run(changed).status, 1, 'v5 mutation unexpectedly accepted');
+    }
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
 test('builds and verifies vector-v3 one-hot ballots and per-candidate threshold decryptions', () => {
   const bundle = buildVectorBundle();
   const result = verifyBundle(bundle);

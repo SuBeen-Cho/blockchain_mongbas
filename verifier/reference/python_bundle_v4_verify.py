@@ -111,7 +111,7 @@ def verify_audit(bundle,y):
         disclosed.add(disclosure['ballotID'])
     if sum(x['status']=='audited' for x in receipts)!=len(disclosures): core.fail('audit count')
 
-def verify(bundle):
+def verify(bundle, skip_signatures=False):
     core.exact(bundle,['schema','algorithms','configuration','provenance','publicKey','trusteePublicShares','ballots','bulletinBoard','aggregateCiphertextVector','tally','vectorPartialDecryptions','vectorBallotReceipts','vectorAuditDisclosures','signatures'],'bundle')
     if bundle['schema']!='mongbas-election-bundle/v4': core.fail('only v4 supported')
     core.exact(bundle['algorithms'],['canonicalization','hash','signature','tally'],'algorithms')
@@ -146,15 +146,17 @@ def verify(bundle):
     verify_partials(y,bundle['aggregateCiphertextVector'],bundle['tally']['results'],candidates,bundle['trusteePublicShares'],bundle['vectorPartialDecryptions'])
     verify_audit(bundle,y); core.exact(bundle['bulletinBoard'],['root','publishedAt'],'bulletinBoard'); require_time(bundle['bulletinBoard']['publishedAt'],'publishedAt')
     if bundle['bulletinBoard']['root']!=vector_merkle_root(ballots): core.fail('bulletin root')
-    unsigned=dict(bundle); del unsigned['signatures']; payload=core.canonical(unsigned).encode(); signatures=bundle['signatures']
-    if not isinstance(signatures,list) or len(signatures)<threshold_count: core.fail('insufficient signatures')
-    signed=set()
-    for entry in signatures:
-        core.exact(entry,['organizationID','signature'],'signature'); identity=entry['organizationID']
-        if identity in signed or identity not in keys: core.fail('signer identity')
-        signed.add(identity)
-        if not core.verify_ed25519(keys[identity],core.b64(entry['signature'],'signature'),payload): core.fail('signature verification')
-    return {'valid':True,'schema':bundle['schema'],'ballots':len(ballots),'validPartials':len(bundle['vectorPartialDecryptions']),'validSignatures':len(signatures),'auditDisclosures':len(bundle['vectorAuditDisclosures'])}
+    signatures=bundle['signatures']
+    if not skip_signatures:
+        unsigned=dict(bundle); del unsigned['signatures']; payload=core.canonical(unsigned).encode()
+        if not isinstance(signatures,list) or len(signatures)<threshold_count: core.fail('insufficient signatures')
+        signed=set()
+        for entry in signatures:
+            core.exact(entry,['organizationID','signature'],'signature'); identity=entry['organizationID']
+            if identity in signed or identity not in keys: core.fail('signer identity')
+            signed.add(identity)
+            if not core.verify_ed25519(keys[identity],core.b64(entry['signature'],'signature'),payload): core.fail('signature verification')
+    return {'valid':True,'schema':bundle['schema'],'ballots':len(ballots),'validPartials':len(bundle['vectorPartialDecryptions']),'validSignatures':0 if skip_signatures else len(signatures),'auditDisclosures':len(bundle['vectorAuditDisclosures'])}
 
 def main():
     if len(sys.argv)!=2: print('usage: python_bundle_v4_verify.py BUNDLE',file=sys.stderr); return 2
