@@ -269,6 +269,22 @@ checkpoint hash to match the external anchor exactly:
   log-trust.json witness-policy.json /separate-state/c2sp-anchor.json
 ```
 
+Do not place the preflight and witness start in two independently invoked
+operator commands. Use the anchored launcher so the witness process is reached
+only through the successful gate (the witness executable path must be absolute):
+
+```bash
+./deploy/linux/witness-anchored-start.sh \
+  /witness-state/witness.db mongbas.example/cast-history/election-id \
+  /witness-config/log-trust.json /witness-config/witness-policy.json \
+  /separate-state/c2sp-anchor.json \
+  /opt/mongbas/bin/omniwitness --config /witness-config/omniwitness.yaml
+```
+
+Use this launcher as the systemd `ExecStart` command rather than exposing a
+separate unchecked `omniwitness` start path. A failed, missing, stale or forked
+anchor exits before `exec` and therefore before the HTTP listener starts.
+
 A database behind the anchor is rejected as rollback. A database ahead of the
 anchor is also rejected: verify and advance the protected anchor through the
 normal consistency-proof path before restarting. This wrapper understands the

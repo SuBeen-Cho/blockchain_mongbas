@@ -417,12 +417,22 @@ test('Linux witness startup preflight rejects a SQLite checkpoint behind its ext
   const preflight = path.join(__dirname, '../../deploy/linux/witness-anchor-preflight.sh');
   const accepted = spawnSync(preflight, [files.db, origin, files.trust, files.policy, files.anchor], { encoding: 'utf8' });
   assert.equal(accepted.status, 0, accepted.stderr); assert.match(accepted.stdout, /PREFLIGHT PASSED/);
+  const launcher = path.join(__dirname, '../../deploy/linux/witness-anchored-start.sh');
+  const startedMarker = path.join(directory, 'started');
+  const started = spawnSync(launcher,
+    [files.db, origin, files.trust, files.policy, files.anchor, '/usr/bin/touch', startedMarker], { encoding: 'utf8' });
+  assert.equal(started.status, 0, started.stderr); assert.equal(fs.existsSync(startedMarker), true);
   const oldSigned = createSignedCheckpoint({ origin, treeSize: 1, rootHash: crypto.createHash('sha256').update('old').digest('hex'), privateKeyPem: pem(operator) });
   fs.writeFileSync(files.note, appendCosignature(oldSigned, 'witness.example/one', witness, now));
   const replace = 'import sqlite3,sys\ncon=sqlite3.connect(sys.argv[1])\ncon.execute("UPDATE chkpts SET chkpt=?",(open(sys.argv[2],"rb").read(),))\ncon.commit()\n';
   assert.equal(spawnSync('python3', ['-c', replace, files.db, files.note], { encoding: 'utf8' }).status, 0);
   const rejected = spawnSync(preflight, [files.db, origin, files.trust, files.policy, files.anchor], { encoding: 'utf8' });
   assert.equal(rejected.status, 1); assert.match(rejected.stderr, /database rollback detected/);
+  const rejectedMarker = path.join(directory, 'must-not-start');
+  const blockedStart = spawnSync(launcher,
+    [files.db, origin, files.trust, files.policy, files.anchor, '/usr/bin/touch', rejectedMarker], { encoding: 'utf8' });
+  assert.equal(blockedStart.status, 1); assert.match(blockedStart.stderr, /database rollback detected/);
+  assert.equal(fs.existsSync(rejectedMarker), false);
 });
 
 test('C2SP CLI verifies both the pinned log signature and witness quorum', t => {
