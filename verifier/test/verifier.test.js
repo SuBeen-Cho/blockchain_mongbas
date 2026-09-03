@@ -750,6 +750,25 @@ test('tamper-corpus CLI emits 22 independently rejected canonical bundles', () =
   }
 });
 
+test('tamper-corpus CLI supports a one-ballot live election without no-op mutations', () => {
+  const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'mongbas-tamper-singleton-'));
+  try {
+    const input = path.join(temporary, 'valid.json');
+    const output = path.join(temporary, 'corpus');
+    const singleton = buildVectorBundle();
+    singleton.ballots = singleton.ballots.slice(0, 1);
+    fs.writeFileSync(input, canonicalize(singleton));
+    const generated = spawnSync(process.execPath, [path.join(__dirname, '../bin/mongbas-tamper-corpus.js'), input, output], { encoding: 'utf8' });
+    assert.equal(generated.status, 0, generated.stderr);
+    const manifest = JSON.parse(fs.readFileSync(path.join(output, 'manifest.json'), 'utf8'));
+    assert.equal(manifest.some(entry => entry.name === 'ballot-replaced'), false);
+    assert.equal(manifest.some(entry => entry.name === 'ballots-reordered'), false);
+    assert.equal(manifest.length, 20);
+  } finally {
+    fs.rmSync(temporary, { recursive: true, force: true });
+  }
+});
+
 test('independent witness creates a signed append-only checkpoint chain', () => {
   const bundle = buildBundle();
   const verification = verifyBundle(bundle);

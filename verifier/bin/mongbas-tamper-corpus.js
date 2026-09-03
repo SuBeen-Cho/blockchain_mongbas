@@ -14,8 +14,8 @@ if (!input || !outputDirectory) {
 
 try {
   const bundle = JSON.parse(readBoundedRegularFile(path.resolve(input), 'bundle input', MAX_BUNDLE_BYTES, { encoding: 'utf8' }));
-  if (!['mongbas-election-bundle/v4', 'mongbas-election-bundle/v5'].includes(bundle.schema) || bundle.ballots?.length < 2) {
-    throw new Error('a vector-v4 or vector-v5 bundle with at least two ballots is required');
+  if (!['mongbas-election-bundle/v4', 'mongbas-election-bundle/v5'].includes(bundle.schema) || bundle.ballots?.length < 1) {
+    throw new Error('a vector-v4 or vector-v5 bundle with at least one ballot is required');
   }
   const mutations = {
     'ballot-deleted': value => { value.ballots.pop(); },
@@ -41,6 +41,12 @@ try {
     'audit-randomness-changed': value => { value.vectorAuditDisclosures[0].randomness[0] = '1'; },
     'audited-ciphertext-changed': value => { value.vectorAuditDisclosures[0].encryptedCandidateVector[0].c2 = '2'; },
   };
+	if (bundle.ballots.length < 2) {
+	  // Replacement and reversal are no-ops for a singleton election. All
+	  // remaining mutations still change the artifact and must be rejected.
+	  delete mutations['ballot-replaced'];
+	  delete mutations['ballots-reordered'];
+	}
 	if (bundle.schema === 'mongbas-election-bundle/v5') {
 	  Object.assign(mutations, {
 		'dkg-approval-deleted': value => { value.keyCeremony.approvals.pop(); },
