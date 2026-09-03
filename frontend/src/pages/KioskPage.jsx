@@ -7,6 +7,7 @@ import {
   generateVectorBallotV3,
 } from '../utils/crypto.js';
 import { browserCryptoReady, consumeKioskAdmission } from '../utils/kioskUrl.js';
+import { displayReceiptCode } from '../utils/receiptLookup.js';
 
 /**
  * KioskPage — 부스 시연용 폰 투표 (Editorial Cobalt · 라이트)
@@ -93,9 +94,8 @@ export default function KioskPage({ electionId }) {
 		votePath = '/vote/cast-vector';
 	  }
       const resp = await J(votePath, { method: 'POST', headers: { 'x-idemix-credential': cred }, body: JSON.stringify(body) });
-      const s = nh.slice(0, 6).toUpperCase();
       // Never persist the selected candidate or normal/panic mode on the device.
-      setReceipt({ code: `${s.slice(0, 4)}-${s.slice(4)}`, nh, isRevote: !!resp.isRevote });
+      setReceipt({ code: displayReceiptCode(nh), nh, isRevote: !!resp.isRevote });
       setSent(false);
       setPhase('done');
     } catch (e) { setErr(e.message); setPhase('error'); }

@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { computeMerkleRootFromProof } from '../utils/crypto.js';
+import { displayReceiptCode, findUniqueReceiptMatch } from '../utils/receiptLookup.js';
 
 /**
  * TrackPage — "내 표 추적" 검증 화면 (Phase 5)
@@ -40,16 +41,16 @@ export default function TrackPage({ electionId }) {
   async function track(rawCode) {
     setBusy(true); setRes(null); setFail('');
     try {
-      const prefix = rawCode.replace(/[^0-9a-fA-F]/g, '').toLowerCase();
-      if (!eid || prefix.length < 4) throw new Error('선거 ID와 추적번호를 입력하세요.');
+      if (!eid) throw new Error('선거 ID를 입력하세요.');
       const board = await J(`/elections/${encodeURIComponent(eid)}/bulletin-board`);
       const ballots = board.encryptedBallots || [];
-      const idx = ballots.findIndex((b) => (b.nullifierHash || '').toLowerCase().startsWith(prefix));
+      const match = findUniqueReceiptMatch(ballots, rawCode);
+      const idx = match.index;
       if (idx < 0) {
         setFail(`추적번호 "${rawCode}"에 해당하는 표를 게시판에서 찾을 수 없습니다. (조작·오타된 번호는 추적되지 않습니다)`);
         setBusy(false); return;
       }
-      const ballot = ballots[idx];
+      const ballot = match.ballot;
       const full = ballot.nullifierHash;
       // Merkle 봉인 검증
       const merkle = await J(`/elections/${encodeURIComponent(eid)}/merkle`);
@@ -109,8 +110,8 @@ export default function TrackPage({ electionId }) {
             {/* 1. 영수증 */}
             <div style={card}>
               <Step n="1" t="당신의 추적번호" />
-              <div style={big}>{code || res.full.slice(0, 6).toUpperCase()}</div>
-              <p style={{ color: '#94a3b8', fontSize: 12, marginTop: 8 }}>이건 당신만 가진 번호입니다.</p>
+              <div style={big}>{code || displayReceiptCode(res.full)}</div>
+              <p style={{ color: '#94a3b8', fontSize: 12, marginTop: 8 }}>이 번호는 비밀이 아닌 게시판 조회용 prefix입니다.</p>
             </div>
 
             {/* 2. 게시판에서 내 줄 */}

@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import QRCode from 'qrcode';
 import { computeMerkleRootFromProof } from '../utils/crypto.js';
 import { buildSecureKioskUrl, displayKioskUrl } from '../utils/kioskUrl.js';
+import { findUniqueReceiptMatch } from '../utils/receiptLookup.js';
 
 /**
  * ControlPage — 발표자 관제판 (Editorial Cobalt 개편)
@@ -242,18 +243,17 @@ export default function ControlPage() {
     if (!eid) return;
     setBusy('검증 중…'); setVres(null); setVfail('');
     try {
-      const prefix = String(rawCode || '').replace(/[^0-9a-fA-F]/g, '').toLowerCase();
-      if (prefix.length < 4) throw new Error('추적번호를 입력하세요 (4자 이상).');
       const board = await J(`/elections/${encodeURIComponent(eid)}/bulletin-board`);
       const ballots = board.encryptedBallots || [];
-      const idx = ballots.findIndex((b) => (b.nullifierHash || '').toLowerCase().startsWith(prefix));
+      const match = findUniqueReceiptMatch(ballots, rawCode);
+      const idx = match.index;
       if (idx < 0) { setVfail(`추적번호 "${rawCode}" 를 게시판에서 찾을 수 없습니다. ${tampered ? '(한 글자 변조 → 추적 실패)' : '(조작·오타 번호는 추적 불가)'}`); setBusy(''); return; }
-      const full = ballots[idx].nullifierHash;
+      const full = match.ballot.nullifierHash;
       const merkle = await J(`/elections/${encodeURIComponent(eid)}/merkle`);
       const pr = await J(`/elections/${encodeURIComponent(eid)}/proof/${full}`);
       const computedRoot = await computeMerkleRootFromProof(pr.leafHash, pr.proof);
       const sealMatch = computedRoot === merkle.rootHash;
-	  const selectedCiphertext = ballots[idx].encryptedCandidateID || JSON.stringify(ballots[idx].encryptedCandidateVector || []);
+	  const selectedCiphertext = match.ballot.encryptedCandidateID || JSON.stringify(match.ballot.encryptedCandidateVector || []);
 	  setVres({ full, idx, total: ballots.length, ballots, leafHash: pr.leafHash, chainRoot: merkle.rootHash, computedRoot, sealMatch, cipher: selectedCiphertext });
       addLog(`검증: ${tr(full, 8)} → ${sealMatch ? '봉인 일치 ✓' : '불일치 ✗'}`);
     } catch (e) { setVfail(e.message); }
