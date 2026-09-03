@@ -213,7 +213,7 @@ The process exits `0` only when every implemented check passes, `1` for an inval
 
 This is an adapter library and local state-transition primitive, not a deployed C2SP HTTP witness. The HTTP transport is covered with an injected in-process response harness, including conflict and malformed/oversized response cases, but has not yet interoperated with an external witness implementation. Consequently the project does not yet claim C2SP compatibility. Existing Mongbas checkpoint-v3 JSON and signature semantics are unchanged.
 
-The local publication CLI persists the operator-signed checkpoint with fsync plus atomic rename before releasing a non-overwriting request artifact. Its state directory is mode `0700`, its checkpoint/request files are mode `0600`, and a lock serializes publishers. Re-running the same verified source produces the same request without replacing state. The CLI deliberately does not transmit the request yet; callers must explicitly invoke and audit the transport library until external interoperability has been exercised.
+The local publication CLI persists the operator-signed checkpoint with fsync plus atomic rename before releasing a non-overwriting request artifact. Its state directory is mode `0700`, its checkpoint/request files are mode `0600`, and a lock serializes publishers. Re-running the same verified source produces the same request without replacing state. Publication itself does not transmit anything.
 
 ```bash
 node bin/mongbas-c2sp.js publish \
@@ -221,6 +221,17 @@ node bin/mongbas-c2sp.js publish \
   mongbas.example/cast-history/election-id \
   /secure/log-operator-ed25519.pem /secure/c2sp-state request.txt
 ```
+
+An operator can separately and explicitly submit that artifact to a configured HTTPS witness. The command validates the request, pinned log signature and witness policy before network access and writes a mode-`0600`, fsynced, non-overwriting cosigned checkpoint only after the returned quorum verifies. It never discovers or trusts keys from the response.
+
+```bash
+node bin/mongbas-c2sp.js submit \
+  request.txt c2sp-state/checkpoint.note \
+  https://witness.example/add-checkpoint \
+  log-trust.json witness-policy.json cosigned-checkpoint.note
+```
+
+`submit` is an explicit outbound network operation. Its presence is not evidence that an external witness has been exercised or that the configured operators are independent.
 
 A received cosigned checkpoint can be checked against a separately pinned log key and a strict `mongbas-c2sp-witness-policy/v1` k-of-n policy. The verifier accepts at most 32 distinct witness identities/names/Ed25519 keys, ignores unknown signatures, rejects a malformed signature whose known name and key ID match, rejects duplicate cosignatures and zero/future timestamps, and never counts the log key as a witness key.
 

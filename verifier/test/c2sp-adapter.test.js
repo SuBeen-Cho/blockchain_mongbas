@@ -328,3 +328,32 @@ test('C2SP CLI verifies both the pinned log signature and witness quorum', t => 
   const rejected = spawnSync(process.execPath, [cli, 'verify-cosignatures', noteFile, logTrustFile, policyFile], { encoding: 'utf8' });
   assert.equal(rejected.status, 1);
 });
+
+test('C2SP submit CLI fails closed before creating output for an unsafe endpoint', t => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'mongbas-c2sp-submit-'));
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+  const operator = crypto.generateKeyPairSync('ed25519');
+  const witness = crypto.generateKeyPairSync('ed25519');
+  const origin = 'mongbas.example/cast-history/election-a';
+  const note = createSignedCheckpoint({ origin, treeSize: 0,
+    rootHash: crypto.createHash('sha256').update(Buffer.alloc(0)).digest('hex'), privateKeyPem: pem(operator) });
+  const request = createWitnessRequest({ oldSize: 0, consistencyPath: [], signedCheckpoint: note });
+  const requestFile = path.join(directory, 'request.txt');
+  const noteFile = path.join(directory, 'checkpoint.note');
+  const logTrustFile = path.join(directory, 'log-trust.json');
+  const policyFile = path.join(directory, 'witness-policy.json');
+  const outputFile = path.join(directory, 'cosigned.note');
+  fs.writeFileSync(requestFile, request);
+  fs.writeFileSync(noteFile, note);
+  fs.writeFileSync(logTrustFile, JSON.stringify({ origin,
+    publicKeyDer: operator.publicKey.export({ format: 'der', type: 'spki' }).toString('base64') }));
+  fs.writeFileSync(policyFile, JSON.stringify({ schema: 'mongbas-c2sp-witness-policy/v1', quorum: 1,
+    witnesses: [{ id: 'one', name: 'witness.example/one',
+      publicKeyDer: witness.publicKey.export({ format: 'der', type: 'spki' }).toString('base64') }] }));
+  const cli = path.join(__dirname, '../bin/mongbas-c2sp.js');
+  const result = spawnSync(process.execPath, [cli, 'submit', requestFile, noteFile,
+    'http://witness.example/add-checkpoint', logTrustFile, policyFile, outputFile], { encoding: 'utf8' });
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /exact HTTPS/);
+  assert.equal(fs.existsSync(outputFile), false);
+});
