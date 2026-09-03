@@ -5632,6 +5632,13 @@ func computeTallyProofHash(proofs []DecryptionProof) string {
 func deterministicShuffle(ballots []EncryptedBallot, proofs []DecryptionProof, seed []byte) ([]EncryptedBallot, []DecryptionProof) {
 	n := len(ballots)
 	if n <= 1 {
+		// Fabric contract metadata declares BulletinBoard.decryptionProofs as a
+		// required array. Vector-v3 uses aggregate partial-decryption proofs, so
+		// the legacy per-ballot collection is legitimately empty; keep it as []
+		// rather than nil/JSON null at the zero- and one-ballot boundary.
+		if proofs == nil {
+			proofs = make([]DecryptionProof, 0)
+		}
 		return ballots, proofs
 	}
 

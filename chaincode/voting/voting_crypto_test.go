@@ -3,6 +3,7 @@ package main
 import (
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"math/big"
 	"strings"
@@ -10,6 +11,26 @@ import (
 
 	bn256 "github.com/ethereum/go-ethereum/crypto/bn256/cloudflare"
 )
+
+func TestSingleVectorBallotBulletinProofsSerializeAsArray(t *testing.T) {
+	ballots, proofs := deterministicShuffle(
+		[]EncryptedBallot{{NullifierHash: strings.Repeat("a", 64)}},
+		nil,
+		[]byte("fixed-seed"),
+	)
+	if len(ballots) != 1 {
+		t.Fatalf("single ballot was not preserved: %d", len(ballots))
+	}
+	encoded, err := json.Marshal(struct {
+		DecryptionProofs []DecryptionProof `json:"decryptionProofs"`
+	}{DecryptionProofs: proofs})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(encoded), `"decryptionProofs":null`) {
+		t.Fatalf("required Fabric array serialized as null: %s", encoded)
+	}
+}
 
 type castHistoryStub struct {
 	private      map[string][]byte
