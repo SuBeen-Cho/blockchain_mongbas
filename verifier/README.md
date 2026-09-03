@@ -1,5 +1,28 @@
 # Mongbas standalone election verifier
 
+## Experimental stable cast-event producer
+
+`src/cast-event-history.js` implements the approved feature-branch producer
+primitive for a separately versioned append-only cast history. It accepts records
+in strictly increasing Fabric `(blockNumber, transactionIndex)` order, replaces
+exact commit time with a configured epoch number, chains canonical event IDs and
+builds the domain-separated consistency tree. Re-exporting the same records is
+byte-stable; deletion, reorder, replacement, context transplant and prefix
+mutation are rejected.
+
+Public events deliberately contain neither nullifiers, exact timestamps,
+transaction positions, revote counts nor supersession edges. They commit to a
+ballot with a private random nonce, so a final active bundle cannot be matched to
+the event merely by hashing its ballot. A separate private selection manifest
+opens every commitment and selects the highest event index for each private
+selection class. That manifest is authority/auditor evidence and must never be
+published with the public history.
+
+This module is not yet a live Fabric exporter or checkpoint-v3 implementation.
+It does not change existing bundle roots, schemas, ElGamal/ZKP/threshold tally or
+prove coercion resistance. Fabric peers can still observe the current ledger's
+nullifier writes and transaction-level correlations.
+
 This package verifies a canonical election bundle without connecting to the Mongbas backend, a Fabric peer, chaincode, or a state database. It uses only Node.js built-ins and has no runtime npm dependencies.
 
 ```bash
