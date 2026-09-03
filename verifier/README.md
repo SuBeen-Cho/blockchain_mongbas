@@ -86,6 +86,16 @@ log, bundle, consistency proof or election cryptosystem, so it is not a complete
 second Mongbas verifier. Development cross-checks require Python 3 and OpenSSL;
 normal verifier runtime commands continue to require only Node.js built-ins.
 
+`reference/python_bundle_v1_verify.py` independently verifies the complete
+legacy scalar-v1 path with Python and the system OpenSSL Ed25519 implementation:
+canonical bytes and exact fields, group membership, disjunctive ballot proofs,
+Fiat–Shamir challenges, homomorphic aggregation, tally decryption proof, the
+project Merkle root, and threshold organization signatures. Cross-language
+tests require acceptance of a Node-produced bundle and rejection of proof,
+aggregate, tally, root, signature, and serialization mutations. Its scope is
+exactly v1; it does not cover v2 threshold shares, v4/v5 vector ballots, DKG,
+audit-or-cast evidence, history checkpoints, or live-ledger provenance.
+
 To build and sign an exported source without sending private keys to the server:
 
 ```bash

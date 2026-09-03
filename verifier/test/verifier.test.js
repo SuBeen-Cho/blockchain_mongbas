@@ -180,6 +180,41 @@ test('accepts a complete independently verifiable 1:1 bundle', () => {
   assert.equal(canonicalResult.valid, true, canonicalResult.errors?.join('\n'));
 });
 
+test('independent Python/OpenSSL verifier accepts v1 and rejects layered mutations', () => {
+  const referencePath = path.join(__dirname, '../reference/python_bundle_v1_verify.py');
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'mongbas-python-bundle-v1-'));
+  const run = (bundle, canonical = true) => {
+    const bundlePath = path.join(directory, `bundle-${crypto.randomUUID()}.json`);
+    fs.writeFileSync(bundlePath, canonical ? canonicalize(bundle) : JSON.stringify(bundle, null, 2));
+    return spawnSync('python3', [referencePath, bundlePath], { encoding: 'utf8', timeout: 60_000 });
+  };
+  try {
+    const valid = buildBundle();
+    const accepted = run(valid);
+    assert.equal(accepted.status, 0, accepted.stderr);
+    assert.deepEqual(JSON.parse(accepted.stdout), {
+      ballots: 2, schema: 'mongbas-election-bundle/v1', valid: true, validSignatures: 2,
+    });
+    const mutations = [
+      [/ballot proof equation/, value => { value.ballots[0].validityProof.zs[0] = '0'; }],
+      [/aggregate mismatch/, value => { value.aggregateCiphertext.c1 = value.ballots[0].ciphertext.c1; }],
+      [/decrypted hash/, value => { value.tally.results.ALICE = 0; value.tally.results.BOB = 2; }],
+      [/bulletin board/, value => { value.bulletinBoard.root = '00'.repeat(32); }],
+      [/signature verification/, value => { value.signatures[0].signature = Buffer.alloc(64).toString('base64'); }],
+    ];
+    for (const [expectedError, mutate] of mutations) {
+      const changed = structuredClone(valid);
+      mutate(changed);
+      const rejected = run(changed);
+      assert.equal(rejected.status, 1, `mutation unexpectedly accepted: ${rejected.stdout}`);
+      assert.match(rejected.stderr, expectedError);
+    }
+    assert.equal(run(valid, false).status, 1, 'non-canonical bundle unexpectedly accepted');
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
 const mutations = {
   'deleted ballot': (bundle) => { bundle.ballots.pop(); },
   'reordered ballots': (bundle) => { bundle.ballots.reverse(); },
