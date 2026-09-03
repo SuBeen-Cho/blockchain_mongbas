@@ -26,3 +26,18 @@ test('public QR demo launchers retain request rate limits', () => {
     assert.doesNotMatch(source, /DISABLE_RATE_LIMITS=true/, relative);
   }
 });
+
+test('demo launchers never kill unrelated processes and public tunnels require opt-in', () => {
+  for (const relative of ['../../scripts/demo-start.sh', '../../scripts/demo-up.sh', '../../scripts/demo-stop.sh', '../../scripts/demo-reset.sh']) {
+    const source = fs.readFileSync(path.join(__dirname, relative), 'utf8');
+    assert.doesNotMatch(source, /pkill|killall/);
+  }
+  for (const relative of ['../../scripts/demo-up.sh', '../../scripts/demo-tunnel.sh']) {
+    const source = fs.readFileSync(path.join(__dirname, relative), 'utf8');
+    assert.match(source, /MONGBAS_ALLOW_PUBLIC_TUNNEL/);
+  }
+  const processLibrary = fs.readFileSync(path.join(__dirname, '../../scripts/demo-process-lib.sh'), 'utf8');
+  assert.match(processLibrary, /expected_cwd/);
+  assert.match(processLibrary, /kill -0/);
+  assert.doesNotMatch(processLibrary, /pkill|killall/);
+});

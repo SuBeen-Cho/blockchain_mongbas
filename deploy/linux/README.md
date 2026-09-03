@@ -63,6 +63,8 @@ tailscale serve status
 
 이는 tailnet 내부에만 공유하는 Serve이다. 인터넷에 공개하는 `tailscale funnel`로 대체하지 않는다. 서버와 휴대폰은 같은 tailnet에 있어야 하며, tailnet 관리자가 HTTPS/Serve를 최초 1회 활성화해야 할 수 있다. 공식 CLI 문서: `https://tailscale.com/docs/reference/tailscale-cli/serve`.
 
+기존 `scripts/demo-tunnel.sh`/`demo-up.sh`는 Cloudflare Quick Tunnel을 사용하는 공개 인터넷 호환 경로이므로 기본적으로 fail closed한다. 그 경로는 `MONGBAS_ALLOW_PUBLIC_TUNNEL=true`가 명시되어야만 시작되며, 이 플래그는 외부 공개 승인을 대체하지 않는다. 데모 스크립트는 자신이 기동하고 PID와 실행 경로를 모두 확인한 프로세스만 중지하며, 이미 실행 중인 `:3000` 서비스를 소유권 확인 없이 교체하지 않는다.
+
 실제 배포나 Serve 설정 전에 읽기 전용 QR 사전점검을 실행한다. 이 명령은 secret 값을 source/출력하지 않고 설정 여부만 검사하며, systemd, Docker, Tailscale 및 Fabric 상태를 변경하지 않는다.
 
 ```bash

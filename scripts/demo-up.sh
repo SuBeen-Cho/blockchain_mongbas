@@ -8,9 +8,14 @@
 # 노트북이 켜져만 있으면 발표 내내 손 안 대도 동작합니다.
 set -Eeuo pipefail
 cd "$(dirname "$0")/.."
-BLOG=/tmp/mongbas-backend.log
-TLOG=/tmp/mongbas-tunnel.log
-TURL=/tmp/mongbas-tunnel-url.txt
+source scripts/demo-process-lib.sh
+demo_runtime_init
+if [ "${MONGBAS_ALLOW_PUBLIC_TUNNEL:-false}" != true ]; then
+  echo "[ERROR] demo-up.sh는 Cloudflare quick tunnel로 인터넷 공개를 수행합니다."
+  echo "        tailnet QR은 Linux README의 Tailscale Serve 절차를 사용하세요."
+  echo "        별도 승인한 경우에만 MONGBAS_ALLOW_PUBLIC_TUNNEL=true로 실행하세요."
+  exit 1
+fi
 
 echo "[1/5] 블록체인 네트워크 확인..."
 if docker ps --format '{{.Names}}' 2>/dev/null | grep -q '^voting-chaincode$'; then
@@ -32,26 +37,32 @@ echo "[3/5] 프론트엔드 빌드..."
 (cd frontend && npm run build >/dev/null 2>&1) && echo "      ✓ dist 생성"
 
 echo "[4/5] 백엔드 백그라운드 기동 (:3000)..."
-pkill -f "node src/app.js" 2>/dev/null || true; sleep 1
-( cd application && nohup node src/app.js > "$BLOG" 2>&1 & )
+if curl --fail --silent --max-time 2 http://127.0.0.1:3000/health >/dev/null 2>&1; then
+  echo "      ✗ :3000에 이미 백엔드가 실행 중 — 소유권 확인 없이 교체하지 않음"
+  exit 1
+fi
+(cd application && nohup node src/app.js > "${BACKEND_LOG_FILE}" 2>&1 & echo $! > "${BACKEND_PID_FILE}")
 sleep 4
 if curl --fail --silent --show-error --max-time 5 http://localhost:3000/health | node -e '
   const health = JSON.parse(require("node:fs").readFileSync(0, "utf8"));
   process.exit(health.status === "ok" ? 0 : 1);
-' >/dev/null; then echo "      ✓ 정상"; else echo "      ✗ 백엔드 실패 — $BLOG 확인"; exit 1; fi
+' >/dev/null; then echo "      ✓ 정상"; else echo "      ✗ 백엔드 실패 — ${BACKEND_LOG_FILE} 확인"; exit 1; fi
 
 echo "[5/5] 공개 터널 백그라운드 기동 (간헐적 실패 시 자동 재시도)..."
-pkill -f "cloudflared tunnel" 2>/dev/null || true; sleep 1
 URL=""
 for try in 1 2 3 4; do
-  : > "$TLOG"
-  nohup cloudflared tunnel --url http://localhost:3000 --protocol http2 > "$TLOG" 2>&1 &
-  for i in $(seq 1 15); do sleep 2; URL=$(grep -oE 'https://[a-z0-9-]+\.trycloudflare\.com' "$TLOG" | head -1); [ -n "$URL" ] && break; done
+  : > "${TUNNEL_LOG_FILE}"
+  nohup cloudflared tunnel --url http://localhost:3000 --protocol http2 > "${TUNNEL_LOG_FILE}" 2>&1 &
+  tunnel_pid=$!
+  printf '%s\n' "${tunnel_pid}" > "${TUNNEL_PID_FILE}"
+  for i in $(seq 1 15); do sleep 2; URL=$(grep -oE 'https://[a-z0-9-]+\.trycloudflare\.com' "${TUNNEL_LOG_FILE}" | head -1); [ -n "$URL" ] && break; done
   [ -n "$URL" ] && break
-  echo "      터널 시도 $try 실패 → 재시도"; pkill -f "cloudflared tunnel" 2>/dev/null; sleep 2
+  echo "      터널 시도 $try 실패 → 재시도"
+  demo_stop_owned "${TUNNEL_PID_FILE}" "cloudflared tunnel" "${DEMO_REPO_DIR}" "터널" || exit 1
+  sleep 2
 done
-[ -n "${URL}" ] || { echo "      ✗ 터널 URL 확보 실패 — $TLOG 확인"; exit 1; }
-echo "$URL" > "$TURL"
+[ -n "${URL}" ] || { echo "      ✗ 터널 URL 확보 실패 — ${TUNNEL_LOG_FILE} 확인"; exit 1; }
+echo "$URL" > "${TUNNEL_URL_FILE}"
 echo "      ✓ ${URL}"
 
 cat <<EOF

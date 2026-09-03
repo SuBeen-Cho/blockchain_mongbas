@@ -16,6 +16,13 @@
 
 set -e
 
+if [ "${MONGBAS_ALLOW_PUBLIC_TUNNEL:-false}" != true ]; then
+  echo "[ERROR] Cloudflare quick tunnel은 인터넷에 공개됩니다."
+  echo "        기본 원격 QR은 tailnet 전용 Tailscale Serve를 사용하세요."
+  echo "        공개 터널을 별도 승인한 경우에만 MONGBAS_ALLOW_PUBLIC_TUNNEL=true로 실행하세요."
+  exit 1
+fi
+
 PORT="${1:-3000}"
 
 if ! command -v cloudflared >/dev/null 2>&1; then

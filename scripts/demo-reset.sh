@@ -5,9 +5,11 @@
 # 일반적인 "다음 그룹 시작"은 관제판 [새 세션] 버튼으로 충분합니다.
 set -e
 cd "$(dirname "$0")/.."   # → mongbas/
+source scripts/demo-process-lib.sh
+demo_runtime_init
 
 echo "[1/5] 백엔드 종료..."
-pkill -f "node src/app.js" 2>/dev/null || true
+demo_stop_owned "${BACKEND_PID_FILE}" "node src/app.js" "${DEMO_REPO_DIR}/application" "백엔드"
 
 echo "[2/5] 네트워크 down (컨테이너 + 볼륨 제거)..."
 (cd network && ./scripts/network.sh down) || true
