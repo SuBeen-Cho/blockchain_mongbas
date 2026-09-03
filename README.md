@@ -103,8 +103,8 @@
 | Cast-as-intended | audit-or-cast 기능 및 E2E 테스트 | 엄격한 상태기계·독립 audit 증거 |
 | Recorded-as-cast | Merkle inclusion, 서명 checkpoint·Mac witness의 prefix/fork 탐지 | complaint protocol과 독립 운영 witness |
 | Tallied-as-recorded | 후보별 동형 집계, 2-of-3 partial proof, tamper tests | 더 넓은 공모·장애 평가 |
-| Universal verifiability | standalone bundle verifier 55/55, tamper corpus, Linux·Mac witness | 실제 기관별 독립 키/운영 검증 |
-| Eligibility | election-bound credential/nullifier 검증, 선거별 append-only revocation 구현 | 실제 등록부 연동, 익명 accumulator non-revocation proof, Linux 공격 증거 |
+| Universal verifiability | standalone suite 77/77, v1/v2/v4/v5 Python/OpenSSL 교차 검증, tamper corpus, Linux·Mac witness | 실제 기관별 독립 키/운영 검증 |
+| Eligibility | election-bound credential/nullifier 검증, 선거별 append-only revocation 구현 | 실제 등록부 연동, 익명 accumulator non-revocation proof, issuer 공모·직접 Fabric 공격 증거. 예측 가능한 `demo###` 계정은 자격 검증 증거에서 제외 |
 | Coercion resistance | opaque proof API의 100-sample transcript gate 통과, panic/revote prototype | PDC/backend 공모, credential surrender, forced abstention, revote/participation hiding |
 
 ---

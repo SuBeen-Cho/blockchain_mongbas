@@ -21,6 +21,8 @@ cd mongbas
 ```
 > 공개 Quick Tunnel은 사용자 승인을 받은 일시 시험에만 사용한다. 발표/장기 운영은 named tunnel, vote/admin 경로 분리와 관리자 인증을 적용한다. cloudflared 미설치: `brew install cloudflared`.
 > 공개 터널에서도 rate limit을 끄지 않는다. `live-count`, `live-votes`, `demo-events`는 관제판이 전송하는 관리자 bearer token이 있어야 조회된다. 관제판도 터널 URL로 열어야 QR에 해당 HTTPS origin이 들어간다.
+>
+> 현재 QR은 선거 ID만 포함하며 만료되거나 1회 사용으로 소진되는 admission token이 아니다. 또한 `ENABLE_DEMO_CREDENTIALS=true`의 `demo###` 계정과 비밀번호는 공개 코드에서 예측 가능한 시연용 데이터다. 따라서 이 경로는 UI·암호 투표·원장 연동 재현용일 뿐 실제 유권자 자격 또는 ballot-stuffing 저항 증거가 아니다. 승인된 단기 시험 외에는 인터넷 공개 터널로 노출하지 않는다.
 
 화면 3개:
 - **관제판(노트북)**: `http://localhost:3000/?app=control` (또는 터널 URL + `/?app=control`)
