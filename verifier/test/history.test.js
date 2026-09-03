@@ -2,7 +2,9 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { spawnSync } = require('node:child_process');
 const crypto = require('node:crypto');
+const path = require('node:path');
 const { canonicalize } = require('../src/verify');
 const {
   ballotCommitment,
@@ -137,4 +139,37 @@ test('history artifact binds its declared prefix to the same event sequence', ()
     newRootHash: history.rootHash,
     consistencyPath: history.consistencyPath,
   }), true);
+});
+
+test('history commitments, roots and consistency paths match the independent Python reference', () => {
+  const reference = spawnSync('python3', [path.join(__dirname, '../reference/python_history_vectors.py')], {
+    encoding: 'utf8',
+    maxBuffer: 1024 * 1024,
+  });
+  assert.equal(reference.status, 0, reference.stderr || 'Python reference failed');
+  const vectors = JSON.parse(reference.stdout);
+  assert.equal(vectors.schema, 'mongbas-history-reference-vectors/v1');
+  assert.equal(vectors.generator, 'python-stdlib-independent/v1');
+  assert.equal(vectors.contextHash, 'c36ef6dd0c0fce145e3db2163e7ff7e30995bed13311826995e53cfb58548b11');
+  assert.equal(vectors.roots[0], 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855');
+  assert.equal(vectors.roots[8], '110248db169ff531190178d0e0d71292755d318cba0a301d96fa8241155c235a');
+
+  const { contextHash, commitments } = historyCommitments(vectors.bundle);
+  assert.equal(contextHash, vectors.contextHash);
+  assert.deepEqual(commitments.map(value => value.toString('hex')), vectors.commitments);
+  assert.deepEqual(vectors.roots, Array.from({ length: commitments.length + 1 }, (_, size) =>
+    merkleTreeHash(commitments, 0, size).toString('hex')));
+
+  for (const vector of vectors.consistency) {
+    const prefix = commitments.slice(0, vector.newSize);
+    assert.deepEqual(createConsistencyProof(prefix, vector.oldSize), vector.path,
+      `Python path mismatch ${vector.oldSize}->${vector.newSize}`);
+    assert.equal(verifyConsistencyProof({
+      oldSize: vector.oldSize,
+      newSize: vector.newSize,
+      oldRootHash: vectors.roots[vector.oldSize],
+      newRootHash: vectors.roots[vector.newSize],
+      consistencyPath: vector.path,
+    }), true, `Python proof rejected ${vector.oldSize}->${vector.newSize}`);
+  }
 });

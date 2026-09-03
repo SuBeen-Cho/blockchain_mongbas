@@ -58,6 +58,14 @@ retroactively prove the v1-to-v2 boundary. A subsequent v2-to-v1 downgrade,
 tree shrink, changed witness/election/context, inconsistent root advance, or
 timestamp rollback is rejected.
 
+`reference/python_history_vectors.py` is a separately structured Python
+standard-library implementation used by the test suite to cross-check fixed
+context hashes, full-ballot commitments, tree roots, and every consistency path
+for sizes zero through eight. It does not import or invoke the Node history
+implementation and is not a second full election verifier. Running the complete
+development test suite therefore requires `python3`; verifier runtime commands
+continue to require only Node.js built-ins.
+
 To build and sign an exported source without sending private keys to the server:
 
 ```bash
