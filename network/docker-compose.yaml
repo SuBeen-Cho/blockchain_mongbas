@@ -72,7 +72,7 @@ services:
       - ./crypto-config/peerOrganizations/ec.voting.example.com/ca:/etc/hyperledger/fabric-ca-server
       - ca.ec.voting.example.com:/etc/hyperledger/fabric-ca-server/data
     ports:
-      - "7054:7054"
+      - "127.0.0.1:7054:7054"
     networks:
       - voting-net
 
@@ -92,7 +92,7 @@ services:
       - ./crypto-config/peerOrganizations/party.voting.example.com/ca:/etc/hyperledger/fabric-ca-server
       - ca.party.voting.example.com:/etc/hyperledger/fabric-ca-server/data
     ports:
-      - "8054:8054"
+      - "127.0.0.1:8054:8054"
     networks:
       - voting-net
 
@@ -112,7 +112,7 @@ services:
       - ./crypto-config/peerOrganizations/civil.voting.example.com/ca:/etc/hyperledger/fabric-ca-server
       - ca.civil.voting.example.com:/etc/hyperledger/fabric-ca-server/data
     ports:
-      - "9054:9054"
+      - "127.0.0.1:9054:9054"
     networks:
       - voting-net
 
@@ -150,9 +150,9 @@ services:
       - ./crypto-config/ordererOrganizations/orderer.voting.example.com/orderers/orderer1.orderer.voting.example.com/tls:/var/hyperledger/orderer/tls
       - orderer1.orderer.voting.example.com:/var/hyperledger/production/orderer
     ports:
-      - "7050:7050"
-      - "7053:7053"
-      - "17050:17050"
+      - "127.0.0.1:7050:7050"
+      - "127.0.0.1:7053:7053"
+      - "127.0.0.1:17050:17050"
     networks:
       - voting-net
 
@@ -187,9 +187,9 @@ services:
       - ./crypto-config/ordererOrganizations/orderer.voting.example.com/orderers/orderer2.orderer.voting.example.com/tls:/var/hyperledger/orderer/tls
       - orderer2.orderer.voting.example.com:/var/hyperledger/production/orderer
     ports:
-      - "7150:7150"
-      - "7153:7153"
-      - "17150:17150"
+      - "127.0.0.1:7150:7150"
+      - "127.0.0.1:7153:7153"
+      - "127.0.0.1:17150:17150"
     networks:
       - voting-net
 
@@ -224,9 +224,9 @@ services:
       - ./crypto-config/ordererOrganizations/orderer.voting.example.com/orderers/orderer3.orderer.voting.example.com/tls:/var/hyperledger/orderer/tls
       - orderer3.orderer.voting.example.com:/var/hyperledger/production/orderer
     ports:
-      - "7250:7250"
-      - "7253:7253"
-      - "17250:17250"
+      - "127.0.0.1:7250:7250"
+      - "127.0.0.1:7253:7253"
+      - "127.0.0.1:17250:17250"
     networks:
       - voting-net
 
@@ -261,9 +261,9 @@ services:
       - ./crypto-config/ordererOrganizations/orderer.voting.example.com/orderers/orderer4.orderer.voting.example.com/tls:/var/hyperledger/orderer/tls
       - orderer4.orderer.voting.example.com:/var/hyperledger/production/orderer
     ports:
-      - "7350:7350"
-      - "7353:7353"
-      - "17350:17350"
+      - "127.0.0.1:7350:7350"
+      - "127.0.0.1:7353:7353"
+      - "127.0.0.1:17350:17350"
     networks:
       - voting-net
 
@@ -390,8 +390,8 @@ services:
       - peer0.ec.voting.example.com:/var/hyperledger/production
     command: peer node start
     ports:
-      - "7051:7051"
-      - "17051:17051"
+      - "127.0.0.1:7051:7051"
+      - "127.0.0.1:17051:17051"
     networks:
       - voting-net
 
@@ -435,8 +435,8 @@ services:
       - peer1.ec.voting.example.com:/var/hyperledger/production
     command: peer node start
     ports:
-      - "7151:7151"
-      - "17151:17151"
+      - "127.0.0.1:7151:7151"
+      - "127.0.0.1:17151:17151"
     networks:
       - voting-net
 
@@ -483,8 +483,8 @@ services:
       - peer0.party.voting.example.com:/var/hyperledger/production
     command: peer node start
     ports:
-      - "8051:8051"
-      - "18051:18051"
+      - "127.0.0.1:8051:8051"
+      - "127.0.0.1:18051:18051"
     networks:
       - voting-net
 
@@ -531,8 +531,8 @@ services:
       - peer0.civil.voting.example.com:/var/hyperledger/production
     command: peer node start
     ports:
-      - "9051:9051"
-      - "19051:19051"
+      - "127.0.0.1:9051:9051"
+      - "127.0.0.1:19051:19051"
     networks:
       - voting-net
 
