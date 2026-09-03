@@ -236,12 +236,28 @@ function combineThresholdValues(values) {
   return combined;
 }
 
-function verifyThresholdDecryptions(publicKeyY, aggregate, results, candidates, publicShares, partials) {
-  if (!Array.isArray(publicShares) || publicShares.length !== 3 || !Array.isArray(partials) || partials.length < 2) {
-    throw new Error('expected three public shares and at least two partial decryptions');
+function validateTrusteePublicShares(publicShares) {
+  if (!Array.isArray(publicShares) || publicShares.length !== 3) {
+    throw new Error('expected exactly three trustee public shares');
   }
+  publicShares.forEach((share, offset) => {
+    requireExactKeys(share, ['index', 'mspID', 'publicKeyY'], `publicShare[${offset}]`);
+    if (!Number.isSafeInteger(share.index) || share.index < 1 || share.index > 3 ||
+        typeof share.mspID !== 'string' || share.mspID.length === 0) {
+      throw new Error(`public share ${offset} metadata invalid`);
+    }
+    parseHex(share.publicKeyY, `publicShare[${offset}].publicKeyY`, { subgroup: true });
+  });
   const configured = new Map(publicShares.map((share) => [share.index, share]));
   if (configured.size !== publicShares.length) throw new Error('duplicate trustee public share index');
+  return configured;
+}
+
+function verifyThresholdDecryptions(publicKeyY, aggregate, results, candidates, publicShares, partials) {
+  if (!Array.isArray(partials) || partials.length < 2) {
+    throw new Error('expected three public shares and at least two partial decryptions');
+  }
+  const configured = validateTrusteePublicShares(publicShares);
   const values = new Map();
   const publicValues = new Map();
   for (const partial of partials) {
@@ -314,7 +330,7 @@ function verifyVectorBallotProof(publicKeyY, ballot, candidateCount) {
 
 function verifyVectorThresholdDecryptions(publicKeyY, aggregates, results, candidates, publicShares, partials) {
   if (!Array.isArray(aggregates) || aggregates.length !== candidates.length || !Array.isArray(partials) || partials.length < 2) throw new Error('invalid vector aggregates/partials');
-  const configured = new Map(publicShares.map((share) => [share.index, share]));
+  const configured = validateTrusteePublicShares(publicShares);
   const publicValues = new Map(), values = aggregates.map(() => new Map());
   for (const partial of partials) {
     if (publicValues.has(partial.index) || !Array.isArray(partial.values) || partial.values.length !== candidates.length || !Array.isArray(partial.proofs) || partial.proofs.length !== candidates.length) throw new Error(`partial ${partial.index} shape/duplicate failure`);

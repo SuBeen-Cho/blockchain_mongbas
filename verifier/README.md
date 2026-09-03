@@ -96,6 +96,13 @@ aggregate, tally, root, signature, and serialization mutations. Its scope is
 exactly v1; it does not cover v2 threshold shares, v4/v5 vector ballots, DKG,
 audit-or-cast evidence, history checkpoints, or live-ledger provenance.
 
+`reference/python_bundle_v2_verify.py` extends the separate Python/OpenSSL path
+to threshold-v2. It independently verifies the three configured public shares,
+each submitted partial-decryption proof, trustee identity/index binding,
+Lagrange combination at zero, the combined election key, and the decrypted
+tally in addition to the shared v1 ballot, aggregate, Merkle, and signature
+checks. It still does not cover current vector-v4/v5 or DKG/audit-or-cast.
+
 To build and sign an exported source without sending private keys to the server:
 
 ```bash

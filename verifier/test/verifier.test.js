@@ -364,6 +364,41 @@ test('builds and verifies a 2-of-3 threshold bundle without a private-key recons
   bundle = signBundle(bundle, 'ec', keys[0].privateKey.export({ format: 'pem', type: 'pkcs8' }));
   bundle = signBundle(bundle, 'civil', keys[1].privateKey.export({ format: 'pem', type: 'pkcs8' }));
   assert.equal(verifyBundle(bundle).valid, true, verifyBundle(bundle).errors.join('\n'));
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'mongbas-python-bundle-v2-'));
+  const referencePath = path.join(__dirname, '../reference/python_bundle_v2_verify.py');
+  const runReference = value => {
+    const bundlePath = path.join(directory, `bundle-${crypto.randomUUID()}.json`);
+    fs.writeFileSync(bundlePath, canonicalize(value));
+    return spawnSync('python3', [referencePath, bundlePath], { encoding: 'utf8', timeout: 60_000 });
+  };
+  try {
+    const accepted = runReference(bundle);
+    assert.equal(accepted.status, 0, accepted.stderr);
+    assert.deepEqual(JSON.parse(accepted.stdout), { ballots: 2, schema: 'mongbas-election-bundle/v2', valid: true, validPartials: 2, validSignatures: 2 });
+    const mutations = [
+      [/partial proof equation/, value => { value.partialDecryptions[0].proof.z = '0'; }],
+      [/trustee binding/, value => { value.partialDecryptions[0].mspID = 'other'; }],
+      [/threshold tally/, value => { value.tally.results.ALICE = 0; value.tally.results.BOB = 2; }],
+    ];
+    for (const [expectedError, mutate] of mutations) {
+      const changed = structuredClone(bundle);
+      mutate(changed);
+      const rejected = runReference(changed);
+      assert.equal(rejected.status, 1, `v2 mutation unexpectedly accepted: ${rejected.stdout}`);
+      assert.match(rejected.stderr, expectedError);
+    }
+    let invalidUnusedShare = structuredClone(bundle);
+    invalidUnusedShare.trusteePublicShares[2].publicKeyY = '0';
+    invalidUnusedShare.signatures = [];
+    invalidUnusedShare = signBundle(invalidUnusedShare, 'ec', keys[0].privateKey.export({ format: 'pem', type: 'pkcs8' }));
+    invalidUnusedShare = signBundle(invalidUnusedShare, 'civil', keys[1].privateKey.export({ format: 'pem', type: 'pkcs8' }));
+    assert.equal(verifyBundle(invalidUnusedShare).valid, false, 'invalid unused public share unexpectedly accepted');
+    const independentlyRejected = runReference(invalidUnusedShare);
+    assert.equal(independentlyRejected.status, 1, 'Python accepted invalid unused public share');
+    assert.match(independentlyRejected.stderr, /public share group element/);
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
   bundle.partialDecryptions[0].proof.z = '0';
   assert.equal(verifyBundle(bundle).valid, false, 'tampered threshold proof must fail');
 });
@@ -463,6 +498,22 @@ test('builds and verifies vector-v3 one-hot ballots and per-candidate threshold 
   assert.equal(result.valid, true, result.errors.join('\n'));
   bundle.ballots[0].validityProof.sumProof.z = '0';
   assert.equal(verifyBundle(bundle).valid, false, 'tampered vector sum proof must fail');
+});
+
+test('rejects a signed vector-v4 bundle with an invalid unused trustee public share', () => {
+  let bundle = buildVectorBundle();
+  bundle.trusteePublicShares[2].publicKeyY = '0';
+  const keys = [crypto.generateKeyPairSync('ed25519'), crypto.generateKeyPairSync('ed25519')];
+  bundle.configuration.organizations = keys.map((key, index) => ({
+    id: index ? 'civil' : 'ec',
+    ed25519PublicKeyDer: key.publicKey.export({ format: 'der', type: 'spki' }).toString('base64'),
+  }));
+  bundle.signatures = [];
+  bundle = signBundle(bundle, 'ec', keys[0].privateKey.export({ format: 'pem', type: 'pkcs8' }));
+  bundle = signBundle(bundle, 'civil', keys[1].privateKey.export({ format: 'pem', type: 'pkcs8' }));
+  const result = verifyBundle(bundle);
+  assert.equal(result.valid, false, 'invalid unused vector public share unexpectedly accepted');
+  assert.match(result.errors.join('\n'), /publicShare\[2\]\.publicKeyY/);
 });
 
 const vectorMutations = {
