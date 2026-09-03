@@ -5,12 +5,16 @@
  */
 
 import http from 'http';
+import crypto from 'crypto';
 
-const PORT = 3000;
+const PORT = Number(process.env.PORT || 3000);
 const elections = {};
 const votes = {};
 const preparedVectors = {};
+const admissions = new Map();
+const demoEvents = {};
 let voteCounter = 0;
+let eventCounter = 0;
 
 function json(res, data, status = 200) {
   res.writeHead(status, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': '*', 'Access-Control-Allow-Methods': '*' });
@@ -37,6 +41,30 @@ const server = http.createServer(async (req, res) => {
   // Idemix credential
   if (url === '/api/credential/idemix' && method === 'POST') {
     return json(res, { credential: 'mock-idemix-credential-' + Date.now() });
+  }
+
+  // One-use QR admission. This is a UI-only mock, not an eligibility proof.
+  if (url === '/api/credential/demo-admission' && method === 'POST') {
+    const body = await parseBody(req);
+    const ttlSeconds = Number(body.ttlSeconds);
+    if (!elections[body.electionID] || !Number.isInteger(ttlSeconds) || ttlSeconds < 1 || ttlSeconds > 300) {
+      return json(res, { error: 'invalid mock QR admission request' }, 400);
+    }
+    const token = crypto.randomBytes(32).toString('base64url');
+    const expiresAt = Date.now() + ttlSeconds * 1000;
+    admissions.set(token, { electionID: body.electionID, expiresAt, used: false });
+    return json(res, { token, expiresAt });
+  }
+
+  if (url === '/api/credential/demo-admission/redeem' && method === 'POST') {
+    const body = await parseBody(req);
+    const admission = admissions.get(body.token);
+    if (!admission || admission.used || admission.expiresAt <= Date.now() || admission.electionID !== body.electionID) {
+      return json(res, { error: 'QR admission is invalid, expired, or already used' }, 401);
+    }
+    admission.used = true;
+    return json(res, { credential: `mock-admission-${crypto.randomUUID()}`,
+      nullifierMaterial: crypto.randomBytes(32).toString('hex') });
   }
 
   // Create election
@@ -113,6 +141,14 @@ const server = http.createServer(async (req, res) => {
     return json(res, { message: '투표가 성공적으로 제출되었습니다', txID: 'mock-tx-' + voteCounter });
   }
 
+  if (url === '/api/vote/demo-event' && method === 'POST') {
+    const body = await parseBody(req);
+    if (!elections[body.electionID] || typeof body.nullifierHash !== 'string') return json(res, { error: 'invalid event' }, 400);
+    if (!demoEvents[body.electionID]) demoEvents[body.electionID] = [];
+    demoEvents[body.electionID].push({ seq: ++eventCounter, type: 'verify', payload: { code: body.nullifierHash } });
+    return json(res, { accepted: true });
+  }
+
   if (url === '/api/vote/prepare-vector' && method === 'POST') {
     const body = await parseBody(req);
     const ballotID = `mock-vector-${Date.now()}-${++voteCounter}`;
@@ -141,6 +177,26 @@ const server = http.createServer(async (req, res) => {
     if (!votes[id]) votes[id] = [];
     votes[id].push({ ...body, voteIndex: ++voteCounter });
     return json(res, { message: '투표가 성공적으로 제출되었습니다', ballotID: body.ballotID, txID: `mock-tx-${voteCounter}` });
+  }
+
+  const liveCountMatch = url.match(/^\/api\/elections\/(.+?)\/live-count$/);
+  if (liveCountMatch && method === 'GET') {
+    const id = decodeURIComponent(liveCountMatch[1]);
+    return json(res, { totalVotes: (votes[id] || []).length });
+  }
+
+  const liveVotesMatch = url.match(/^\/api\/elections\/(.+?)\/live-votes$/);
+  if (liveVotesMatch && method === 'GET') {
+    const id = decodeURIComponent(liveVotesMatch[1]);
+    return json(res, { votes: votes[id] || [], shuffled: false });
+  }
+
+  const demoEventsMatch = url.match(/^\/api\/elections\/([^/?]+)\/demo-events(?:\?since=(\d+))?$/);
+  if (demoEventsMatch && method === 'GET') {
+    const id = decodeURIComponent(demoEventsMatch[1]);
+    const since = Number(demoEventsMatch[2] || 0);
+    const events = (demoEvents[id] || []).filter(event => event.seq > since);
+    return json(res, { events, lastSeq: events.at(-1)?.seq || since });
   }
 
   // Vote prepare (Benaloh)
