@@ -55,6 +55,10 @@ caliper/reports/*.png
 normal_times.txt
 panic_times.txt
 
+# ── Python 독립 검증기 캐시 ───────────────────────────────────
+__pycache__/
+*.py[cod]
+
 # ── 시크릿 키 파일 ──────────────────────────────────────────────
 application/.env.keys
 

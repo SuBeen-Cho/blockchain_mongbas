@@ -61,6 +61,7 @@ uptime >"${stage_dir}/uptime-before.txt"
 set +e
 (
   cd "${repo_dir}/verifier"
+  export PYTHONDONTWRITEBYTECODE=1
   /usr/bin/time -f 'elapsedSeconds=%e\nmaxRssKiB=%M\nuserSeconds=%U\nsystemSeconds=%S' \
     -o "${stage_dir}/resource-metrics.txt" npm test \
     >"${stage_dir}/test.stdout.log" 2>"${stage_dir}/test.stderr.log"
