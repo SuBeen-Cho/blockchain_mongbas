@@ -212,6 +212,11 @@ function verifyCheckpointLog(lines, trust) {
         const emptyRoot = sha256Hex('');
         if (checkpoint.history.previousTreeSize !== 0 || checkpoint.history.previousRootHash !== emptyRoot ||
             checkpoint.history.consistencyPath.length !== 0) throw new Error(`checkpoint[${index}]: invalid history start or migration`);
+        if (previous?.schema === CHECKPOINT_SCHEMA &&
+            (checkpoint.bundleHash !== previous.bundleHash || checkpoint.bulletinBoardRoot !== previous.bulletinBoardRoot ||
+             checkpoint.ballotCount !== previous.ballotCount || checkpoint.publishedAt !== previous.publishedAt)) {
+          throw new Error(`checkpoint[${index}]: v1 migration requires the exact previously witnessed bundle snapshot`);
+        }
         historyVerifiedFromSequence = checkpoint.sequence;
       }
       if (!verifyConsistencyProof({

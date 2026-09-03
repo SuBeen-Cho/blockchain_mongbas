@@ -560,6 +560,30 @@ test('history checkpoint v2 proves ballot-prefix growth without changing bundle 
   /exact previously witnessed bundle snapshot/);
 });
 
+test('checkpoint log verifier rejects a signed v1 migration to a different snapshot', () => {
+  const organizationKeys = [crypto.generateKeyPairSync('ed25519'), crypto.generateKeyPairSync('ed25519')];
+  const legacyBundle = buildBundle([0, 1], organizationKeys);
+  const substitutedBundle = buildBundle([1, 0], organizationKeys);
+  const witness = crypto.generateKeyPairSync('ed25519');
+  const privateKeyPem = witness.privateKey.export({ format: 'pem', type: 'pkcs8' });
+  const trust = { schema: TRUST_SCHEMA, witnesses: [{ id: 'observer', ed25519PublicKeyDer: publicKeyDer(privateKeyPem) }] };
+  const legacy = createCheckpoint({ bundle: legacyBundle, verification: verifyBundle(legacyBundle), witnessID: 'observer',
+    privateKeyPem, sequence: 1, observedAt: '2026-09-02T00:00:00.000Z' });
+
+  // Model a malicious or alternate signer implementation that bypasses createHistoryCheckpoint's
+  // exact-snapshot migration guard but still produces an otherwise authentic checkpoint.
+  const substituted = createHistoryCheckpoint({ bundle: substitutedBundle, verification: verifyBundle(substitutedBundle),
+    witnessID: 'observer', privateKeyPem, observedAt: '2026-09-03T00:00:00.000Z' });
+  substituted.sequence = 2;
+  substituted.previousCheckpointHash = checkpointHash(legacy);
+  const unsignedSubstituted = structuredClone(substituted);
+  delete unsignedSubstituted.signature;
+  substituted.signature = crypto.sign(null, Buffer.from(canonicalize(unsignedSubstituted)), witness.privateKey).toString('base64');
+
+  assert.throws(() => verifyCheckpointLog([legacy, substituted], trust),
+    /v1 migration requires the exact previously witnessed bundle snapshot/);
+});
+
 test('history checkpoint v2 rejects downgrade and timestamp rollback while v1 remains valid', () => {
   const bundle = buildBundle(), verification = verifyBundle(bundle), witness = crypto.generateKeyPairSync('ed25519');
   const privateKeyPem = witness.privateKey.export({ format: 'pem', type: 'pkcs8' });
