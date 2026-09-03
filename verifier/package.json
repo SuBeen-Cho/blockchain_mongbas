@@ -9,11 +9,19 @@
     "mongbas-bundle": "bin/mongbas-bundle.js",
     "mongbas-tamper-corpus": "bin/mongbas-tamper-corpus.js",
     "mongbas-witness": "bin/mongbas-witness.js",
-    "mongbas-cast-history": "bin/mongbas-cast-history.js"
+    "mongbas-cast-history": "bin/mongbas-cast-history.js",
+    "mongbas-c2sp": "bin/mongbas-c2sp.js"
   },
   "scripts": {
     "test": "node --test"
   },
+  "files": [
+    "bin/",
+    "src/",
+    "schema/",
+    "reference/*.py",
+    "README.md"
+  ],
   "engines": {
     "node": ">=22.12.0"
   },

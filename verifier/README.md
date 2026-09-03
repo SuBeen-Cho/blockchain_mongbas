@@ -209,7 +209,16 @@ The process exits `0` only when every implemented check passes, `1` for an inval
 - requires the C2SP log-operator key to differ from the Mongbas witness key; and
 - requires a growing tree's previous operator checkpoint to equal the verified history prefix.
 
-This is a format and state-transition primitive, not a deployed C2SP HTTP witness. It does not yet persist operator state atomically, send an `add-checkpoint` request, parse a timestamped witness cosignature, enforce a witness quorum, or interoperate with an external implementation. Consequently the project does not yet claim C2SP compatibility. Existing Mongbas checkpoint-v3 JSON and signature semantics are unchanged.
+This is a format and local state-transition primitive, not a deployed C2SP HTTP witness. It does not yet send an `add-checkpoint` request, parse a timestamped witness cosignature, enforce a witness quorum, or interoperate with an external implementation. Consequently the project does not yet claim C2SP compatibility. Existing Mongbas checkpoint-v3 JSON and signature semantics are unchanged.
+
+The local publication CLI persists the operator-signed checkpoint with fsync plus atomic rename before releasing a non-overwriting request artifact. Its state directory is mode `0700`, its checkpoint/request files are mode `0600`, and a lock serializes publishers. Re-running the same verified source produces the same request without replacing state. It still does not transmit the request.
+
+```bash
+node bin/mongbas-c2sp.js publish \
+  cast-history-checkpoints.jsonl witness-trust.json \
+  mongbas.example/cast-history/election-id \
+  /secure/log-operator-ed25519.pem /secure/c2sp-state request.txt
+```
 
 ## Implemented checks
 

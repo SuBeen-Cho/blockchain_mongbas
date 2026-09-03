@@ -2,6 +2,10 @@
 
 const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
+const { spawnSync } = require('node:child_process');
 const test = require('node:test');
 const {
   createSignedCheckpoint,
@@ -10,6 +14,7 @@ const {
   parseAndVerifySignedCheckpoint,
 } = require('../src/c2sp-adapter');
 const { createOpeningCheckpoint, publicKeyDer, TRUST_SCHEMA } = require('../src/witness');
+const { canonicalize } = require('../src/verify');
 
 function pem(pair) {
   return pair.privateKey.export({ format: 'pem', type: 'pkcs8' });
@@ -89,4 +94,53 @@ test('C2SP submission is derived only from a verified v3 log with a separate ope
   altered.history.rootHash = '00'.repeat(32);
   assert.throws(() => createC2spSubmissionFromV3Log({ origin: 'mongbas.example/cast-history/election-a',
     checkpointLog: [altered], trust, logPrivateKeyPem: pem(operator) }), /empty opening|signature/);
+});
+
+test('C2SP CLI atomically persists operator state before publishing non-overwriting requests', t => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'mongbas-c2sp-'));
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+  const witness = crypto.generateKeyPairSync('ed25519');
+  const operator = crypto.generateKeyPairSync('ed25519');
+  const witnessPem = pem(witness);
+  const opening = createOpeningCheckpoint({ electionID: 'election-a', electionContextHash: 'ab'.repeat(32),
+    epochSeconds: 300, witnessID: 'observer', privateKeyPem: witnessPem, observedAt: '2026-09-04T00:00:00.000Z' });
+  const trust = { schema: TRUST_SCHEMA, witnesses: [{ id: 'observer', ed25519PublicKeyDer: publicKeyDer(witnessPem) }] };
+  const logFile = path.join(directory, 'checkpoints.jsonl');
+  const trustFile = path.join(directory, 'trust.json');
+  const keyFile = path.join(directory, 'operator.pem');
+  const stateDirectory = path.join(directory, 'state');
+  fs.writeFileSync(logFile, `${canonicalize(opening)}\n`);
+  fs.writeFileSync(trustFile, canonicalize(trust));
+  fs.writeFileSync(keyFile, pem(operator), { mode: 0o600 });
+  const cli = path.join(__dirname, '../bin/mongbas-c2sp.js');
+  const invoke = output => spawnSync(process.execPath,
+    [cli, 'publish', logFile, trustFile, 'mongbas.example/cast-history/election-a', keyFile, stateDirectory, output],
+    { encoding: 'utf8' });
+  const firstOutput = path.join(directory, 'request-1.txt');
+  const first = invoke(firstOutput);
+  assert.equal(first.status, 0, first.stderr);
+  assert.match(first.stdout, /treeSize=0 sourceSequence=1/);
+  const stateFile = path.join(stateDirectory, 'checkpoint.note');
+  const persisted = fs.readFileSync(stateFile, 'utf8');
+  assert.equal(fs.statSync(stateFile).mode & 0o777, 0o600);
+  assert.equal(fs.statSync(stateDirectory).mode & 0o777, 0o700);
+  assert.match(fs.readFileSync(firstOutput, 'utf8'), /^old 0\n\n/);
+
+  const secondOutput = path.join(directory, 'request-2.txt');
+  const retry = invoke(secondOutput);
+  assert.equal(retry.status, 0, retry.stderr);
+  assert.equal(fs.readFileSync(stateFile, 'utf8'), persisted);
+  assert.equal(fs.readFileSync(secondOutput, 'utf8'), fs.readFileSync(firstOutput, 'utf8'));
+  const overwrite = invoke(secondOutput);
+  assert.equal(overwrite.status, 1);
+  assert.match(overwrite.stderr, /already exists/);
+  assert.equal(fs.readdirSync(stateDirectory).sort().join(','), 'checkpoint.note');
+});
+
+test('verifier package explicitly allowlists runtime files and every CLI is locked', () => {
+  const manifest = JSON.parse(fs.readFileSync(path.join(__dirname, '../package.json'), 'utf8'));
+  const lock = JSON.parse(fs.readFileSync(path.join(__dirname, '../package-lock.json'), 'utf8'));
+  assert.deepEqual(manifest.files, ['bin/', 'src/', 'schema/', 'reference/*.py', 'README.md']);
+  assert.deepEqual(lock.packages[''].bin, Object.fromEntries(Object.entries(manifest.bin).sort()));
+  assert.ok(manifest.bin['mongbas-c2sp']);
 });
