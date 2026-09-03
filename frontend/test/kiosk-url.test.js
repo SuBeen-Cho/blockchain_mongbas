@@ -13,7 +13,7 @@ test('QR URL encodes only election ID on an exact HTTPS origin', () => {
 
 test('QR URL rejects insecure remote HTTP and ambiguous or credentialed origins', () => {
   for (const origin of [
-    'http://100.103.93.65:3000',
+    'http://192.0.2.10:3000',
     'http://vote.example',
     'https://vote.example/path',
     'https://user:password@vote.example',
