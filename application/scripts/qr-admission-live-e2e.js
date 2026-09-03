@@ -127,8 +127,11 @@ async function main() {
   const liveVotes = requireStatus('read live votes', await request(`/api/elections/${electionID}/live-votes`, { admin: true }), 200);
   const events = requireStatus('read dashboard events', await request(`/api/elections/${electionID}/demo-events?since=0`, { admin: true }), 200);
   const ledgerLookup = requireStatus('read committed nullifier', await request(`/api/nullifier/${nullifierHash}`), 200);
-  const expectedRows = initialRows + (revoteSameCredential ? 2 : 1);
+  // The authoritative history appends both casts, while the display-only live
+  // view keeps one active row per nullifier and marks that row as replaced.
+  const expectedRows = initialRows + 1;
   if (liveCount.totalVotes !== initialCount + 1 || liveVotes.votes?.length !== expectedRows ||
+      (revoteSameCredential && !liveVotes.votes.some(vote => vote.revoted === true)) ||
       !events.events?.some(event => event.type === 'verify') || !ledgerLookup.credVerifyLevel?.startsWith('chaincode-')) {
     throw new Error('dashboard or Fabric post-cast evidence is incomplete');
   }
@@ -140,7 +143,7 @@ async function main() {
       isRevote: Boolean(cast.isRevote), replacementCommitted: Boolean(revote),
       replacementEvictCount: revote?.evictCount ?? 0, credentialVerification: ledgerLookup.credVerifyLevel },
     dashboard: { totalVotes: liveCount.totalVotes, encryptedRows: liveVotes.votes.length,
-      verificationEvent: true } }, null, 2)}\n`);
+      replacementRowMarked: revoteSameCredential, verificationEvent: true } }, null, 2)}\n`);
 }
 
 main().catch(error => {
