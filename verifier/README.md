@@ -197,6 +197,20 @@ The builder writes files with mode `0600`. Signing verifies that the private key
 
 The process exits `0` only when every implemented check passes, `1` for an invalid bundle, and `2` for incorrect CLI usage.
 
+## Experimental C2SP checkpoint adapter
+
+`src/c2sp-adapter.js` provides a bounded additive adapter for the C2SP signed-note/checkpoint and witness-request wire formats. It:
+
+- creates and verifies an exact three-line checkpoint body with an Ed25519 signed-note signature;
+- computes the C2SP type-`0x01` key ID from the key name and raw Ed25519 public key;
+- rejects non-canonical size/base64, invalid empty roots, forbidden controls, oversized notes and more than 16 signatures;
+- formats at most 63 RFC-style consistency nodes for `add-checkpoint`;
+- accepts only a fully verified checkpoint-v3 source log;
+- requires the C2SP log-operator key to differ from the Mongbas witness key; and
+- requires a growing tree's previous operator checkpoint to equal the verified history prefix.
+
+This is a format and state-transition primitive, not a deployed C2SP HTTP witness. It does not yet persist operator state atomically, send an `add-checkpoint` request, parse a timestamped witness cosignature, enforce a witness quorum, or interoperate with an external implementation. Consequently the project does not yet claim C2SP compatibility. Existing Mongbas checkpoint-v3 JSON and signature semantics are unchanged.
+
 ## Implemented checks
 
 - exact schema and algorithm identifiers;
@@ -241,11 +255,13 @@ The legacy signed bundle root detects changes to one exported ballot sequence;
 it is deliberately not reinterpreted as the v2 history root. The current bundle
 producer exports a shuffled final active-ballot set, and revoting replaces the
 active record. Therefore repeated final bundles alone cannot establish a stable
-append-only election history. Production use of v2 requires a separately
-exported, stably indexed cast-event log with explicit supersession events;
-tallying may continue to select the latest eligible event per nullifier. Until
-that producer exists, the implemented v2 verifier proves prefix consistency
-only for supplied bundles that really preserve the earlier ballot prefix.
+append-only election history. The feature branch now has a separately exported,
+stably indexed cast-event producer whose public events omit supersession and
+stable nullifier linkage while a protected manifest retains active selection.
+It has not been deployed to the preserved Fabric network, and the protected
+selection has no public zero-knowledge correctness proof. Legacy checkpoint-v2
+therefore remains limited to supplied bundle prefixes; checkpoint-v3 is the
+only schema for the new cast-event history.
 
 A same-host witness test also does not establish operational independence. A
 valid final bundle/checkpoint cannot prove that an operator withheld no ballot
