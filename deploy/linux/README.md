@@ -63,6 +63,14 @@ tailscale serve status
 
 이는 tailnet 내부에만 공유하는 Serve이다. 인터넷에 공개하는 `tailscale funnel`로 대체하지 않는다. 서버와 휴대폰은 같은 tailnet에 있어야 하며, tailnet 관리자가 HTTPS/Serve를 최초 1회 활성화해야 할 수 있다. 공식 CLI 문서: `https://tailscale.com/docs/reference/tailscale-cli/serve`.
 
+실제 배포나 Serve 설정 전에 읽기 전용 QR 사전점검을 실행한다. 이 명령은 secret 값을 source/출력하지 않고 설정 여부만 검사하며, systemd, Docker, Tailscale 및 Fabric 상태를 변경하지 않는다.
+
+```bash
+MONGBAS_RUNTIME_DIR=/home/user1/mongbas-runtime ./deploy/linux/qr-preflight.sh
+```
+
+모든 `FAIL`을 해소해야 실제 휴대폰 실증을 시작한다. `Tailscale Serve is not configured` 경고는 별도 승인 전에는 자동 해소하지 않는다. 사전점검 통과는 휴대폰 HTTPS, QR 만료·재사용, 실제 Fabric commit 또는 bundle 검증의 대체 증거가 아니다.
+
 BBS+ 실험 모드는 `@mattrglobal/bbs-signatures` 2.0.0의 WASM 경로만 사용한다(`BBS_SIGNATURES_MODE=WASM`). 아카이브된 optional native addon이 취약한 `node-pre-gyp`/`tar` 설치 경로를 끌어오므로 application 의존성은 `npm ci --omit=optional`로 설치한다. `build.sh`는 실제 배포 세트를 `npm audit --omit=optional --audit-level=high`로 검사하며, high/critical 이상이면 실패한다. 해당 BBS 구현은 현재 CFRG draft-10의 완전한 표준 준거를 주장하지 않으며, 최신 구현으로의 마이그레이션은 별도 보안 게이트로 다룬다.
 
 ## 검증과 증거
