@@ -21,6 +21,7 @@ const { submitTransactionAndWait } = require('../lib/submitTransaction');
 const liveCount = require('../lib/liveCount');  // [부스 시연] 라이브 투표 카운터
 const demoLive  = require('../lib/demoLive');   // [부스 시연] 라이브 암호문 표 + 셔플 + 이벤트 버스
 const { demoEndpointsEnabled, requireDemoEndpoint } = require('../lib/demoFeatures');
+const { requireAdmin } = require('../middleware/admin');
 const { isCanonicalToken, serializeFixedProof } = require('../lib/deniableProof');
 
 const router = express.Router();
@@ -280,13 +281,13 @@ router.post('/', async (req, res) => {
 
 // ── GET /api/elections/:id/live-count ──────────────────────────
 // [부스 시연] 진행 중 선거의 실시간 투표 수 (백엔드 인메모리 카운터 — 관제판 폴링용)
-router.get('/:id/live-count', requireDemoEndpoint, (req, res) => {
+router.get('/:id/live-count', requireDemoEndpoint, requireAdmin, (req, res) => {
   res.json({ electionID: req.params.id, totalVotes: liveCount.get(req.params.id) });
 });
 
 // ── GET /:id/live-votes ────────────────────────────────────────
 // [부스 시연] 도착한 암호문 표를 실시간 제공 (대시보드가 폴링) — 새로고침 없이 누적/셔플 반영
-router.get('/:id/live-votes', requireDemoEndpoint, (req, res) => {
+router.get('/:id/live-votes', requireDemoEndpoint, requireAdmin, (req, res) => {
   res.json({ electionID: req.params.id, ...demoLive.listVotes(req.params.id) });
 });
 
@@ -301,7 +302,7 @@ router.post('/:id/legacy-demo-event-disabled', requireDemoEndpoint, (req, res) =
 
 // ── GET /:id/demo-events?since=N ───────────────────────────────
 // [부스 시연] 대시보드가 폴링해 모바일 액션을 감지 (검증 뷰 전환 등)
-router.get('/:id/demo-events', requireDemoEndpoint, (req, res) => {
+router.get('/:id/demo-events', requireDemoEndpoint, requireAdmin, (req, res) => {
   res.json({ electionID: req.params.id, ...demoLive.listEvents(req.params.id, req.query.since) });
 });
 

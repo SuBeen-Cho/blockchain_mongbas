@@ -20,6 +20,7 @@ cd mongbas
 ./scripts/demo-tunnel.sh       # cloudflared 무료 터널 → https://*.trycloudflare.com
 ```
 > 공개 Quick Tunnel은 사용자 승인을 받은 일시 시험에만 사용한다. 발표/장기 운영은 named tunnel, vote/admin 경로 분리와 관리자 인증을 적용한다. cloudflared 미설치: `brew install cloudflared`.
+> 공개 터널에서도 rate limit을 끄지 않는다. `live-count`, `live-votes`, `demo-events`는 관제판이 전송하는 관리자 bearer token이 있어야 조회된다. 관제판도 터널 URL로 열어야 QR에 해당 HTTPS origin이 들어간다.
 
 화면 3개:
 - **관제판(노트북)**: `http://localhost:3000/?app=control` (또는 터널 URL + `/?app=control`)

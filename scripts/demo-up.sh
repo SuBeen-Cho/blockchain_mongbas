@@ -33,7 +33,7 @@ echo "[3/5] 프론트엔드 빌드..."
 
 echo "[4/5] 백엔드 백그라운드 기동 (:3000)..."
 pkill -f "node src/app.js" 2>/dev/null || true; sleep 1
-( cd application && DISABLE_RATE_LIMITS=true nohup node src/app.js > "$BLOG" 2>&1 & )
+( cd application && nohup node src/app.js > "$BLOG" 2>&1 & )
 sleep 4
 if curl --fail --silent --show-error --max-time 5 http://localhost:3000/health | node -e '
   const health = JSON.parse(require("node:fs").readFileSync(0, "utf8"));

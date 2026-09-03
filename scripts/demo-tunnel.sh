@@ -7,7 +7,7 @@
 #   - 관제판:    https://xxxx.trycloudflare.com/?app=control  (부스 노트북)
 #
 # 사전: 백엔드가 :3000에서 실행 중이어야 함
-#   cd application && DISABLE_RATE_LIMITS=true npm start
+#   cd application && npm start
 #
 # cloudflared 미설치 시: brew install cloudflared
 #

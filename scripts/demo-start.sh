@@ -19,10 +19,10 @@ fi
 echo "[2/4] 프론트엔드 빌드..."
 (cd frontend && npm run build >/dev/null 2>&1) && echo "      ✓ dist 생성"
 
-echo "[3/4] 백엔드 기동 (:3000, DISABLE_RATE_LIMITS=true)..."
+echo "[3/4] 백엔드 기동 (:3000, rate limits enabled)..."
 pkill -f "node src/app.js" 2>/dev/null || true
 sleep 1
-(cd application && DISABLE_RATE_LIMITS=true nohup node src/app.js > /tmp/mongbas-backend.log 2>&1 &)
+(cd application && nohup node src/app.js > /tmp/mongbas-backend.log 2>&1 &)
 sleep 4
 
 echo "[4/4] 헬스 체크..."

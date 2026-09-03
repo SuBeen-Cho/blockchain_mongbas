@@ -347,9 +347,9 @@ cd mongbas/network
 cd ../frontend
 npm run build           # dist/ 생성
 
-# 3) 백엔드 기동 (rate limit 해제 + 정적 서빙)
+# 3) 백엔드 기동 (rate limit 유지 + 정적 서빙)
 cd ../application
-DISABLE_RATE_LIMITS=true npm start    # :3000, dist/도 서빙
+npm start    # :3000, dist/도 서빙
 
 # 4) 공개 터널 (QR용) — cloudflared 권장 (무료, 경고 페이지 없음)
 cloudflared tunnel --url http://localhost:3000
@@ -400,7 +400,7 @@ cloudflared tunnel --url http://localhost:3000
 |---|---|
 | 전시장 WiFi가 기기간 통신 차단 | cloudflared 터널 메인(셀룰러로도 접속). LAN은 백업. |
 | 터널 끊김/인터넷 불안정 | LAN IP QR로 즉시 전환할 수 있게 두 QR 모두 준비. |
-| 폰이 한꺼번에 몰려 rate limit | `DISABLE_RATE_LIMITS=true` 로 기동. |
+| 폰이 한꺼번에 몰려 rate limit | limit을 끄지 말고 세션당 참여자를 분산하거나 승인된 유한 상한을 사전 설정한다. |
 | 투표가 너무 많아 한 선거가 비대 | 세션 갈아끼우기로 팀당 소규모 유지. |
 | 종료를 잘못 눌러 진행 중 선거 닫힘 | [종료] 버튼에 확인 모달 1단계. 닫혀도 [새 세션]으로 즉시 복구. |
 | 검증 prefix 충돌(드묾) | 세션당 표 적어 6 hex면 충분. 충돌 시 전체 nullifier(QR) 입력. |
@@ -505,7 +505,7 @@ cloudflared tunnel --url http://localhost:3000
 - **"내 줄 하이라이트" UI**: 게시판 데이터에 `nullifierHash` 이미 존재 → VerifyPage에
   목록 렌더 + 영수번호(6 hex prefix) 매칭 하이라이트 추가.
 - **seed-votes**: 신규 엔드포인트가 데모 자격증명 발급→ElGamal 암호화+ZKP→CastVote
-  (e2e 로직 재사용). `DISABLE_RATE_LIMITS=true` 전제.
+  (e2e 로직 재사용). 공개 터널에서는 rate limit을 유지하므로 대량 주입은 별도 loopback 평가 profile에서만 수행한다.
 - **불투명 API 데모 전제**: 현재 브라우저는 256-bit verification receipt에서 `normalLookupToken`/`panicLookupToken`을 파생한다. 과거 `normalPWHash`/`panicPWHash` 경로는 사용하지 않는다.
 
 **🔴 발표 정직성 직결 — 결정 필요 (코드/내러티브 선택)**
