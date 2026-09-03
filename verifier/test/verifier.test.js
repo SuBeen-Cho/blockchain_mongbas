@@ -986,6 +986,8 @@ test('signed fork complaint binds independently verified conflicting witness log
   const consistentLogs = [logs[0], structuredClone(logs[0])];
   assert.throws(() => createForkComplaint({ logs: consistentLogs, witnessTrust: trust, monitorID: 'public-monitor',
     monitorPrivateKeyPem: monitorPem }), /independent witness identities|no conflicting/);
+  assert.throws(() => createForkComplaint({ logs, witnessTrust: trust, monitorID: 'reused-role',
+    monitorPrivateKeyPem: witnessPems[0] }), /monitor key must differ from every witness key/);
 
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'mongbas-fork-complaint-'));
   try {

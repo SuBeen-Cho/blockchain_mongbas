@@ -37,6 +37,12 @@ function unsignedComplaint(complaint) {
   return value;
 }
 
+function assertMonitorKeySeparate(logs, monitorPublicKeyDer) {
+  if (logs.some(lines => lines.some(checkpoint => checkpoint.witnessPublicKeyDer === monitorPublicKeyDer))) {
+    throw new Error('monitor key must differ from every witness key');
+  }
+}
+
 function checkpointContext(checkpoint) {
   return checkpoint.schema === CHECKPOINT_V3_SCHEMA ? checkpoint.electionContextHash : checkpoint.history.contextHash;
 }
@@ -101,12 +107,14 @@ function createForkComplaint({ logs, witnessTrust, monitorID, monitorPrivateKeyP
   if (!/^[A-Za-z0-9_.-]{1,128}$/.test(monitorID)) throw new Error('invalid monitor ID');
   if (new Date(detectedAt).toISOString() !== detectedAt) throw new Error('invalid complaint detection time');
   const split = findIndependentSplitView(logs, witnessTrust);
+  const monitorPublicKeyDer = publicKeyDer(monitorPrivateKeyPem);
+  assertMonitorKeySeparate(logs, monitorPublicKeyDer);
   const complaint = {
     schema: COMPLAINT_SCHEMA,
     reason: 'independent-witness-split-view',
     detectedAt,
     monitorID,
-    monitorPublicKeyDer: publicKeyDer(monitorPrivateKeyPem),
+    monitorPublicKeyDer,
     ...split,
   };
   complaint.signature = crypto.sign(null, Buffer.from(canonicalize(complaint)),
@@ -156,6 +164,7 @@ function verifyForkComplaint({ complaint, logs, witnessTrust, monitorTrust }) {
   validateComplaintShape(complaint);
   const trustedKey = trustedMonitorKey(monitorTrust, complaint.monitorID);
   if (trustedKey !== complaint.monitorPublicKeyDer) throw new Error('complaint monitor key does not match pinned trust');
+  assertMonitorKeySeparate(logs, trustedKey);
   const publicKey = crypto.createPublicKey({ key: canonicalBase64(trustedKey, 'trusted monitor key'), format: 'der', type: 'spki' });
   if (publicKey.asymmetricKeyType !== 'ed25519' || !crypto.verify(null,
     Buffer.from(canonicalize(unsignedComplaint(complaint))), publicKey,
