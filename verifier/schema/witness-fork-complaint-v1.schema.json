@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mongbas.example/schema/witness-fork-complaint-v1.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "reason", "detectedAt", "monitorID", "monitorPublicKeyDer", "checkpointSchema",
+    "electionID", "contextHash", "treeSize", "evidence", "signature"],
+  "properties": {
+    "schema": { "const": "mongbas-witness-fork-complaint/v1" },
+    "reason": { "const": "independent-witness-split-view" },
+    "detectedAt": { "type": "string", "format": "date-time" },
+    "monitorID": { "type": "string", "pattern": "^[A-Za-z0-9_.-]{1,128}$" },
+    "monitorPublicKeyDer": { "type": "string" },
+    "checkpointSchema": { "enum": ["mongbas-bulletin-board-checkpoint/v2", "mongbas-bulletin-board-checkpoint/v3"] },
+    "electionID": { "type": "string", "pattern": "^[A-Za-z0-9_.-]{1,256}$" },
+    "contextHash": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "treeSize": { "type": "integer", "minimum": 0 },
+    "evidence": {
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 2,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["witnessID", "checkpointHash", "rootHash"],
+        "properties": {
+          "witnessID": { "type": "string", "pattern": "^[A-Za-z0-9_.-]{1,128}$" },
+          "checkpointHash": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+          "rootHash": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+        }
+      }
+    },
+    "signature": { "type": "string" }
+  }
+}

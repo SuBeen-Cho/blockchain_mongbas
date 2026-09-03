@@ -43,6 +43,24 @@ node bin/mongbas-witness.js compare witness-trust.json observer-a.jsonl observer
 node bin/mongbas-witness.js compare-witnesses witness-trust.json mac-witness.jsonl linux-witness.jsonl
 ```
 
+When two distinct trusted witnesses sign different roots for the same election,
+context and tree size, a public monitor can create a signed, portable fork
+complaint. Verification rechecks both complete source logs against pinned
+witness trust and requires a separately pinned monitor key; the complaint alone
+is not accepted as proof.
+
+```bash
+node bin/mongbas-witness.js init-monitor-trust public-monitor /secure/monitor-ed25519.pem monitor-trust.json
+node bin/mongbas-witness.js complain-fork witness-trust.json public-monitor /secure/monitor-ed25519.pem complaint.json witness-a.jsonl witness-b.jsonl
+node bin/mongbas-witness.js verify-fork witness-trust.json monitor-trust.json complaint.json witness-a.jsonl witness-b.jsonl
+```
+
+Complaint, trust and log inputs are bounded and must be regular non-symlink
+files. Complaint output is canonical, fsynced, mode `0600`, and never
+overwritten. This proves the exact signed split view supplied during
+verification. It neither proves institutional independence of the witnesses
+nor gives a voter an omission receipt or transferable participation handle.
+
 For a new election using the privacy-separated cast-event history, create the
 signed empty checkpoint before accepting the first cast, then bind each
 canonical history artifact and the compatible signed election bundle:

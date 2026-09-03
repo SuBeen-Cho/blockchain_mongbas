@@ -10,12 +10,14 @@ const { CHECKPOINT_SCHEMA, CHECKPOINT_V2_SCHEMA, CHECKPOINT_V3_SCHEMA, TRUST_SCH
   parseCanonicalLog, publicKeyDer, verifyCheckpointLog, verifyHistoryBinding } = require('../src/witness');
 const { verifyCastEventHistory } = require('../src/cast-event-history');
 const { createWitnessKeyTransition } = require('../src/witness-key-transition');
+const { MONITOR_TRUST_SCHEMA, createForkComplaint, verifyForkComplaint } = require('../src/witness-complaint');
 
 const MAX_BUNDLE_BYTES = 256 * 1024 * 1024;
 const MAX_LOG_BYTES = 16 * 1024 * 1024;
 const MAX_TRUST_BYTES = 1024 * 1024;
 const MAX_PRIVATE_KEY_BYTES = 64 * 1024;
 const MAX_HISTORY_BYTES = 256 * 1024 * 1024;
+const MAX_COMPLAINT_BYTES = 1024 * 1024;
 const NOFOLLOW = fs.constants.O_NOFOLLOW || 0;
 
 function readRegularFile(filePath, label, maximumBytes, { privateFile = false, encoding } = {}) {
@@ -54,6 +56,13 @@ function readTrust(filePath) {
   return JSON.parse(readRegularFile(filePath, 'witness trust document', MAX_TRUST_BYTES, { encoding: 'utf8' }));
 }
 
+function readCanonicalJSON(filePath, label, maximumBytes) {
+  const text = readRegularFile(filePath, label, maximumBytes, { encoding: 'utf8' });
+  const value = JSON.parse(text);
+  if (`${canonicalize(value)}\n` !== text) throw new Error(`${label} is not canonical JSON with one trailing newline`);
+  return value;
+}
+
 function readPrivateKey(filePath) {
   return readRegularFile(filePath, 'witness private key', MAX_PRIVATE_KEY_BYTES, { privateFile: true });
 }
@@ -82,6 +91,9 @@ function usage(exitCode = 2) {
   console.error('  mongbas-witness verify-cast-history <history.json> <checkpoint.jsonl> <witness-trust.json> <sequence>');
   console.error('  mongbas-witness compare <witness-trust.json> <checkpoint-a.jsonl> <checkpoint-b.jsonl> [...]');
   console.error('  mongbas-witness compare-witnesses <witness-trust.json> <witness-a.jsonl> <witness-b.jsonl> [...]');
+  console.error('  mongbas-witness init-monitor-trust <monitor-id> <ed25519-private.pem> <monitor-trust.json>');
+  console.error('  mongbas-witness complain-fork <witness-trust.json> <monitor-id> <monitor-private.pem> <complaint.json> <witness-a.jsonl> <witness-b.jsonl>');
+  console.error('  mongbas-witness verify-fork <witness-trust.json> <monitor-trust.json> <complaint.json> <witness-a.jsonl> <witness-b.jsonl>');
   process.exit(exitCode);
 }
 
@@ -393,6 +405,31 @@ function compareWitnesses(trustPath, logPaths) {
   console.log(`largestTreeSize=${result.largestTreeSize}`);
 }
 
+function initMonitorTrust(monitorID, keyPath, trustPath) {
+  if (!/^[A-Za-z0-9_.-]{1,128}$/.test(monitorID || '')) throw new Error('invalid monitor ID');
+  const trust = { schema: MONITOR_TRUST_SCHEMA,
+    monitors: [{ id: monitorID, ed25519PublicKeyDer: publicKeyDer(readPrivateKey(keyPath)) }] };
+  writeExclusivePrivateJSON(trustPath, trust, 'monitorTrustPath');
+}
+
+function complainFork(witnessTrustPath, monitorID, keyPath, complaintPath, logPaths) {
+  const logs = logPaths.map(logPath => parseCanonicalLog(readLog(logPath)));
+  const complaint = createForkComplaint({ logs, witnessTrust: readTrust(witnessTrustPath), monitorID,
+    monitorPrivateKeyPem: readPrivateKey(keyPath) });
+  writeExclusivePrivateJSON(complaintPath, complaint, 'complaintPath');
+  console.log(`FORK COMPLAINT CREATED: treeSize=${complaint.treeSize} witnesses=${complaint.evidence.map(item => item.witnessID).join(',')}`);
+}
+
+function verifyFork(witnessTrustPath, monitorTrustPath, complaintPath, logPaths) {
+  const complaint = readCanonicalJSON(complaintPath, 'fork complaint', MAX_COMPLAINT_BYTES);
+  const monitorTrust = readCanonicalJSON(monitorTrustPath, 'monitor trust document', MAX_TRUST_BYTES);
+  const logs = logPaths.map(logPath => parseCanonicalLog(readLog(logPath)));
+  const result = verifyForkComplaint({ complaint, logs, witnessTrust: readTrust(witnessTrustPath), monitorTrust });
+  console.log(`FORK COMPLAINT VERIFIED: electionID=${result.electionID} treeSize=${result.treeSize}`);
+  console.log(`monitorID=${result.monitorID}`);
+  console.log(`witnessIDs=${result.witnessIDs.join(',')}`);
+}
+
 try {
   const [command, ...args] = process.argv.slice(2);
   if (command === 'init-trust' && args.length === 3) initTrust(args[0], path.resolve(args[1]), path.resolve(args[2]));
@@ -409,6 +446,11 @@ try {
   else if (command === 'verify-cast-history' && args.length === 4) verifyCastHistoryCheckpoint(path.resolve(args[0]), path.resolve(args[1]), path.resolve(args[2]), args[3]);
   else if (command === 'compare' && args.length >= 3) compare(path.resolve(args[0]), args.slice(1).map(value => path.resolve(value)));
   else if (command === 'compare-witnesses' && args.length >= 3) compareWitnesses(path.resolve(args[0]), args.slice(1).map(value => path.resolve(value)));
+  else if (command === 'init-monitor-trust' && args.length === 3) initMonitorTrust(args[0], path.resolve(args[1]), path.resolve(args[2]));
+  else if (command === 'complain-fork' && args.length === 6) complainFork(path.resolve(args[0]), args[1], path.resolve(args[2]),
+    path.resolve(args[3]), args.slice(4).map(value => path.resolve(value)));
+  else if (command === 'verify-fork' && args.length === 5) verifyFork(path.resolve(args[0]), path.resolve(args[1]), path.resolve(args[2]),
+    args.slice(3).map(value => path.resolve(value)));
   else if (command === '--help' || command === '-h') usage(0);
   else usage();
 } catch (error) {

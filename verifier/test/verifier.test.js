@@ -19,6 +19,7 @@ const { CHECKPOINT_SCHEMA, CHECKPOINT_V2_SCHEMA, CHECKPOINT_V3_SCHEMA, TRUST_SCH
   parseCanonicalLog, publicKeyDer, verifyCheckpointLog } = require('../src/witness');
 const { createCastEventHistory } = require('../src/cast-event-history');
 const { createWitnessKeyTransition } = require('../src/witness-key-transition');
+const { createForkComplaint, verifyForkComplaint, MONITOR_TRUST_SCHEMA } = require('../src/witness-complaint');
 const { generateVectorBallot } = require('../../application/src/lib/vectorElgamal');
 
 function scalar(label) {
@@ -942,6 +943,76 @@ test('independent v3 witnesses share the opening and detect a cast-history split
   logs[1][1] = createCastHistoryCheckpoint({ history: forkHistory, bundle, verification, witnessID: 'observer-2',
     privateKeyPem: pems[1], previousCheckpoint: logs[1][0], observedAt: '2026-09-03T00:01:00.000Z' });
   assert.throws(() => compareIndependentWitnessLogs(logs, trust), /split view/);
+});
+
+test('signed fork complaint binds independently verified conflicting witness logs', () => {
+  const bundle = buildBundle(), verification = verifyBundle(bundle), contextHash = 'ce'.repeat(32);
+  const witnessPems = [crypto.generateKeyPairSync('ed25519'), crypto.generateKeyPairSync('ed25519')]
+    .map(pair => pair.privateKey.export({ format: 'pem', type: 'pkcs8' }));
+  const trust = { schema: TRUST_SCHEMA, witnesses: witnessPems.map((pem, index) => ({
+    id: `fork-witness-${index + 1}`, ed25519PublicKeyDer: publicKeyDer(pem),
+  })) };
+  const record = marker => ({ position: { blockNumber: 8, transactionIndex: marker }, committedAt: 900 + marker,
+    commitmentNonce: marker.toString(16).padStart(64, '0'),
+    receiptNonce: (20 + marker).toString(16).padStart(64, '0'),
+    selectionKey: (40 + marker).toString(16).padStart(64, '0'), ballotArtifact: { marker } });
+  const logs = witnessPems.map((privateKeyPem, index) => {
+    const witnessID = `fork-witness-${index + 1}`;
+    const opening = createOpeningCheckpoint({ electionID: verification.electionID, electionContextHash: contextHash,
+      witnessID, privateKeyPem, observedAt: '2026-09-04T01:00:00.000Z' });
+    const records = Array.from({ length: verification.ballots }, (_, recordIndex) =>
+      record(recordIndex + 1 + (index * verification.ballots)));
+    const history = createCastEventHistory({ contextHash, records });
+    return [opening, createCastHistoryCheckpoint({ history, bundle, verification, witnessID, privateKeyPem,
+      previousCheckpoint: opening, observedAt: '2026-09-04T01:01:00.000Z' })];
+  });
+  const monitorPem = crypto.generateKeyPairSync('ed25519').privateKey.export({ format: 'pem', type: 'pkcs8' });
+  const monitorTrust = { schema: MONITOR_TRUST_SCHEMA, monitors: [{ id: 'public-monitor',
+    ed25519PublicKeyDer: publicKeyDer(monitorPem) }] };
+  const complaint = createForkComplaint({ logs, witnessTrust: trust, monitorID: 'public-monitor',
+    monitorPrivateKeyPem: monitorPem, detectedAt: '2026-09-04T01:02:00.000Z' });
+  assert.equal(complaint.treeSize, verification.ballots);
+  assert.deepEqual(complaint.evidence.map(item => item.witnessID), ['fork-witness-1', 'fork-witness-2']);
+  assert.equal(verifyForkComplaint({ complaint, logs, witnessTrust: trust, monitorTrust }).valid, true);
+
+  const changed = structuredClone(complaint);
+  changed.evidence[0].rootHash = '0'.repeat(64);
+  assert.throws(() => verifyForkComplaint({ complaint: changed, logs, witnessTrust: trust, monitorTrust }),
+    /invalid monitor signature|does not bind/);
+  const wrongMonitor = structuredClone(monitorTrust);
+  wrongMonitor.monitors[0].id = 'someone-else';
+  assert.throws(() => verifyForkComplaint({ complaint, logs, witnessTrust: trust, monitorTrust: wrongMonitor }),
+    /untrusted monitor/);
+  const consistentLogs = [logs[0], structuredClone(logs[0])];
+  assert.throws(() => createForkComplaint({ logs: consistentLogs, witnessTrust: trust, monitorID: 'public-monitor',
+    monitorPrivateKeyPem: monitorPem }), /independent witness identities|no conflicting/);
+
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'mongbas-fork-complaint-'));
+  try {
+    const cli = path.join(__dirname, '../bin/mongbas-witness.js');
+    const paths = {
+      witnessTrust: path.join(directory, 'witness-trust.json'), monitorKey: path.join(directory, 'monitor.pem'),
+      monitorTrust: path.join(directory, 'monitor-trust.json'), complaint: path.join(directory, 'complaint.json'),
+      firstLog: path.join(directory, 'first.jsonl'), secondLog: path.join(directory, 'second.jsonl'),
+    };
+    fs.writeFileSync(paths.witnessTrust, JSON.stringify(trust));
+    fs.writeFileSync(paths.monitorKey, monitorPem, { mode: 0o600 });
+    fs.writeFileSync(paths.firstLog, `${logs[0].map(canonicalize).join('\n')}\n`);
+    fs.writeFileSync(paths.secondLog, `${logs[1].map(canonicalize).join('\n')}\n`);
+    const run = args => spawnSync(process.execPath, [cli, ...args], { encoding: 'utf8' });
+    assert.equal(run(['init-monitor-trust', 'public-monitor', paths.monitorKey, paths.monitorTrust]).status, 0);
+    const created = run(['complain-fork', paths.witnessTrust, 'public-monitor', paths.monitorKey,
+      paths.complaint, paths.firstLog, paths.secondLog]);
+    assert.equal(created.status, 0, created.stderr);
+    const verified = run(['verify-fork', paths.witnessTrust, paths.monitorTrust, paths.complaint,
+      paths.firstLog, paths.secondLog]);
+    assert.equal(verified.status, 0, verified.stderr);
+    assert.match(verified.stdout, /FORK COMPLAINT VERIFIED/);
+    assert.notEqual(run(['complain-fork', paths.witnessTrust, 'public-monitor', paths.monitorKey,
+      paths.complaint, paths.firstLog, paths.secondLog]).status, 0, 'complaint output must not be overwritten');
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
 });
 
 test('witness CLI persists and verifies an opening plus bound cast-history observation', () => {
