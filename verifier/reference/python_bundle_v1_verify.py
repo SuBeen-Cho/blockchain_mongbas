@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """Independent Python/OpenSSL verifier for canonical Mongbas scalar-v1 bundles."""
-import base64, hashlib, json, os, re, subprocess, sys, tempfile
+import base64, hashlib, json, os, re, stat, subprocess, sys, tempfile
 
 P_HEX = ''.join(('FFFFFFFFFFFFFFFFC90FDAA22168C234C4C6628B80DC1CD1','29024E088A67CC74020BBEA63B139B22514A08798E3404DD','EF9519B3CD3A431B302B0A6DF25F14374FE1356D6D51C245','E485B576625E7EC6F44C42E9A637ED6B0BFF5CB6F406B7ED','EE386BFB5A899FA5AE9F24117C4B1FE649286651ECE45B3D','C2007CB8A163BF0598DA48361C55D39A69163FA8FD24CF5F','83655D23DCA3AD961C62F356208552BB9ED529077096966D','670C354E4ABC9804F1746C08CA18217C32905E462E36CE3B','E39E772C180E86039B2783A2EC07A28FB5C55DF06F4C52C9','DE2BCBF6955817183995497CEA956AE515D2261898FA0510','15728E5A8AACAA68FFFFFFFFFFFFFFFF')).lower()
 P, G, BASE = int(P_HEX, 16), 2, 10000
 Q = (P - 1) // 2
 HEX, HASH = re.compile(r'^(0|[1-9a-f][0-9a-f]*)$'), re.compile(r'^[0-9a-f]{64}$')
+MAX_BUNDLE_BYTES = 256 * 1024 * 1024
 
 def fail(message): raise ValueError(message)
 def exact(value, keys, label):
@@ -38,6 +39,19 @@ def b64(value, label):
     except Exception: fail(f'{label}: invalid base64')
     if not value or base64.b64encode(decoded).decode() != value: fail(f'{label}: non-canonical base64')
     return decoded
+def read_bounded_regular(path,label='election bundle',maximum=MAX_BUNDLE_BYTES):
+    before=os.lstat(path)
+    if not stat.S_ISREG(before.st_mode): fail(f'{label} must be a regular non-symlink file')
+    if before.st_size>maximum: fail(f'{label} exceeds {maximum} bytes')
+    descriptor=os.open(path,os.O_RDONLY | getattr(os,'O_NOFOLLOW',0))
+    try:
+        opened=os.fstat(descriptor)
+        if not stat.S_ISREG(opened.st_mode) or (opened.st_dev,opened.st_ino)!=(before.st_dev,before.st_ino): fail(f'{label} changed before safe open')
+        if opened.st_size>maximum: fail(f'{label} exceeds {maximum} bytes')
+        with os.fdopen(descriptor,'rb',closefd=False) as source: data=source.read(maximum+1)
+        if len(data)>maximum: fail(f'{label} grew while being read or exceeds {maximum} bytes')
+        return data
+    finally: os.close(descriptor)
 
 def ballot_leaf(ballot):
     return digest(canonical({'candidateCommitment':ballot['candidateCommitment'],'ciphertext':ballot['ciphertext'],'nullifierHash':ballot['nullifierHash'],'validityProof':ballot['validityProof']}))
@@ -144,7 +158,7 @@ def main():
     if len(sys.argv)!=2:
         print('usage: python_bundle_v1_verify.py BUNDLE',file=sys.stderr); return 2
     try:
-        with open(sys.argv[1],'rb') as source: text=source.read().decode('utf-8')
+        text=read_bounded_regular(sys.argv[1]).decode('utf-8')
         bundle=json.loads(text)
         if text.strip()!=canonical(bundle): fail('bundle serialization is not canonical')
         print(json.dumps(verify(bundle),sort_keys=True,separators=(',',':'))); return 0

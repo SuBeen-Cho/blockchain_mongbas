@@ -2,9 +2,9 @@
 
 'use strict';
 
-const fs = require('node:fs');
 const path = require('node:path');
 const { verifyBundleBytes } = require('../src/verify');
+const { MAX_BUNDLE_BYTES, readBoundedRegularFile } = require('../src/input');
 
 function fail(message, details = []) {
   console.error(`INVALID: ${message}`);
@@ -20,7 +20,7 @@ if (args.length !== 1 || args[0] === '--help' || args[0] === '-h') {
 
 try {
   const file = path.resolve(args[0]);
-  const result = verifyBundleBytes(fs.readFileSync(file));
+  const result = verifyBundleBytes(readBoundedRegularFile(file, 'election bundle', MAX_BUNDLE_BYTES));
   if (!result.valid) {
     fail(result.summary, result.errors);
   } else {

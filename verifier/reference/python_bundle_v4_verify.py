@@ -161,7 +161,7 @@ def verify(bundle, skip_signatures=False):
 def main():
     if len(sys.argv)!=2: print('usage: python_bundle_v4_verify.py BUNDLE',file=sys.stderr); return 2
     try:
-        with open(sys.argv[1],'rb') as source: text=source.read().decode(); bundle=json.loads(text)
+        text=core.read_bounded_regular(sys.argv[1]).decode(); bundle=json.loads(text)
         if text.strip()!=core.canonical(bundle): core.fail('bundle serialization is not canonical')
         print(json.dumps(verify(bundle),sort_keys=True,separators=(',',':'))); return 0
     except Exception as error: print(f'invalid: {error}',file=sys.stderr); return 1

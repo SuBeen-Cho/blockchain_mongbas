@@ -12,6 +12,7 @@ const {
   canonicalize, merkleRoot, modInverse, modPow, sha256Hex, unsignedBundle, verifyBundle, verifyBundleBytes,
 } = require('../src/verify');
 const { buildUnsignedBundle, signBundle } = require('../src/bundle');
+const { readBoundedRegularFile } = require('../src/input');
 const { CHECKPOINT_SCHEMA, CHECKPOINT_V2_SCHEMA, TRUST_SCHEMA, checkpointHash, compareCheckpointLogs,
   compareIndependentWitnessLogs, createCheckpoint,
   createHistoryCheckpoint, parseCanonicalLog, publicKeyDer, verifyCheckpointLog } = require('../src/witness');
@@ -255,6 +256,40 @@ test('rejects non-canonical JSON bytes', () => {
   const result = verifyBundleBytes(Buffer.from(JSON.stringify(buildBundle(), null, 2)));
   assert.equal(result.valid, false);
   assert.match(result.summary, /not canonical/);
+});
+
+test('bounded input reader rejects symlinks and oversized files before parsing', () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'mongbas-bounded-input-'));
+  try {
+    const regular = path.join(directory, 'regular.json');
+    const oversized = path.join(directory, 'oversized.json');
+    const link = path.join(directory, 'link.json');
+    fs.writeFileSync(regular, '{}');
+    fs.writeFileSync(oversized, '');
+    fs.truncateSync(oversized, 65);
+    fs.symlinkSync(regular, link);
+    assert.equal(readBoundedRegularFile(regular, 'fixture', 64, { encoding: 'utf8' }), '{}');
+    assert.throws(() => readBoundedRegularFile(oversized, 'fixture', 64), /exceeds 64 bytes/);
+    assert.throws(() => readBoundedRegularFile(link, 'fixture', 64), /regular non-symlink/);
+    const python = spawnSync('python3', ['-c', [
+      'import sys',
+      'sys.path.insert(0, sys.argv[1])',
+      'import python_bundle_v1_verify as verifier',
+      'for filename in sys.argv[2:]:',
+      '  try:',
+      "    verifier.read_bounded_regular(filename, 'fixture', 64)",
+      '    raise SystemExit(3)',
+      '  except ValueError as error:',
+      '    print(error)',
+    ].join('\n'), path.join(__dirname, '../reference'), oversized, link], {
+      encoding: 'utf8', env: { ...process.env, PYTHONDONTWRITEBYTECODE: '1' },
+    });
+    assert.equal(python.status, 0, python.stderr);
+    assert.match(python.stdout, /exceeds 64 bytes/);
+    assert.match(python.stdout, /regular non-symlink/);
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
 });
 
 const envelopeMutations = {
