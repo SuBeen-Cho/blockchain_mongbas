@@ -20,7 +20,19 @@ const grpc    = require('@grpc/grpc-js');
 const { connect, signers } = require('@hyperledger/fabric-gateway');
 
 // ── 경로 설정 ──────────────────────────────────────────────────
-const NETWORK_DIR  = path.resolve(__dirname, '../../network');
+function resolveNetworkDir(env = process.env) {
+  const configured = String(env.FABRIC_NETWORK_DIR || '').trim();
+  if (!configured) return path.resolve(__dirname, '../../network');
+  if (!path.isAbsolute(configured)) {
+    throw new Error('FABRIC_NETWORK_DIR must be an absolute path.');
+  }
+  return path.normalize(configured);
+}
+
+// A deployment checkout can be immutable and contain no generated Fabric
+// credentials. In that case the protected runtime supplies their network root
+// explicitly instead of requiring symlinks inside the Git worktree.
+const NETWORK_DIR  = resolveNetworkDir();
 const CRYPTO_DIR   = path.join(NETWORK_DIR, 'crypto-config/peerOrganizations/ec.voting.example.com');
 
 // peer0 TLS CA 인증서 (gRPC TLS 연결용)
@@ -247,5 +259,5 @@ async function connectGatewayForShareIndex(shareIndex) {
   return connectGatewayForOrg(mspId);
 }
 
-module.exports = { bindClientLifecycle, grpcMaxMessageBytes, grpcClientOptions, connectGateway, connectGatewayAsVoter,
+module.exports = { bindClientLifecycle, grpcMaxMessageBytes, grpcClientOptions, resolveNetworkDir, connectGateway, connectGatewayAsVoter,
   connectGatewayForOrg, connectGatewayForShareIndex };

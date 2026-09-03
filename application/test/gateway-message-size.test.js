@@ -2,7 +2,14 @@
 
 const assert = require('node:assert/strict');
 const test = require('node:test');
-const { grpcMaxMessageBytes, grpcClientOptions } = require('../src/gateway');
+const path = require('node:path');
+const { grpcMaxMessageBytes, grpcClientOptions, resolveNetworkDir } = require('../src/gateway');
+
+test('Fabric network artifacts can be supplied from a protected absolute runtime path', () => {
+  assert.equal(resolveNetworkDir({ FABRIC_NETWORK_DIR: '/srv/mongbas/network' }),
+    path.normalize('/srv/mongbas/network'));
+  assert.throws(() => resolveNetworkDir({ FABRIC_NETWORK_DIR: '../network' }), /absolute path/);
+});
 
 test('Fabric gRPC message limit supports bounded large public evidence', () => {
   assert.equal(grpcMaxMessageBytes({}), 64 * 1024 * 1024);
