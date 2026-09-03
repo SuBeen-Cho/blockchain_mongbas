@@ -9,6 +9,7 @@ const { CHECKPOINT_SCHEMA, CHECKPOINT_V2_SCHEMA, CHECKPOINT_V3_SCHEMA, TRUST_SCH
   createHistoryCheckpoint, createOpeningCheckpoint, createCastHistoryCheckpoint,
   parseCanonicalLog, publicKeyDer, verifyCheckpointLog, verifyHistoryBinding } = require('../src/witness');
 const { verifyCastEventHistory } = require('../src/cast-event-history');
+const { createWitnessKeyTransition } = require('../src/witness-key-transition');
 
 const MAX_BUNDLE_BYTES = 256 * 1024 * 1024;
 const MAX_LOG_BYTES = 16 * 1024 * 1024;
@@ -73,6 +74,8 @@ function usage(exitCode = 2) {
   console.error('  mongbas-witness migrate-history <bundle.json> <checkpoint.jsonl> <witness-id> <ed25519-private.pem>');
   console.error('  mongbas-witness open-cast-history <election-id> <context-hash> <epoch-seconds> <checkpoint.jsonl> <witness-id> <ed25519-private.pem>');
   console.error('  mongbas-witness observe-cast-history <history.json> <bundle.json> <checkpoint.jsonl> <witness-id> <ed25519-private.pem>');
+  console.error('  mongbas-witness authorize-cast-history-key <checkpoint.jsonl> <old-private.pem> <new-private.pem> <trust-v2.json> <transition.json>');
+  console.error('  mongbas-witness observe-cast-history-rotated <history.json> <bundle.json> <checkpoint.jsonl> <witness-id> <new-private.pem> <trust-v2.json>');
   console.error('  mongbas-witness verify <checkpoint.jsonl> <witness-trust.json>');
   console.error('  mongbas-witness verify-bundle <bundle.json> <checkpoint.jsonl> <witness-trust.json> <sequence>');
   console.error('  mongbas-witness verify-cast-history <history.json> <checkpoint.jsonl> <witness-trust.json> <sequence>');
@@ -96,14 +99,15 @@ function openCastHistory(electionID, contextHash, epochText, logPath, witnessID,
   console.log(`checkpointHash=${checkpointHash(checkpoint)}`);
 }
 
-function observeCastHistory(historyPath, bundlePath, logPath, witnessID, keyPath) {
+function observeCastHistory(historyPath, bundlePath, logPath, witnessID, keyPath, trustPath = null) {
   const history = readHistory(historyPath);
   const bundleBytes = readBundle(bundlePath);
   const verification = verifyBundleBytes(bundleBytes);
   if (!verification.valid) throw new Error(`bundle rejected: ${verification.summary}: ${verification.errors.join('; ')}`);
   const bundle = JSON.parse(bundleBytes);
   const privateKeyPem = readPrivateKey(keyPath);
-  const trust = { schema: TRUST_SCHEMA, witnesses: [{ id: witnessID, ed25519PublicKeyDer: publicKeyDer(privateKeyPem) }] };
+  const trust = trustPath ? readTrust(trustPath) :
+    { schema: TRUST_SCHEMA, witnesses: [{ id: witnessID, ed25519PublicKeyDer: publicKeyDer(privateKeyPem) }] };
   let checkpoint;
   const resolvedLog = path.resolve(logPath);
   withLogLock(resolvedLog, () => {
@@ -112,13 +116,46 @@ function observeCastHistory(historyPath, bundlePath, logPath, witnessID, keyPath
     verifyCheckpointLog(existing, trust);
     const previous = existing.at(-1);
     if (previous.schema !== CHECKPOINT_V3_SCHEMA) throw new Error('cast-event observation cannot migrate a v1/v2 log implicitly');
+    const transition = trust.schema === 'mongbas-witness-trust/v2'
+      ? trust.witnesses.find(item => item.id === witnessID)?.transitions.find(item =>
+        item.effectiveSequence === previous.sequence + 1 && item.newPublicKeyDer === publicKeyDer(privateKeyPem))
+      : null;
     checkpoint = createCastHistoryCheckpoint({ history, bundle, verification, witnessID, privateKeyPem,
-      previousCheckpoint: previous });
+      previousCheckpoint: previous, keyTransition: transition || null });
     appendAndSync(resolvedLog, canonicalize(checkpoint));
   });
   console.log(`CAST HISTORY WITNESSED: electionID=${checkpoint.electionID} sequence=${checkpoint.sequence}`);
   console.log(`checkpointHash=${checkpointHash(checkpoint)}`);
   console.log(`historyArtifactHash=${checkpoint.historyArtifactHash}`);
+}
+
+function writeExclusivePrivateJSON(filePath, value, label) {
+  const resolved = path.resolve(filePath);
+  fs.mkdirSync(path.dirname(resolved), { recursive: true, mode: 0o700 });
+  const fd = fs.openSync(resolved, fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL | NOFOLLOW, 0o600);
+  try {
+    fs.writeSync(fd, `${canonicalize(value)}\n`);
+    fs.fsyncSync(fd);
+  } finally { fs.closeSync(fd); }
+  syncDirectory(path.dirname(resolved));
+  console.log(`${label}=${resolved}`);
+}
+
+function authorizeCastHistoryKey(logPath, oldKeyPath, newKeyPath, trustPath, transitionPath) {
+  if (fs.existsSync(path.resolve(trustPath)) || fs.existsSync(path.resolve(transitionPath))) {
+    throw new Error('refusing to overwrite trust or transition output');
+  }
+  const entries = parseCanonicalLog(readLog(logPath));
+  const previous = entries.at(-1);
+  if (previous?.schema !== CHECKPOINT_V3_SCHEMA) throw new Error('key rotation requires a checkpoint-v3 log');
+  const transition = createWitnessKeyTransition({ previousCheckpoint: previous,
+    oldPrivateKeyPem: readPrivateKey(oldKeyPath), newPrivateKeyPem: readPrivateKey(newKeyPath) });
+  const trust = { schema: 'mongbas-witness-trust/v2', witnesses: [{ id: previous.witnessID,
+    initialEd25519PublicKeyDer: entries[0].witnessPublicKeyDer, transitions: [transition] }] };
+  verifyCheckpointLog(entries, { schema: TRUST_SCHEMA, witnesses: [{ id: previous.witnessID,
+    ed25519PublicKeyDer: previous.witnessPublicKeyDer }] });
+  writeExclusivePrivateJSON(transitionPath, transition, 'transitionPath');
+  writeExclusivePrivateJSON(trustPath, trust, 'trustPath');
 }
 
 function initTrust(witnessID, keyPath, trustPath) {
@@ -307,6 +344,8 @@ try {
   else if (command === 'migrate-history' && args.length === 4) migrateHistory(path.resolve(args[0]), path.resolve(args[1]), args[2], path.resolve(args[3]));
   else if (command === 'open-cast-history' && args.length === 6) openCastHistory(args[0], args[1], args[2], path.resolve(args[3]), args[4], path.resolve(args[5]));
   else if (command === 'observe-cast-history' && args.length === 5) observeCastHistory(path.resolve(args[0]), path.resolve(args[1]), path.resolve(args[2]), args[3], path.resolve(args[4]));
+  else if (command === 'authorize-cast-history-key' && args.length === 5) authorizeCastHistoryKey(...args.map(value => path.resolve(value)));
+  else if (command === 'observe-cast-history-rotated' && args.length === 6) observeCastHistory(path.resolve(args[0]), path.resolve(args[1]), path.resolve(args[2]), args[3], path.resolve(args[4]), path.resolve(args[5]));
   else if (command === 'verify' && args.length === 2) verify(...args.map(value => path.resolve(value)));
   else if (command === 'verify-bundle' && args.length === 4) verifyBundleCheckpoint(path.resolve(args[0]), path.resolve(args[1]), path.resolve(args[2]), args[3]);
   else if (command === 'verify-cast-history' && args.length === 4) verifyCastHistoryCheckpoint(path.resolve(args[0]), path.resolve(args[1]), path.resolve(args[2]), args[3]);

@@ -13,11 +13,12 @@ const {
 } = require('../src/verify');
 const { buildUnsignedBundle, signBundle } = require('../src/bundle');
 const { readBoundedRegularFile } = require('../src/input');
-const { CHECKPOINT_SCHEMA, CHECKPOINT_V2_SCHEMA, CHECKPOINT_V3_SCHEMA, TRUST_SCHEMA, checkpointHash, compareCheckpointLogs,
+const { CHECKPOINT_SCHEMA, CHECKPOINT_V2_SCHEMA, CHECKPOINT_V3_SCHEMA, TRUST_SCHEMA, TRUST_V2_SCHEMA, checkpointHash, compareCheckpointLogs,
   compareIndependentWitnessLogs, createCheckpoint,
   createHistoryCheckpoint, createOpeningCheckpoint, createCastHistoryCheckpoint,
   parseCanonicalLog, publicKeyDer, verifyCheckpointLog } = require('../src/witness');
 const { createCastEventHistory } = require('../src/cast-event-history');
+const { createWitnessKeyTransition } = require('../src/witness-key-transition');
 const { generateVectorBallot } = require('../../application/src/lib/vectorElgamal');
 
 function scalar(label) {
@@ -865,6 +866,36 @@ test('checkpoint v3 starts from a signed empty opening and observes cast-event g
   const tooShort = createCastEventHistory({ contextHash, records: [castRecord(1)], epochSeconds: 300 });
   assert.throws(() => createCastHistoryCheckpoint({ history: tooShort, bundle, verification, witnessID: 'observer',
     privateKeyPem, previousCheckpoint: opening }), /fewer accepted events/);
+});
+
+test('checkpoint v3 accepts only a dual-signed sequence-bound witness key rotation', () => {
+  const bundle = buildBundle(), verification = verifyBundle(bundle), contextHash = 'ce'.repeat(32);
+  const oldPair = crypto.generateKeyPairSync('ed25519'), newPair = crypto.generateKeyPairSync('ed25519');
+  const oldPem = oldPair.privateKey.export({ format: 'pem', type: 'pkcs8' });
+  const newPem = newPair.privateKey.export({ format: 'pem', type: 'pkcs8' });
+  const opening = createOpeningCheckpoint({ electionID: verification.electionID, electionContextHash: contextHash,
+    witnessID: 'observer', privateKeyPem: oldPem, observedAt: '2026-09-04T00:00:00.000Z' });
+  const transition = createWitnessKeyTransition({ previousCheckpoint: opening, oldPrivateKeyPem: oldPem,
+    newPrivateKeyPem: newPem, authorizedAt: '2026-09-04T00:00:30.000Z' });
+  const records = [0, 1].map(index => ({ position: { blockNumber: 1, transactionIndex: index }, committedAt: 300 + index,
+    commitmentNonce: (index + 1).toString().repeat(64), receiptNonce: (index + 3).toString().repeat(64),
+    selectionKey: (index + 5).toString().repeat(64), ballotArtifact: { ciphertext: `opaque-${index}` } }));
+  const history = createCastEventHistory({ contextHash, records });
+  assert.throws(() => createCastHistoryCheckpoint({ history, bundle, verification, witnessID: 'observer',
+    privateKeyPem: newPem, previousCheckpoint: opening, observedAt: '2026-09-04T00:01:00.000Z' }), /without an authorized/);
+  const observation = createCastHistoryCheckpoint({ history, bundle, verification, witnessID: 'observer',
+    privateKeyPem: newPem, previousCheckpoint: opening, keyTransition: transition,
+    observedAt: '2026-09-04T00:01:00.000Z' });
+  const trust = { schema: TRUST_V2_SCHEMA, witnesses: [{ id: 'observer', initialEd25519PublicKeyDer: publicKeyDer(oldPem),
+    transitions: [transition] }] };
+  assert.equal(verifyCheckpointLog([opening, observation], trust).valid, true);
+
+  const missing = structuredClone(trust);
+  missing.witnesses[0].transitions = [];
+  assert.throws(() => verifyCheckpointLog([opening, observation], missing), /untrusted witness key/);
+  const wrongPredecessor = structuredClone(trust);
+  wrongPredecessor.witnesses[0].transitions[0].previousCheckpointHash = '0'.repeat(64);
+  assert.throws(() => verifyCheckpointLog([opening, observation], wrongPredecessor), /dual signature/);
 });
 
 test('independent v3 witnesses share the opening and detect a cast-history split view', () => {

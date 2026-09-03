@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mongbas.example/schema/witness-trust-v2.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "witnesses"],
+  "properties": {
+    "schema": { "const": "mongbas-witness-trust/v2" },
+    "witnesses": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "initialEd25519PublicKeyDer", "transitions"],
+        "properties": {
+          "id": { "type": "string", "pattern": "^[A-Za-z0-9_.-]{1,128}$" },
+          "initialEd25519PublicKeyDer": { "type": "string" },
+          "transitions": {
+            "type": "array",
+            "maxItems": 128,
+            "items": { "$ref": "witness-key-transition-v1.schema.json" }
+          }
+        }
+      }
+    }
+  }
+}

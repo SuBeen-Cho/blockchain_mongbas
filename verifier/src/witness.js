@@ -16,11 +16,13 @@ const {
   CAST_EVENT_TREE_ALGORITHM,
   verifyCastEventHistory,
 } = require('./cast-event-history');
+const { validateWitnessKeyTransition } = require('./witness-key-transition');
 
 const CHECKPOINT_SCHEMA = 'mongbas-bulletin-board-checkpoint/v1';
 const CHECKPOINT_V2_SCHEMA = 'mongbas-bulletin-board-checkpoint/v2';
 const CHECKPOINT_V3_SCHEMA = 'mongbas-bulletin-board-checkpoint/v3';
 const TRUST_SCHEMA = 'mongbas-witness-trust/v1';
+const TRUST_V2_SCHEMA = 'mongbas-witness-trust/v2';
 const CHECKPOINT_KEYS = ['schema', 'witnessID', 'witnessPublicKeyDer', 'sequence', 'previousCheckpointHash', 'observedAt',
   'electionID', 'bundleHash', 'bulletinBoardRoot', 'ballotCount', 'publishedAt', 'signature'];
 const CHECKPOINT_V2_KEYS = [...CHECKPOINT_KEYS.filter(key => key !== 'signature'), 'history', 'signature'];
@@ -148,6 +150,7 @@ function createOpeningCheckpoint({ electionID, electionContextHash, epochSeconds
 }
 
 function createCastHistoryCheckpoint({ history, bundle, verification, witnessID, privateKeyPem, previousCheckpoint,
+  keyTransition = null,
   observedAt = new Date().toISOString() }) {
   verifyCastEventHistory(history);
   assertVerificationMatchesBundle(bundle, verification);
@@ -167,9 +170,22 @@ function createCastHistoryCheckpoint({ history, bundle, verification, witnessID,
     bundleHash: verification.bundleHash, bulletinBoardRoot: bundle.bulletinBoard.root,
     ballotCount: verification.ballots, publishedAt: bundle.bulletinBoard.publishedAt, signature: '',
   };
-  if (checkpoint.witnessID !== previousCheckpoint.witnessID || checkpoint.witnessPublicKeyDer !== previousCheckpoint.witnessPublicKeyDer ||
+  if (checkpoint.witnessID !== previousCheckpoint.witnessID ||
       checkpoint.electionID !== previousCheckpoint.electionID || checkpoint.electionContextHash !== previousCheckpoint.electionContextHash ||
       checkpoint.epochSeconds !== previousCheckpoint.epochSeconds) throw new Error('v3 checkpoint identity or context changed');
+  if (checkpoint.witnessPublicKeyDer !== previousCheckpoint.witnessPublicKeyDer) {
+    if (!keyTransition) throw new Error('v3 witness key changed without an authorized transition');
+    validateWitnessKeyTransition(keyTransition, {
+      witnessID, electionID: checkpoint.electionID, electionContextHash: checkpoint.electionContextHash,
+      epochSeconds: checkpoint.epochSeconds, effectiveSequence: checkpoint.sequence,
+      previousCheckpointHash: checkpoint.previousCheckpointHash,
+      oldPublicKeyDer: previousCheckpoint.witnessPublicKeyDer,
+      newPublicKeyDer: checkpoint.witnessPublicKeyDer,
+    });
+    if (keyTransition.authorizedAt > checkpoint.observedAt) throw new Error('v3 witness key transition is not yet authorized');
+  } else if (keyTransition) {
+    throw new Error('v3 witness key transition supplied without a key change');
+  }
   if (checkpoint.observedAt < previousCheckpoint.observedAt ||
       (previousCheckpoint.kind === 'observation' && checkpoint.publishedAt < previousCheckpoint.publishedAt)) {
     throw new Error('v3 checkpoint timestamp rollback');
@@ -261,16 +277,53 @@ function createHistoryCheckpoint({ bundle, verification, witnessID, privateKeyPe
 
 function validateTrust(trust) {
   exactKeys(trust, ['schema', 'witnesses'], 'trust');
-  if (trust.schema !== TRUST_SCHEMA || !Array.isArray(trust.witnesses) || trust.witnesses.length === 0) throw new Error('invalid witness trust document');
+  if (![TRUST_SCHEMA, TRUST_V2_SCHEMA].includes(trust.schema) || !Array.isArray(trust.witnesses) || trust.witnesses.length === 0) {
+    throw new Error('invalid witness trust document');
+  }
   const result = new Map();
   trust.witnesses.forEach((witness, index) => {
-    exactKeys(witness, ['id', 'ed25519PublicKeyDer'], `trust.witnesses[${index}]`);
+    exactKeys(witness, trust.schema === TRUST_SCHEMA ? ['id', 'ed25519PublicKeyDer'] :
+      ['id', 'initialEd25519PublicKeyDer', 'transitions'], `trust.witnesses[${index}]`);
     if (!/^[A-Za-z0-9_.-]{1,128}$/.test(witness.id) || result.has(witness.id)) throw new Error('invalid or duplicate trusted witness id');
-    const key = crypto.createPublicKey({ key: canonicalBase64(witness.ed25519PublicKeyDer, `trust.witnesses[${index}].ed25519PublicKeyDer`), format: 'der', type: 'spki' });
+    const encoded = trust.schema === TRUST_SCHEMA ? witness.ed25519PublicKeyDer : witness.initialEd25519PublicKeyDer;
+    const key = crypto.createPublicKey({ key: canonicalBase64(encoded, `trust.witnesses[${index}].initial key`), format: 'der', type: 'spki' });
     if (key.asymmetricKeyType !== 'ed25519') throw new Error('trusted witness key must be Ed25519');
-    result.set(witness.id, { encoded: witness.ed25519PublicKeyDer, key });
+    const transitions = trust.schema === TRUST_SCHEMA ? [] : witness.transitions;
+    if (!Array.isArray(transitions) || transitions.length > 128) throw new Error('trusted witness transitions must be an array of at most 128 entries');
+    let currentKey = encoded;
+    let previousSequence = 1;
+    const transitionSequences = new Set();
+    transitions.forEach((transition, transitionIndex) => {
+      validateWitnessKeyTransition(transition, { witnessID: witness.id, oldPublicKeyDer: currentKey });
+      if (transition.effectiveSequence <= previousSequence) throw new Error('trusted witness transitions must have increasing sequence');
+      currentKey = transition.newPublicKeyDer;
+      previousSequence = transition.effectiveSequence;
+      if (transitionSequences.has(transition.effectiveSequence)) {
+        throw new Error('duplicate witness transition sequence');
+      }
+      transitionSequences.add(transition.effectiveSequence);
+    });
+    result.set(witness.id, { encoded, key, transitions, version: trust.schema });
   });
   return result;
+}
+
+function trustedV3Key(witness, checkpoint, previousHash) {
+  if (!witness) throw new Error('untrusted witness key');
+  let encoded = witness.encoded;
+  for (const transition of witness.transitions) {
+    if (transition.effectiveSequence > checkpoint.sequence) break;
+    if (transition.electionID !== checkpoint.electionID || transition.electionContextHash !== checkpoint.electionContextHash ||
+        transition.epochSeconds !== checkpoint.epochSeconds) throw new Error('witness transition context mismatch');
+    if (transition.effectiveSequence === checkpoint.sequence &&
+        (transition.previousCheckpointHash !== previousHash || transition.authorizedAt > checkpoint.observedAt)) {
+      throw new Error('witness transition predecessor or time mismatch');
+    }
+    encoded = transition.newPublicKeyDer;
+  }
+  if (encoded !== checkpoint.witnessPublicKeyDer) throw new Error('untrusted witness key for checkpoint sequence');
+  const key = crypto.createPublicKey({ key: canonicalBase64(encoded, 'trusted v3 witness key'), format: 'der', type: 'spki' });
+  return key;
 }
 
 function verifyV3CheckpointLog(lines, trust) {
@@ -288,9 +341,11 @@ function verifyV3CheckpointLog(lines, trust) {
     validateV3Identity(checkpoint, index);
     validateV3HistoryShape(checkpoint.history, index);
     const witness = trusted.get(checkpoint.witnessID);
-    if (!witness || witness.encoded !== checkpoint.witnessPublicKeyDer) throw new Error(`checkpoint[${index}]: untrusted witness key`);
+    let key;
+    try { key = trustedV3Key(witness, checkpoint, previousHash); }
+    catch (error) { throw new Error(`checkpoint[${index}]: ${error.message}`); }
     const signature = canonicalBase64(checkpoint.signature, `checkpoint[${index}].signature`);
-    if (!crypto.verify(null, Buffer.from(canonicalize(unsignedCheckpoint(checkpoint))), witness.key, signature)) {
+    if (!crypto.verify(null, Buffer.from(canonicalize(unsignedCheckpoint(checkpoint))), key, signature)) {
       throw new Error(`checkpoint[${index}]: invalid signature`);
     }
     if (index === 0) {
@@ -301,7 +356,7 @@ function verifyV3CheckpointLog(lines, trust) {
           checkpoint.history.consistencyPath.length !== 0) throw new Error('v3 log must begin with a valid empty opening checkpoint');
     } else {
       if (opening) throw new Error(`checkpoint[${index}]: opening checkpoint can only be first`);
-      if (checkpoint.witnessID !== previous.witnessID || checkpoint.witnessPublicKeyDer !== previous.witnessPublicKeyDer ||
+      if (checkpoint.witnessID !== previous.witnessID ||
           checkpoint.electionID !== previous.electionID || checkpoint.electionContextHash !== previous.electionContextHash ||
           checkpoint.epochSeconds !== previous.epochSeconds || checkpoint.observedAt < previous.observedAt) {
         throw new Error(`checkpoint[${index}]: v3 identity, context or timestamp changed`);
@@ -335,6 +390,7 @@ function verifyCheckpointLog(lines, trust) {
     return verifyV3CheckpointLog(lines, trust);
   }
   const trusted = validateTrust(trust);
+  if (trust.schema !== TRUST_SCHEMA) throw new Error('trust v2 key transitions are supported only for checkpoint v3 logs');
   if (!Array.isArray(lines) || lines.length === 0) throw new Error('checkpoint log is empty');
   let previousHash = null;
   let previous = null;
@@ -498,6 +554,7 @@ module.exports = {
   CHECKPOINT_V2_SCHEMA,
   CHECKPOINT_V3_SCHEMA,
   TRUST_SCHEMA,
+  TRUST_V2_SCHEMA,
   checkpointHash,
   compareCheckpointLogs,
   compareIndependentWitnessLogs,
