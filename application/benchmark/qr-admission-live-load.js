@@ -22,7 +22,8 @@ async function timedRequest(path, { admin = false, ...options } = {}) {
       ...(options.headers || {}) },
   });
   await response.arrayBuffer();
-  return { status: response.status, elapsedMs: Number(process.hrtime.bigint() - started) / 1e6 };
+  return { status: response.status, elapsedMs: Number(process.hrtime.bigint() - started) / 1e6,
+    rateRemaining: Number(response.headers.get('ratelimit-remaining')) };
 }
 
 async function jsonRequest(path, { admin = false, ...options } = {}) {
@@ -33,12 +34,17 @@ async function jsonRequest(path, { admin = false, ...options } = {}) {
       ...(options.headers || {}) },
   });
   const body = await response.json();
-  return { status: response.status, body, elapsedMs: Number(process.hrtime.bigint() - started) / 1e6 };
+  return { status: response.status, body, elapsedMs: Number(process.hrtime.bigint() - started) / 1e6,
+    rateRemaining: Number(response.headers.get('ratelimit-remaining')) };
 }
 
 function requireAll(label, rows, status) {
   const failures = rows.filter(row => row.status !== status);
-  if (failures.length) throw new Error(`${label}: ${failures.length}/${rows.length} requests did not return ${status}`);
+  if (failures.length) {
+    const histogram = Object.fromEntries([...new Set(rows.map(row => row.status))].sort().map(code =>
+      [code, rows.filter(row => row.status === code).length]));
+    throw new Error(`${label}: ${failures.length}/${rows.length} requests did not return ${status}; statuses=${JSON.stringify(histogram)}`);
+  }
 }
 
 function latencySummary(rows) {
@@ -48,7 +54,9 @@ function latencySummary(rows) {
 }
 
 async function main() {
-  if (!Number.isSafeInteger(clients) || clients < 2 || clients > 50) throw new Error('QR_LOAD_CLIENTS must be 2..50');
+  // Each client consumes issue+redeem capacity. Keep five requests of headroom
+  // below the configured 50-request credential window and replay one sample.
+  if (!Number.isSafeInteger(clients) || clients < 2 || clients > 22) throw new Error('QR_LOAD_CLIENTS must be 2..22');
   if (adminToken.length < 32) throw new Error('ADMIN_API_TOKEN is required');
   const now = Math.floor(Date.now() / 1000);
   const created = await timedRequest('/api/elections', { admin: true, method: 'POST', body: JSON.stringify({
@@ -74,15 +82,16 @@ async function main() {
   const redeemWallMs = Number(process.hrtime.bigint() - redeemStarted) / 1e6;
   requireAll('redeem', redeemed, 200);
 
-  const replayed = await Promise.all(issued.map(row => timedRequest('/api/credential/demo-admission/redeem', {
-    method: 'POST', body: JSON.stringify({ electionID, token: row.body.token }),
-  })));
+  const replayed = [await timedRequest('/api/credential/demo-admission/redeem', {
+    method: 'POST', body: JSON.stringify({ electionID, token: issued[0].body.token }),
+  })];
   requireAll('replay', replayed, 401);
 
   process.stdout.write(`${JSON.stringify({ schema: 'mongbas-qr-admission-load/v1', clients,
     issue: { successes: clients, throughputPerSecond: clients / (issueWallMs / 1000), ...latencySummary(issued) },
     redeem: { successes: clients, throughputPerSecond: clients / (redeemWallMs / 1000), ...latencySummary(redeemed) },
-    replay: { rejected: clients, ...latencySummary(replayed) } })}\n`);
+    replay: { rejected: replayed.length, ...latencySummary(replayed) },
+    requestAccounting: { credentialRequests: (clients * 2) + replayed.length, configuredWindowMaximum: 50 } })}\n`);
 }
 
 if (require.main === module) main().catch(error => {
