@@ -15,6 +15,10 @@ test('live QR E2E script keeps admission, credential and nullifier material out 
   assert.match(source, /credentialVerification/);
   assert.match(source, /E2E_REUSE_ELECTION/);
   assert.match(source, /E2E_REVOTE_SAME_CREDENTIAL/);
+  assert.match(source, /E2E_CREDENTIAL_SURRENDER_GAME/);
+  assert.match(source, /coercer-and-voter-sequentially-use-the-same-bearer-credential/);
+  assert.match(source, /serverDistinguishesCredentialHolder: false/);
+  assert.match(source, /credential surrender game requires E2E_REVOTE_SAME_CREDENTIAL=true/);
   assert.match(source, /same-credential replacement was not classified as a revote/);
   assert.match(source, /vote\.revoted === true/);
   assert.match(source, /initialCount \+ 1/);

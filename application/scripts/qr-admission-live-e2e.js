@@ -9,6 +9,7 @@ const adminToken = process.env.ADMIN_API_TOKEN || '';
 const electionID = process.env.E2E_ELECTION_ID || `QR_LIVE_${new Date().toISOString().replace(/[-:.TZ]/g, '')}`;
 const reuseElection = process.env.E2E_REUSE_ELECTION === 'true';
 const revoteSameCredential = process.env.E2E_REVOTE_SAME_CREDENTIAL === 'true';
+const credentialSurrenderGame = process.env.E2E_CREDENTIAL_SURRENDER_GAME === 'true';
 const candidates = ['ALPHA', 'BRAVO', 'CHARLIE'];
 
 function sha256(value) {
@@ -40,6 +41,9 @@ function requireStatus(label, result, expected) {
 
 async function main() {
   if (adminToken.length < 32) throw new Error('ADMIN_API_TOKEN is required');
+  if (credentialSurrenderGame && !revoteSameCredential) {
+    throw new Error('credential surrender game requires E2E_REVOTE_SAME_CREDENTIAL=true');
+  }
   const health = requireStatus('health', await request('/health'), 200);
   if (health.demo?.endpointsEnabled !== true || health.demo?.admissionRequired !== true ||
       health.benchmark?.rateLimitsDisabled !== false) {
@@ -142,6 +146,13 @@ async function main() {
       firstRedemption: 200, replay: 401 }, cast: { prepared: true, committed: true,
       isRevote: Boolean(cast.isRevote), replacementCommitted: Boolean(revote),
       replacementEvictCount: revote?.evictCount ?? 0, credentialVerification: ledgerLookup.credVerifyLevel },
+    credentialSurrenderGame: credentialSurrenderGame ? {
+      model: 'coercer-and-voter-sequentially-use-the-same-bearer-credential',
+      coercerCastAccepted: true,
+      voterCounterStrategyRevoteAccepted: Boolean(revote),
+      serverDistinguishesCredentialHolder: false,
+      verdict: 'credential-possession-allows-cast; revote-is-observable-under-exclusive-window',
+    } : null,
     dashboard: { totalVotes: liveCount.totalVotes, encryptedRows: liveVotes.votes.length,
       replacementRowMarked: revoteSameCredential, verificationEvent: true } }, null, 2)}\n`);
 }
