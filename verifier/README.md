@@ -71,6 +71,21 @@ node bin/mongbas-witness.js observe-cast-history cast-history.json election-bund
 node bin/mongbas-witness.js verify-cast-history cast-history.json cast-checkpoints.jsonl witness-trust.json 2
 ```
 
+An explicit forced-abstention counterexample evaluator accepts only a fully
+verified checkpoint-v3 log and pinned witness trust. The caller must declare the
+narrow adversary model in which no voter other than the target can append an
+event during the opening-to-closing observation window:
+
+```bash
+node bin/mongbas-forced-abstention.js cast-checkpoints.jsonl witness-trust.json --exclusive-target-window
+```
+
+For a valid log the command emits a bounded JSON evaluation and exits `1` to
+represent a failed security property under that declared model. Invalid input
+exits `2`. A positive tree-size delta does not identify a target in a multi-voter
+or cover-traffic window, and this evaluator is not evidence of a general voter
+identity linkage attack.
+
 For a deployed history-enabled chaincode, export an explicitly bounded Fabric
 block range and then build the public history plus its separately protected
 private selection manifest:

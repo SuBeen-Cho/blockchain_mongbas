@@ -10,7 +10,8 @@
     "mongbas-tamper-corpus": "bin/mongbas-tamper-corpus.js",
     "mongbas-witness": "bin/mongbas-witness.js",
     "mongbas-cast-history": "bin/mongbas-cast-history.js",
-    "mongbas-c2sp": "bin/mongbas-c2sp.js"
+    "mongbas-c2sp": "bin/mongbas-c2sp.js",
+    "mongbas-forced-abstention": "bin/mongbas-forced-abstention.js"
   },
   "scripts": {
     "test": "node --test"
