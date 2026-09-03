@@ -279,7 +279,7 @@ services:
     volumes:
       - couchdb-ec0:/opt/couchdb/data
     ports:
-      - "5984:5984"   # peer0.ec
+      - "127.0.0.1:5984:5984"   # peer0.ec; never expose PDC state off-host
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://localhost:5984/_up"]
       interval: 10s
@@ -298,7 +298,7 @@ services:
     volumes:
       - couchdb-ec1:/opt/couchdb/data
     ports:
-      - "5985:5984"   # peer1.ec
+      - "127.0.0.1:5985:5984"   # peer1.ec; never expose PDC state off-host
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://localhost:5984/_up"]
       interval: 10s
@@ -317,7 +317,7 @@ services:
     volumes:
       - couchdb-party:/opt/couchdb/data
     ports:
-      - "6984:5984"   # peer0.party
+      - "127.0.0.1:6984:5984"   # peer0.party; never expose PDC state off-host
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://localhost:5984/_up"]
       interval: 10s
@@ -336,7 +336,7 @@ services:
     volumes:
       - couchdb-civil:/opt/couchdb/data
     ports:
-      - "7984:5984"   # peer0.civil
+      - "127.0.0.1:7984:5984"   # peer0.civil; never expose PDC state off-host
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://localhost:5984/_up"]
       interval: 10s

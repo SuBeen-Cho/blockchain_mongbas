@@ -1988,7 +1988,8 @@ func (c *VotingContract) castVoteInternal(
 
 	// [PAPER-12] Deniable Credential Duality — credentialType 처리
 	// transient "credentialType" 키로 전달: "panic" 이면 강압 투표, 그 외 "real" (기본)
-	// PDC에만 저장되어 공개 원장에서는 구별 불가 (untappable channel = PDC gossip)
+	// PDC에만 저장되어 공개 원장에서는 구별되지 않는다. PDC 권한 peer와
+	// host/DB operator는 평문을 읽을 수 있으므로 untappable channel은 아니다.
 	if ctBytes, ok := transient["credentialType"]; ok {
 		ct := strings.TrimSpace(string(ctBytes))
 		if ct == "panic" {
