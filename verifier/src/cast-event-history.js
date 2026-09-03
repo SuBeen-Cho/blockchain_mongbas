@@ -5,6 +5,7 @@ const { canonicalize } = require('./verify');
 const { createConsistencyProof, merkleTreeHash, verifyConsistencyProof } = require('./history');
 
 const CAST_EVENT_SCHEMA = 'mongbas-cast-event/v1';
+const CAST_EVENT_CONTEXT_SCHEMA = 'mongbas-cast-event-election-context/v1';
 const CAST_EVENT_HISTORY_SCHEMA = 'mongbas-cast-event-history/v1';
 const CAST_EVENT_COMMITMENT_SCHEMA = 'mongbas-private-cast-event-commitment/v1';
 const CAST_RECEIPT_SCHEMA = 'mongbas-cast-event-receipt/v1';
@@ -38,6 +39,35 @@ function requireHash(value, label) {
 function requireNonNegativeInteger(value, label) {
   if (!Number.isSafeInteger(value) || value < 0) throw new Error(`${label}: expected non-negative safe integer`);
   return value;
+}
+
+function deriveCastEventContextHash(election) {
+  if (!election || typeof election !== 'object' || Array.isArray(election)) throw new Error('election context: expected object');
+  if (typeof election.electionID !== 'string' || !/^[A-Za-z0-9_-]{1,128}$/.test(election.electionID) ||
+      !['aes', 'elgamal', 'elgamal-vector-v3'].includes(election.encryptionMode) ||
+      !Array.isArray(election.candidates) || election.candidates.length < 2 ||
+      election.candidates.some(value => typeof value !== 'string' || value.length < 1 || value.length > 256) ||
+      new Set(election.candidates).size !== election.candidates.length ||
+      !Number.isSafeInteger(election.startTime) || !Number.isSafeInteger(election.endTime) || election.endTime <= election.startTime ||
+      typeof election.blindingFactor !== 'string' || !HASH_RE.test(election.blindingFactor)) {
+    throw new Error('election context: invalid election configuration');
+  }
+  const elgamal = election.encryptionMode === 'aes' ? null : election.elgamalPubKey;
+  if (election.encryptionMode !== 'aes' && (!elgamal || typeof elgamal !== 'object' || Array.isArray(elgamal))) {
+    throw new Error('election context: ElGamal public key is required');
+  }
+  const context = {
+    schema: CAST_EVENT_CONTEXT_SCHEMA,
+    electionID: election.electionID,
+    encryptionMode: election.encryptionMode,
+    candidates: structuredClone(election.candidates),
+    startTime: election.startTime,
+    endTime: election.endTime,
+    blindingFactor: election.blindingFactor,
+    elgamalPubKey: elgamal ? structuredClone(elgamal) : null,
+    thresholdPublicShares: election.thresholdPublicShares == null ? null : structuredClone(election.thresholdPublicShares),
+  };
+  return sha256(Buffer.from(canonicalize(context), 'utf8'));
 }
 
 function unsignedEvent(event) {
@@ -251,6 +281,7 @@ function verifyCastEventHistory(history, previousHistory = null) {
 }
 
 module.exports = {
+  CAST_EVENT_CONTEXT_SCHEMA,
   CAST_EVENT_COMMITMENT_SCHEMA,
   CAST_EVENT_HISTORY_SCHEMA,
   CAST_EVENT_LEAF_ALGORITHM,
@@ -260,6 +291,7 @@ module.exports = {
   PRIVATE_SELECTION_SCHEMA,
   createCastEventHistory,
   createPrivateSelectionManifest,
+  deriveCastEventContextHash,
   verifyCastEventHistory,
   verifyPrivateSelectionManifest,
 };

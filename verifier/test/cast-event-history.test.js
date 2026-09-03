@@ -5,9 +5,27 @@ const test = require('node:test');
 const {
   createCastEventHistory,
   createPrivateSelectionManifest,
+  deriveCastEventContextHash,
   verifyCastEventHistory,
   verifyPrivateSelectionManifest,
 } = require('../src/cast-event-history');
+
+test('cast-event context binds immutable election configuration and rejects missing public key', () => {
+  const election = { electionID: 'election-a', encryptionMode: 'elgamal-vector-v3', candidates: ['A', 'B'],
+    startTime: 10, endTime: 20, blindingFactor: 'a'.repeat(64),
+    elgamalPubKey: { p: '11', g: '2', y: '8' }, thresholdPublicShares: [{ index: 1, value: '4' }] };
+  const baseline = deriveCastEventContextHash(election);
+  assert.match(baseline, /^[0-9a-f]{64}$/);
+  for (const mutation of [
+    { ...election, electionID: 'election-b' },
+    { ...election, candidates: ['B', 'A'] },
+    { ...election, endTime: 21 },
+    { ...election, blindingFactor: 'b'.repeat(64) },
+    { ...election, elgamalPubKey: { ...election.elgamalPubKey, y: '9' } },
+    { ...election, thresholdPublicShares: [{ index: 1, value: '5' }] },
+  ]) assert.notEqual(deriveCastEventContextHash(mutation), baseline);
+  assert.throws(() => deriveCastEventContextHash({ ...election, elgamalPubKey: null }), /public key/);
+});
 
 const contextHash = 'ab'.repeat(32);
 const hex = value => value.toString(16).padStart(64, '0');
