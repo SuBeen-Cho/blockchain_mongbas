@@ -3,6 +3,7 @@
 
 const fs = require('node:fs');
 const path = require('node:path');
+const { MAX_BUNDLE_BYTES, readBoundedRegularFile } = require('../src/input');
 const { canonicalize } = require('../src/verify');
 
 const [input, outputDirectory] = process.argv.slice(2);
@@ -12,9 +13,9 @@ if (!input || !outputDirectory) {
 }
 
 try {
-  const bundle = JSON.parse(fs.readFileSync(path.resolve(input), 'utf8'));
+  const bundle = JSON.parse(readBoundedRegularFile(path.resolve(input), 'bundle input', MAX_BUNDLE_BYTES, { encoding: 'utf8' }));
   if (!['mongbas-election-bundle/v4', 'mongbas-election-bundle/v5'].includes(bundle.schema) || bundle.ballots?.length < 2) {
-    throw new Error('a vector-v3 bundle with at least two ballots is required');
+    throw new Error('a vector-v4 or vector-v5 bundle with at least two ballots is required');
   }
   const mutations = {
     'ballot-deleted': value => { value.ballots.pop(); },

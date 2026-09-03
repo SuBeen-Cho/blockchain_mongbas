@@ -86,11 +86,13 @@ log, bundle, consistency proof or election cryptosystem, so it is not a complete
 second Mongbas verifier. Development cross-checks require Python 3 and OpenSSL;
 normal verifier runtime commands continue to require only Node.js built-ins.
 
-The standalone Node CLI and all Python references accept only regular,
-non-symlink bundle files and cap input at 256 MiB before parsing or modular
+The standalone Node verifier, bundle builder/signer, tamper-corpus CLI, and all
+Python references accept only regular, non-symlink bundle files and cap input
+at 256 MiB before parsing or modular
 arithmetic. The limit accommodates the evaluated 10,000-ballot sizing model;
 larger artifacts require a separately designed streaming verifier rather than
-raising the bound without a resource preflight.
+raising the bound without a resource preflight. The bundle signer separately
+caps Ed25519 private-key files at 64 KiB.
 
 `reference/python_bundle_v1_verify.py` independently verifies the complete
 legacy scalar-v1 path with Python and the system OpenSSL Ed25519 implementation:

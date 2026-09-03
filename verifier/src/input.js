@@ -3,6 +3,7 @@
 const fs = require('node:fs');
 
 const MAX_BUNDLE_BYTES = 256 * 1024 * 1024;
+const MAX_PRIVATE_KEY_BYTES = 64 * 1024;
 
 function readBoundedRegularFile(filePath, label, maximumBytes, { encoding } = {}) {
   if (!Number.isSafeInteger(maximumBytes) || maximumBytes < 0) throw new Error('maximumBytes must be a non-negative safe integer');
@@ -31,4 +32,4 @@ function readBoundedRegularFile(filePath, label, maximumBytes, { encoding } = {}
   }
 }
 
-module.exports = { MAX_BUNDLE_BYTES, readBoundedRegularFile };
+module.exports = { MAX_BUNDLE_BYTES, MAX_PRIVATE_KEY_BYTES, readBoundedRegularFile };

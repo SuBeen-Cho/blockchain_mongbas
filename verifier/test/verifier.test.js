@@ -292,6 +292,35 @@ test('bounded input reader rejects symlinks and oversized files before parsing',
   }
 });
 
+test('bundle and tamper-corpus CLIs enforce bounded non-symlink inputs', () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'mongbas-cli-bounds-'));
+  try {
+    const bundle = path.join(directory, 'bundle.json');
+    const link = path.join(directory, 'bundle-link.json');
+    const oversizedKey = path.join(directory, 'oversized-key.pem');
+    fs.writeFileSync(bundle, canonicalize(buildBundle()));
+    fs.symlinkSync(bundle, link);
+    fs.writeFileSync(oversizedKey, '');
+    fs.truncateSync(oversizedKey, 64 * 1024 + 1);
+
+    const bundleCli = path.join(__dirname, '../bin/mongbas-bundle.js');
+    const build = spawnSync(process.execPath, [bundleCli, 'build', link, path.join(directory, 'built.json')], { encoding: 'utf8' });
+    assert.equal(build.status, 1);
+    assert.match(build.stderr, /bundle source must be a regular non-symlink file/);
+
+    const sign = spawnSync(process.execPath, [bundleCli, 'sign', bundle, 'ec', oversizedKey, path.join(directory, 'signed.json')], { encoding: 'utf8' });
+    assert.equal(sign.status, 1);
+    assert.match(sign.stderr, /private key exceeds 65536 bytes/);
+
+    const tamper = spawnSync(process.execPath, [path.join(__dirname, '../bin/mongbas-tamper-corpus.js'), link,
+      path.join(directory, 'corpus')], { encoding: 'utf8' });
+    assert.equal(tamper.status, 1);
+    assert.match(tamper.stderr, /bundle input must be a regular non-symlink file/);
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
 const envelopeMutations = {
   'canonicalization downgrade': (bundle) => { bundle.algorithms.canonicalization = 'json'; },
   'hash downgrade': (bundle) => { bundle.algorithms.hash = 'sha-1'; },
