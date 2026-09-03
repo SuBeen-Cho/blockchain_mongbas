@@ -339,12 +339,15 @@ function verifyBundleCheckpoint(bundlePath, logPath, trustPath, sequenceText) {
   verifyCheckpointLog(entries, trust);
   const checkpoint = entries[sequence - 1];
   if (!checkpoint || checkpoint.sequence !== sequence) throw new Error('checkpoint sequence not found');
-  if (checkpoint.schema !== CHECKPOINT_V2_SCHEMA) throw new Error('checkpoint has no v2 history binding');
+  if (checkpoint.schema !== CHECKPOINT_V2_SCHEMA &&
+      !(checkpoint.schema === CHECKPOINT_V3_SCHEMA && checkpoint.kind === 'observation')) {
+    throw new Error('checkpoint has no bundle observation binding');
+  }
   if (checkpoint.bundleHash !== bundleVerification.bundleHash || checkpoint.electionID !== bundleVerification.electionID ||
       checkpoint.ballotCount !== bundleVerification.ballots || checkpoint.bulletinBoardRoot !== bundle.bulletinBoard.root) {
     throw new Error('bundle does not match checkpoint metadata');
   }
-  verifyHistoryBinding(bundle, checkpoint.history);
+  if (checkpoint.schema === CHECKPOINT_V2_SCHEMA) verifyHistoryBinding(bundle, checkpoint.history);
   console.log(`BUNDLE BOUND: sequence=${sequence} bundleHash=${bundleVerification.bundleHash}`);
 }
 

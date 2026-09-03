@@ -969,6 +969,9 @@ test('witness CLI persists and verifies an opening plus bound cast-history obser
     const verified = run(['verify-cast-history', historyPath, logPath, trustPath, '2']);
     assert.equal(verified.status, 0, verified.stderr);
     assert.match(verified.stdout, /CAST HISTORY BOUND/);
+    const bundleBound = run(['verify-bundle', bundlePath, logPath, trustPath, '2']);
+    assert.equal(bundleBound.status, 0, bundleBound.stderr);
+    assert.match(bundleBound.stdout, /BUNDLE BOUND: sequence=2/);
     assert.deepEqual(parseCanonicalLog(fs.readFileSync(logPath, 'utf8')).map(entry => entry.kind), ['opening', 'observation']);
   } finally {
     fs.rmSync(directory, { recursive: true, force: true });
