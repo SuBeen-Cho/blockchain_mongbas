@@ -12,7 +12,8 @@ const {
   canonicalize, merkleRoot, modInverse, modPow, sha256Hex, unsignedBundle, verifyBundle, verifyBundleBytes,
 } = require('../src/verify');
 const { buildUnsignedBundle, signBundle } = require('../src/bundle');
-const { CHECKPOINT_SCHEMA, CHECKPOINT_V2_SCHEMA, TRUST_SCHEMA, checkpointHash, compareCheckpointLogs, createCheckpoint,
+const { CHECKPOINT_SCHEMA, CHECKPOINT_V2_SCHEMA, TRUST_SCHEMA, checkpointHash, compareCheckpointLogs,
+  compareIndependentWitnessLogs, createCheckpoint,
   createHistoryCheckpoint, parseCanonicalLog, publicKeyDer, verifyCheckpointLog } = require('../src/witness');
 const { generateVectorBallot } = require('../../application/src/lib/vectorElgamal');
 
@@ -624,6 +625,43 @@ test('witness gossip accepts a consistent prefix and rejects two valid signed fo
     valid: true, witnessID: 'observer', logs: 2, checkpoints: 2, latestCheckpointHash: checkpointHash(second),
   });
   assert.throws(() => compareCheckpointLogs([[first, second], [first, fork]], trust), /equivocation at sequence 2/);
+});
+
+test('independent witnesses agree on shared history snapshots and reject split views', () => {
+  const organizationKeys = [crypto.generateKeyPairSync('ed25519'), crypto.generateKeyPairSync('ed25519')];
+  const firstBundle = buildBundle([0, 1], organizationKeys);
+  const secondBundle = buildBundle([0, 1, 0], organizationKeys);
+  const forkBundle = buildBundle([1, 0], organizationKeys);
+  const mac = crypto.generateKeyPairSync('ed25519');
+  const linux = crypto.generateKeyPairSync('ed25519');
+  const macPem = mac.privateKey.export({ format: 'pem', type: 'pkcs8' });
+  const linuxPem = linux.privateKey.export({ format: 'pem', type: 'pkcs8' });
+  const trust = { schema: TRUST_SCHEMA, witnesses: [
+    { id: 'mac-observer', ed25519PublicKeyDer: publicKeyDer(macPem) },
+    { id: 'linux-observer', ed25519PublicKeyDer: publicKeyDer(linuxPem) },
+  ] };
+  const macFirst = createHistoryCheckpoint({ bundle: firstBundle, verification: verifyBundle(firstBundle),
+    witnessID: 'mac-observer', privateKeyPem: macPem, observedAt: '2026-09-03T00:00:00.000Z' });
+  const macSecond = createHistoryCheckpoint({ bundle: secondBundle, verification: verifyBundle(secondBundle),
+    witnessID: 'mac-observer', privateKeyPem: macPem, previousCheckpoint: macFirst,
+    observedAt: '2026-09-03T00:01:00.000Z' });
+  const linuxFirst = createHistoryCheckpoint({ bundle: firstBundle, verification: verifyBundle(firstBundle),
+    witnessID: 'linux-observer', privateKeyPem: linuxPem, observedAt: '2026-09-03T00:00:30.000Z' });
+
+  assert.deepEqual(compareIndependentWitnessLogs([[macFirst, macSecond], [linuxFirst]], trust), {
+    valid: true, witnessIDs: ['linux-observer', 'mac-observer'], logs: 2,
+    sharedSnapshots: 1, sharedTreeSizes: [2], largestTreeSize: 3,
+  });
+
+  const linuxFork = createHistoryCheckpoint({ bundle: forkBundle, verification: verifyBundle(forkBundle),
+    witnessID: 'linux-observer', privateKeyPem: linuxPem, observedAt: '2026-09-03T00:00:30.000Z' });
+  assert.throws(() => compareIndependentWitnessLogs([[macFirst], [linuxFork]], trust),
+    /split view at history tree size 2/);
+  const fourthBundle = buildBundle([0, 1, 0, 1], organizationKeys);
+  const linuxFourth = createHistoryCheckpoint({ bundle: fourthBundle, verification: verifyBundle(fourthBundle),
+    witnessID: 'linux-observer', privateKeyPem: linuxPem, observedAt: '2026-09-03T00:02:00.000Z' });
+  assert.throws(() => compareIndependentWitnessLogs([[macFirst, macSecond], [linuxFourth]], trust),
+    /no shared history snapshot/);
 });
 
 test('witness log parser requires one canonical checkpoint per line', () => {

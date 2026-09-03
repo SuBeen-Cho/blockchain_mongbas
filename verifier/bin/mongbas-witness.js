@@ -5,6 +5,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { canonicalize, verifyBundleBytes } = require('../src/verify');
 const { CHECKPOINT_SCHEMA, CHECKPOINT_V2_SCHEMA, TRUST_SCHEMA, checkpointHash, compareCheckpointLogs,
+  compareIndependentWitnessLogs,
   createHistoryCheckpoint, parseCanonicalLog, publicKeyDer, verifyCheckpointLog, verifyHistoryBinding } = require('../src/witness');
 
 const MAX_BUNDLE_BYTES = 256 * 1024 * 1024;
@@ -61,6 +62,7 @@ function usage(exitCode = 2) {
   console.error('  mongbas-witness verify <checkpoint.jsonl> <witness-trust.json>');
   console.error('  mongbas-witness verify-bundle <bundle.json> <checkpoint.jsonl> <witness-trust.json> <sequence>');
   console.error('  mongbas-witness compare <witness-trust.json> <checkpoint-a.jsonl> <checkpoint-b.jsonl> [...]');
+  console.error('  mongbas-witness compare-witnesses <witness-trust.json> <witness-a.jsonl> <witness-b.jsonl> [...]');
   process.exit(exitCode);
 }
 
@@ -210,6 +212,16 @@ function compare(trustPath, logPaths) {
   console.log(`checkpoints=${result.checkpoints}`);
 }
 
+function compareWitnesses(trustPath, logPaths) {
+  const trust = readTrust(trustPath);
+  const logs = logPaths.map(logPath => parseCanonicalLog(readLog(logPath)));
+  const result = compareIndependentWitnessLogs(logs, trust);
+  console.log(`CONSISTENT: ${result.logs} independent witnesses`);
+  console.log(`witnessIDs=${result.witnessIDs.join(',')}`);
+  console.log(`sharedTreeSizes=${result.sharedTreeSizes.join(',')}`);
+  console.log(`largestTreeSize=${result.largestTreeSize}`);
+}
+
 try {
   const [command, ...args] = process.argv.slice(2);
   if (command === 'init-trust' && args.length === 3) initTrust(args[0], path.resolve(args[1]), path.resolve(args[2]));
@@ -218,6 +230,7 @@ try {
   else if (command === 'verify' && args.length === 2) verify(...args.map(value => path.resolve(value)));
   else if (command === 'verify-bundle' && args.length === 4) verifyBundleCheckpoint(path.resolve(args[0]), path.resolve(args[1]), path.resolve(args[2]), args[3]);
   else if (command === 'compare' && args.length >= 3) compare(path.resolve(args[0]), args.slice(1).map(value => path.resolve(value)));
+  else if (command === 'compare-witnesses' && args.length >= 3) compareWitnesses(path.resolve(args[0]), args.slice(1).map(value => path.resolve(value)));
   else if (command === '--help' || command === '-h') usage(0);
   else usage();
 } catch (error) {

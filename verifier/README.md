@@ -17,6 +17,7 @@ node bin/mongbas-witness.js observe election-bundle.signed.json checkpoints.json
 node bin/mongbas-witness.js verify checkpoints.jsonl witness-trust.json
 node bin/mongbas-witness.js verify-bundle election-bundle.signed.json checkpoints.jsonl witness-trust.json 1
 node bin/mongbas-witness.js compare witness-trust.json observer-a.jsonl observer-b.jsonl
+node bin/mongbas-witness.js compare-witnesses witness-trust.json mac-witness.jsonl linux-witness.jsonl
 ```
 
 `init-trust` derives only the public Ed25519 key, creates the trust document
@@ -24,6 +25,13 @@ with mode `0600`, and refuses to overwrite an existing trust document.
 `compare` verifies every supplied log and rejects two individually valid,
 same-witness histories if they contain different signed checkpoints at the same
 sequence. A shorter log that is an exact prefix of a longer log is accepted.
+`compare-witnesses` instead requires distinct trusted witness identities, v2
+history checkpoints, one election/context, and at least one shared tree size.
+It rejects different roots at a shared size as a split view. Logs with no shared
+snapshot are reported as insufficient evidence rather than accepted as
+consistent. This compares signed observations; the witnesses are operationally
+independent only when their hosts, administrators, keys and publication paths
+are independently controlled.
 Witness private-key inputs must be regular, non-symlink files with no group or
 other permission bits. Checkpoint logs are opened without following symlinks,
 forced to mode `0600`, fsynced after append, and bounded to 16 MiB; trust files

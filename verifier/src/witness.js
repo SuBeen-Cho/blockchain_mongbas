@@ -261,6 +261,57 @@ function compareCheckpointLogs(logs, trust) {
     latestCheckpointHash: longest.latestCheckpointHash };
 }
 
+function compareIndependentWitnessLogs(logs, trust) {
+  if (!Array.isArray(logs) || logs.length < 2) throw new Error('at least two independent witness logs are required');
+  const witnessIDs = new Set();
+  const snapshots = new Map();
+  let electionID = null;
+  let contextHash = null;
+  let treeAlgorithm = null;
+  let leafAlgorithm = null;
+  let largestTreeSize = 0;
+
+  logs.forEach((lines, logIndex) => {
+    verifyCheckpointLog(lines, trust);
+    const ids = new Set(lines.map(checkpoint => checkpoint.witnessID));
+    if (ids.size !== 1) throw new Error(`checkpoint log ${logIndex + 1}: mixed witness identities`);
+    const witnessID = lines[0].witnessID;
+    if (witnessIDs.has(witnessID)) throw new Error(`checkpoint log ${logIndex + 1}: witness identity is not independent`);
+    witnessIDs.add(witnessID);
+    if (lines.some(checkpoint => checkpoint.schema !== CHECKPOINT_V2_SCHEMA)) {
+      throw new Error(`checkpoint log ${logIndex + 1}: independent comparison requires v2 history checkpoints`);
+    }
+
+    lines.forEach((checkpoint, checkpointIndex) => {
+      const history = checkpoint.history;
+      if (electionID === null) {
+        electionID = checkpoint.electionID;
+        contextHash = history.contextHash;
+        treeAlgorithm = history.treeAlgorithm;
+        leafAlgorithm = history.leafAlgorithm;
+      } else if (checkpoint.electionID !== electionID || history.contextHash !== contextHash ||
+          history.treeAlgorithm !== treeAlgorithm || history.leafAlgorithm !== leafAlgorithm) {
+        throw new Error(`checkpoint log ${logIndex + 1} checkpoint ${checkpointIndex + 1}: election or history context mismatch`);
+      }
+      largestTreeSize = Math.max(largestTreeSize, history.treeSize);
+      const prior = snapshots.get(history.treeSize);
+      if (prior && prior.rootHash !== history.rootHash) {
+        throw new Error(`independent witness split view at history tree size ${history.treeSize}`);
+      }
+      if (!prior) snapshots.set(history.treeSize, { rootHash: history.rootHash, witnesses: new Set([witnessID]) });
+      else prior.witnesses.add(witnessID);
+    });
+  });
+
+  const sharedTreeSizes = [...snapshots.entries()]
+    .filter(([, snapshot]) => snapshot.witnesses.size > 1)
+    .map(([treeSize]) => treeSize)
+    .sort((left, right) => left - right);
+  if (sharedTreeSizes.length === 0) throw new Error('independent witness logs have no shared history snapshot');
+  return { valid: true, witnessIDs: [...witnessIDs].sort(), logs: logs.length,
+    sharedSnapshots: sharedTreeSizes.length, sharedTreeSizes, largestTreeSize };
+}
+
 function parseCanonicalLog(text) {
   const rawLines = String(text).split('\n');
   if (rawLines.at(-1) === '') rawLines.pop();
@@ -279,6 +330,7 @@ module.exports = {
   TRUST_SCHEMA,
   checkpointHash,
   compareCheckpointLogs,
+  compareIndependentWitnessLogs,
   createCheckpoint,
   createHistoryCheckpoint,
   parseCanonicalLog,
