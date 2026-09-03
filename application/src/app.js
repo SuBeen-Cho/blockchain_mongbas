@@ -214,7 +214,7 @@ app.use((err, req, res, _next) => {
 });
 
 // ── 서버 기동 ───────────────────────────────────────────────────
-app.listen(PORT, '0.0.0.0', HTTP_LISTEN_BACKLOG, () => {
+app.listen(PORT, runtimeSecurity.listenHost, HTTP_LISTEN_BACKLOG, () => {
   console.log(`
 ╔══════════════════════════════════════════════════════╗
 ║  팀 몽바스 — 다조직 합의 익명 전자투표 API 서버 기동  ║
@@ -224,6 +224,7 @@ app.listen(PORT, '0.0.0.0', HTTP_LISTEN_BACKLOG, () => {
 [INFO] 엔드포인트 목록: http://localhost:${PORT}/
 [INFO] 헬스 체크: http://localhost:${PORT}/health
 [INFO] HTTP listen backlog: ${HTTP_LISTEN_BACKLOG}
+[INFO] HTTP listen host: ${runtimeSecurity.listenHost}
 
 [WARNING] 네트워크가 기동된 상태에서만 정상 동작합니다.
   → cd ../network && ./scripts/network.sh up

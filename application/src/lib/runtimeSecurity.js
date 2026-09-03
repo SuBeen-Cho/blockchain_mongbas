@@ -1,5 +1,13 @@
 'use strict';
 
+function parseListenHost(value = '0.0.0.0') {
+  const host = String(value || '0.0.0.0').trim();
+  if (!['0.0.0.0', '127.0.0.1', '::', '::1'].includes(host)) {
+    throw new Error('LISTEN_HOST must be 0.0.0.0, 127.0.0.1, ::, or ::1');
+  }
+  return host;
+}
+
 function parseTrustProxyHops(value = '0') {
   if (!/^[0-9]+$/.test(String(value))) throw new Error('TRUST_PROXY_HOPS must be an integer from 0 to 2');
   const hops = Number(value);
@@ -30,6 +38,7 @@ function validateRuntimeSecurity(env = process.env) {
   }
 
   const trustProxyHops = parseTrustProxyHops(env.TRUST_PROXY_HOPS || '0');
+  const listenHost = parseListenHost(env.LISTEN_HOST);
   const allowedOrigins = String(env.CORS_ORIGIN || 'http://localhost:5173,http://localhost:3000')
     .split(',').map(value => value.trim()).filter(Boolean);
   if (allowedOrigins.length === 0 || allowedOrigins.includes('*')) throw new Error('CORS_ORIGIN must contain explicit origins and cannot contain *');
@@ -42,6 +51,7 @@ function validateRuntimeSecurity(env = process.env) {
   }
   return {
     production,
+    listenHost,
     trustProxyHops,
     allowedOrigins,
     benchEndpoints: !production && env.ENABLE_BENCH_ENDPOINTS === 'true',
@@ -66,4 +76,4 @@ function apiRequestShapeGuard(allowedOrigins) {
   };
 }
 
-module.exports = { parseTrustProxyHops, validateRuntimeSecurity, apiRequestShapeGuard };
+module.exports = { parseListenHost, parseTrustProxyHops, validateRuntimeSecurity, apiRequestShapeGuard };

@@ -2,7 +2,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { parseTrustProxyHops, validateRuntimeSecurity, apiRequestShapeGuard } = require('../src/lib/runtimeSecurity');
+const { parseListenHost, parseTrustProxyHops, validateRuntimeSecurity, apiRequestShapeGuard } = require('../src/lib/runtimeSecurity');
 
 test('production refuses benchmark/demo/rate-limit bypass flags', () => {
   for (const flag of ['ALLOW_INSECURE_ADMIN_API', 'ALLOW_BYPASS_CREDENTIAL', 'DISABLE_RATE_LIMITS', 'ENABLE_BENCH_ENDPOINTS', 'ENABLE_DEMO_CREDENTIALS', 'ENABLE_DEMO_ENDPOINTS', 'REQUIRE_DEMO_ADMISSION']) {
@@ -21,6 +21,14 @@ test('trust proxy is explicit and bounded', () => {
   assert.equal(parseTrustProxyHops('1'), 1);
   assert.throws(() => parseTrustProxyHops('true'), /TRUST_PROXY_HOPS/);
   assert.throws(() => parseTrustProxyHops('3'), /TRUST_PROXY_HOPS/);
+});
+
+test('listen host is explicit and restricted to local or all-interface addresses', () => {
+  assert.equal(parseListenHost(undefined), '0.0.0.0');
+  assert.equal(parseListenHost('127.0.0.1'), '127.0.0.1');
+  assert.equal(parseListenHost('::1'), '::1');
+  assert.throws(() => parseListenHost('localhost'), /LISTEN_HOST/);
+  assert.throws(() => parseListenHost('192.0.2.1'), /LISTEN_HOST/);
 });
 
 test('CORS accepts exact origins and rejects wildcard/path/userinfo', () => {

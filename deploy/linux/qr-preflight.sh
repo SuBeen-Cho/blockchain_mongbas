@@ -48,6 +48,13 @@ if [ -f "${MONGBAS_ENV_FILE}" ]; then
       fail "QR demo profile requires ${expected}"
     fi
   done
+  for expected in 'LISTEN_HOST=127.0.0.1' 'ENABLE_HSTS=true' 'TRUST_PROXY_HOPS=1'; do
+    if grep -Eq "^[[:space:]]*${expected}[[:space:]]*$" "${MONGBAS_ENV_FILE}"; then
+      pass "${expected}"
+    else
+      fail "tailnet HTTPS profile requires ${expected}"
+    fi
+  done
   if grep -Eq '^[[:space:]]*(ALLOW_BYPASS_CREDENTIAL|DISABLE_RATE_LIMITS)=true[[:space:]]*$' "${MONGBAS_ENV_FILE}"; then
     fail "unsafe credential bypass or rate-limit bypass is enabled"
   else
@@ -80,6 +87,26 @@ fi
 if command -v tailscale >/dev/null 2>&1; then
   if tailscale status --json >/dev/null 2>&1; then
     pass "Tailscale daemon is reachable"
+    dns_name="$(tailscale status --json | node -e '
+      let input=""; process.stdin.on("data", chunk => { input += chunk; });
+      process.stdin.on("end", () => {
+        const name = JSON.parse(input)?.Self?.DNSName;
+        if (typeof name !== "string" || !/^[A-Za-z0-9.-]+\.$/.test(name)) process.exit(1);
+        process.stdout.write(name.slice(0, -1));
+      });
+    ' 2>/dev/null || true)"
+    expected_origin="https://${dns_name}"
+    cors_value="$(sed -n 's/^[[:space:]]*CORS_ORIGIN=//p' "${MONGBAS_ENV_FILE}" 2>/dev/null | tail -1)"
+    cors_match=false
+    IFS=',' read -r -a cors_origins <<< "${cors_value}"
+    for configured_origin in "${cors_origins[@]}"; do
+      [ "${configured_origin}" = "${expected_origin}" ] && cors_match=true
+    done
+    if [ -n "${dns_name}" ] && [ "${cors_match}" = true ]; then
+      pass "CORS_ORIGIN contains the exact Tailscale HTTPS origin"
+    else
+      fail "CORS_ORIGIN must contain the exact Tailscale HTTPS origin"
+    fi
   else
     fail "Tailscale daemon is unavailable"
   fi
