@@ -79,4 +79,71 @@ async function collectCastHistoryRecords({ blocks, contract, electionID, endBloc
   return records;
 }
 
-module.exports = { ACCEPTED_EVENT_NAME, extractAcceptedCastEvents, privateRecordToProducerRecord, collectCastHistoryRecords };
+function isTransientFabricError(error) {
+  return [4, 8, 10, 13, 14].includes(error?.code) ||
+    ['ECONNRESET', 'ECONNREFUSED', 'EPIPE', 'ETIMEDOUT'].includes(error?.code);
+}
+
+async function collectBlockRecords({ block, contract, electionID, maxRecordBytes }) {
+  const blockRecords = [];
+  for (const source of extractAcceptedCastEvents(block)) {
+    const encoded = await contract.evaluateTransaction('GetPrivateCastEvent', source.transactionID);
+    const bytes = Buffer.from(encoded);
+    if (bytes.length > maxRecordBytes) throw new Error('private cast record exceeds byte limit');
+    const privateRecord = JSON.parse(bytes.toString('utf8'));
+    if (privateRecord.electionID !== electionID) continue;
+    blockRecords.push(privateRecordToProducerRecord({ ...source, electionID }, privateRecord));
+  }
+  return blockRecords;
+}
+
+async function collectCastHistoryRecordsResilient({ openBlocks, contract, electionID, startBlock, endBlock,
+  maxRecords = 10_000, maxRecordBytes = 16 * 1024 * 1024, maxReconnects = 3 }) {
+  if (typeof openBlocks !== 'function' || !contract || typeof electionID !== 'string' || electionID.length === 0 ||
+      !Number.isSafeInteger(startBlock) || startBlock < 0 || !Number.isSafeInteger(endBlock) ||
+      endBlock < startBlock || !Number.isSafeInteger(maxRecords) || maxRecords < 1 || maxRecords > 100_000 ||
+      !Number.isSafeInteger(maxRecordBytes) || maxRecordBytes < 1024 || maxRecordBytes > 64 * 1024 * 1024 ||
+      !Number.isSafeInteger(maxReconnects) || maxReconnects < 0 || maxReconnects > 20) {
+    throw new Error('invalid resilient cast history collection options');
+  }
+
+  const records = [];
+  let nextBlock = startBlock;
+  let reconnects = 0;
+  while (nextBlock <= endBlock) {
+    let blocks;
+    try {
+      blocks = await openBlocks(nextBlock);
+      let reachedEnd = false;
+      for await (const block of blocks) {
+        const blockNumber = block.getNumber();
+        if (!Number.isSafeInteger(blockNumber) || blockNumber !== nextBlock) {
+          throw new Error('Fabric block gap or regression: expected ' + nextBlock + ', received ' + blockNumber);
+        }
+        const blockRecords = await collectBlockRecords({ block, contract, electionID, maxRecordBytes });
+        if (records.length + blockRecords.length > maxRecords) {
+          throw new Error('cast history record count exceeds limit');
+        }
+        records.push(...blockRecords);
+        nextBlock = blockNumber + 1;
+        if (blockNumber === endBlock) {
+          reachedEnd = true;
+          break;
+        }
+      }
+      if (reachedEnd) return records;
+      const error = new Error('Fabric filtered block stream ended before block ' + nextBlock);
+      error.code = 14;
+      throw error;
+    } catch (error) {
+      if (!isTransientFabricError(error) || reconnects >= maxReconnects) throw error;
+      reconnects += 1;
+    } finally {
+      blocks?.close();
+    }
+  }
+  return records;
+}
+
+module.exports = { ACCEPTED_EVENT_NAME, extractAcceptedCastEvents, privateRecordToProducerRecord,
+  collectCastHistoryRecords, collectCastHistoryRecordsResilient, isTransientFabricError };

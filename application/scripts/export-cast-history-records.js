@@ -4,7 +4,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const { connectGateway } = require('../src/gateway');
-const { collectCastHistoryRecords } = require('../src/lib/castHistoryFabric');
+const { collectCastHistoryRecordsResilient } = require('../src/lib/castHistoryFabric');
 
 function option(name) {
   const index = process.argv.indexOf(`--${name}`);
@@ -30,6 +30,7 @@ async function main() {
   const startBlock = blockOption('start-block');
   const endBlock = blockOption('end-block');
   const maxRecords = optionalPositiveInteger('max-records', 10_000, 100_000);
+  const maxReconnects = optionalPositiveInteger('max-reconnects', 3, 20);
   if (!electionID || !/^[A-Za-z0-9_-]{1,128}$/.test(electionID)) throw new Error('--election-id is invalid');
   if (!output || startBlock > endBlock) throw new Error('--output is required and start-block must not exceed end-block');
   const target = path.resolve(output);
@@ -37,16 +38,16 @@ async function main() {
   const parent = path.dirname(target);
   const temporary = path.join(parent, `.${path.basename(target)}.${process.pid}.tmp`);
   const { gateway, network, contract } = await connectGateway();
-  let blocks;
   try {
-    blocks = await network.getFilteredBlockEvents({ startBlock: BigInt(startBlock) });
-    const records = await collectCastHistoryRecords({ blocks, contract, electionID, endBlock, maxRecords });
+    const records = await collectCastHistoryRecordsResilient({
+      openBlocks: resumeBlock => network.getFilteredBlockEvents({ startBlock: BigInt(resumeBlock) }),
+      contract, electionID, startBlock, endBlock, maxRecords, maxReconnects,
+    });
     const document = { schema: 'mongbas-fabric-cast-history-input/v1', electionID, startBlock, endBlock, records };
     fs.writeFileSync(temporary, `${JSON.stringify(document, null, 2)}\n`, { flag: 'wx', mode: 0o600 });
     fs.renameSync(temporary, target);
     process.stdout.write(`${JSON.stringify({ output: target, records: records.length })}\n`);
   } finally {
-    blocks?.close();
     gateway.close();
     try { fs.unlinkSync(temporary); } catch (error) { if (error.code !== 'ENOENT') throw error; }
   }

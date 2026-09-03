@@ -2,7 +2,8 @@
 
 const assert = require('node:assert/strict');
 const test = require('node:test');
-const { extractAcceptedCastEvents, privateRecordToProducerRecord, collectCastHistoryRecords } = require('../src/lib/castHistoryFabric');
+const { extractAcceptedCastEvents, privateRecordToProducerRecord, collectCastHistoryRecords,
+  collectCastHistoryRecordsResilient } = require('../src/lib/castHistoryFabric');
 
 const hash = value => value.repeat(64);
 const event = (name, _payload, chaincode = 'voting') => ({
@@ -69,4 +70,91 @@ test('collector rejects record-count and private-response resource overflow', as
     electionID: 'election-a', endBlock: 4, maxRecords: 100, maxRecordBytes: 1024 }), /byte limit/);
   await assert.rejects(collectCastHistoryRecords({ blocks: oneBlock(), contract: { evaluateTransaction: async () => valid },
     electionID: 'election-a', endBlock: 4, maxRecords: 0 }), /invalid/);
+});
+
+test('resilient collector resumes at the next fully committed block after a transient disconnect', async () => {
+  const block = (number, id) => ({ getNumber: () => number, getFilteredTransactionsList: () => [
+    tx(id, 0, [event('MongbasCastAccepted')]),
+  ] });
+  const openedAt = [];
+  let closes = 0;
+  const openBlocks = async startBlock => {
+    openedAt.push(startBlock);
+    if (openedAt.length === 1) {
+      const stream = (async function* disconnected() {
+        yield block(4, hash('1'));
+        const unavailable = new Error('UNAVAILABLE: transport closed');
+        unavailable.code = 14;
+        throw unavailable;
+      }());
+      stream.close = () => { closes += 1; };
+      return stream;
+    }
+    const stream = (async function* resumed() {
+      yield block(5, hash('2'));
+      yield block(6, hash('3'));
+    }());
+    stream.close = () => { closes += 1; };
+    return stream;
+  };
+  const contract = { evaluateTransaction: async (_name, transactionID) => Buffer.from(JSON.stringify({
+    schema: 'mongbas-fabric-private-cast-event/v1', electionID: 'election-a', transactionID,
+    committedAt: 1234, commitmentNonce: hash('a'), receiptNonce: hash('b'), selectionKey: hash('c'),
+    ballotArtifact: { electionID: 'election-a', nullifierHash: hash('c') },
+  })) };
+
+  const records = await collectCastHistoryRecordsResilient({
+    openBlocks, contract, electionID: 'election-a', startBlock: 4, endBlock: 6, maxReconnects: 2,
+  });
+  assert.deepEqual(openedAt, [4, 5]);
+  assert.equal(closes, 2);
+  assert.deepEqual(records.map(record => record.position.blockNumber), [4, 5, 6]);
+});
+
+test('resilient collector rejects a resumed Fabric stream with a block gap', async () => {
+  const openBlocks = async () => {
+    const stream = (async function* gap() {
+      yield { getNumber: () => 5, getFilteredTransactionsList: () => [] };
+    }());
+    stream.close = () => {};
+    return stream;
+  };
+  await assert.rejects(collectCastHistoryRecordsResilient({
+    openBlocks, contract: {}, electionID: 'election-a', startBlock: 4, endBlock: 5,
+  }), /block gap or regression/);
+});
+
+test('resilient collector commits a block atomically when a private read disconnects mid-block', async () => {
+  const ids = [hash('1'), hash('2')];
+  const openedAt = [];
+  const openBlocks = async startBlock => {
+    openedAt.push(startBlock);
+    const stream = (async function* oneBlock() {
+      yield { getNumber: () => 4, getFilteredTransactionsList: () =>
+        ids.map(id => tx(id, 0, [event('MongbasCastAccepted')])) };
+    }());
+    stream.close = () => {};
+    return stream;
+  };
+  let reads = 0;
+  const contract = { evaluateTransaction: async (_name, transactionID) => {
+    reads += 1;
+    if (reads === 2) {
+      const unavailable = new Error('UNAVAILABLE');
+      unavailable.code = 14;
+      throw unavailable;
+    }
+    return Buffer.from(JSON.stringify({
+      schema: 'mongbas-fabric-private-cast-event/v1', electionID: 'election-a', transactionID,
+      committedAt: 1234, commitmentNonce: hash('a'), receiptNonce: hash('b'), selectionKey: transactionID,
+      ballotArtifact: { electionID: 'election-a', nullifierHash: transactionID },
+    }));
+  } };
+
+  const records = await collectCastHistoryRecordsResilient({
+    openBlocks, contract, electionID: 'election-a', startBlock: 4, endBlock: 4, maxReconnects: 1,
+  });
+  assert.deepEqual(openedAt, [4, 4]);
+  assert.equal(reads, 4);
+  assert.deepEqual(records.map(record => record.selectionKey), ids);
 });
