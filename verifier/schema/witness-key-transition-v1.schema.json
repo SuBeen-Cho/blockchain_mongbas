@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mongbas.example/schema/witness-key-transition-v1.schema.json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "witnessID", "electionID", "electionContextHash", "epochSeconds", "effectiveSequence",
+    "previousCheckpointHash", "authorizedAt", "oldPublicKeyDer", "newPublicKeyDer", "oldSignature", "newSignature"],
+  "properties": {
+    "schema": { "const": "mongbas-witness-key-transition/v1" },
+    "witnessID": { "type": "string", "pattern": "^[A-Za-z0-9_.-]{1,128}$" },
+    "electionID": { "type": "string", "pattern": "^[A-Za-z0-9_.-]{1,256}$" },
+    "electionContextHash": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "epochSeconds": { "type": "integer", "minimum": 1, "maximum": 86400 },
+    "effectiveSequence": { "type": "integer", "minimum": 2 },
+    "previousCheckpointHash": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "authorizedAt": { "type": "string", "format": "date-time" },
+    "oldPublicKeyDer": { "type": "string" },
+    "newPublicKeyDer": { "type": "string" },
+    "oldSignature": { "type": "string" },
+    "newSignature": { "type": "string" }
+  }
+}
