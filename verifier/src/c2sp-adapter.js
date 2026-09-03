@@ -50,6 +50,11 @@ function keyID(origin, key) {
     .update(rawEd25519PublicKey(key)).digest().subarray(0, 4);
 }
 
+function cosignatureKeyID(name, key) {
+  return crypto.createHash('sha256').update(name).update('\n').update(Buffer.from([0x04]))
+    .update(rawEd25519PublicKey(key)).digest().subarray(0, 4);
+}
+
 function checkpointBody({ origin, treeSize, rootHash }) {
   requireOrigin(origin);
   requireTreeSize(treeSize);
@@ -106,11 +111,14 @@ function parseAndVerifySignedCheckpoint(note, trust) {
   const key = trustedPublicKey(trust.publicKeyDer);
   const expectedID = keyID(trust.origin, key);
   let validSignatures = 0;
+  let trustedSeen = false;
   for (const line of parsed.signatureLines) {
     const match = /^— ([^\s+]+) ([A-Za-z0-9+/]+=*)$/u.exec(line);
     if (!match) throw new Error('C2SP signature line is malformed');
     const payload = exactBase64(match[2], 'C2SP signature');
     if (match[1] !== trust.origin || payload.length < 4 || !payload.subarray(0, 4).equals(expectedID)) continue;
+    if (trustedSeen) throw new Error('C2SP checkpoint has duplicate trusted signatures');
+    trustedSeen = true;
     if (payload.length !== 68 || !crypto.verify(null, Buffer.from(parsed.body, 'utf8'), key, payload.subarray(4))) {
       throw new Error('C2SP trusted signature is invalid');
     }
@@ -118,6 +126,57 @@ function parseAndVerifySignedCheckpoint(note, trust) {
   }
   if (validSignatures === 0) throw new Error('C2SP checkpoint has no trusted signature');
   return { origin: parsed.origin, treeSize: parsed.treeSize, rootHash: parsed.rootHash, validSignatures };
+}
+
+function requireWitnessPolicy(witnesses, quorum) {
+  if (!Array.isArray(witnesses) || witnesses.length === 0 || witnesses.length > 32 ||
+      !Number.isSafeInteger(quorum) || quorum < 1 || quorum > witnesses.length) {
+    throw new Error('C2SP witness policy requires a valid k-of-n quorum of at most 32 witnesses');
+  }
+  const ids = new Set();
+  const names = new Set();
+  const keys = new Set();
+  return witnesses.map((witness, index) => {
+    if (!witness || typeof witness !== 'object' || Array.isArray(witness) ||
+        Object.keys(witness).sort().join('\0') !== 'id\0name\0publicKeyDer' ||
+        !/^[A-Za-z0-9_.-]{1,128}$/.test(witness.id || '')) throw new Error(`C2SP witness policy entry ${index} is invalid`);
+    requireOrigin(witness.name);
+    const key = trustedPublicKey(witness.publicKeyDer);
+    const raw = rawEd25519PublicKey(key).toString('hex');
+    if (ids.has(witness.id) || names.has(witness.name) || keys.has(raw)) throw new Error('C2SP witness policy has duplicate identity, name or key');
+    ids.add(witness.id); names.add(witness.name); keys.add(raw);
+    return { ...witness, key, keyID: cosignatureKeyID(witness.name, key) };
+  });
+}
+
+function verifyWitnessCosignatures(note, { witnesses, quorum, nowSeconds = Math.floor(Date.now() / 1000), maxFutureSkewSeconds = 300 }) {
+  requireTreeSize(nowSeconds, 'current time');
+  requireTreeSize(maxFutureSkewSeconds, 'future timestamp skew');
+  if (maxFutureSkewSeconds > 3600) throw new Error('future timestamp skew exceeds one hour');
+  const policy = requireWitnessPolicy(witnesses, quorum);
+  const parsed = parseNote(note);
+  const accepted = new Map();
+  for (const line of parsed.signatureLines) {
+    const match = /^— ([^\s+]+) ([A-Za-z0-9+/]+=*)$/u.exec(line);
+    if (!match) throw new Error('C2SP signature line is malformed');
+    const payload = exactBase64(match[2], 'C2SP signature');
+    const configured = policy.find(witness => witness.name === match[1] && payload.length >= 4 && payload.subarray(0, 4).equals(witness.keyID));
+    if (!configured) continue;
+    if (accepted.has(configured.id)) throw new Error(`duplicate C2SP witness cosignature: ${configured.id}`);
+    if (payload.length !== 76) throw new Error(`invalid C2SP witness cosignature length: ${configured.id}`);
+    const timestamp = Number(payload.readBigUInt64BE(4));
+    if (!Number.isSafeInteger(timestamp) || timestamp === 0 || timestamp > nowSeconds + maxFutureSkewSeconds) {
+      throw new Error(`invalid or future C2SP witness timestamp: ${configured.id}`);
+    }
+    const message = Buffer.from(`cosignature/v1\ntime ${timestamp}\n${parsed.body}`, 'utf8');
+    if (!crypto.verify(null, message, configured.key, payload.subarray(12))) {
+      throw new Error(`invalid C2SP witness cosignature: ${configured.id}`);
+    }
+    accepted.set(configured.id, timestamp);
+  }
+  if (accepted.size < quorum) throw new Error(`C2SP witness quorum not met: ${accepted.size}/${quorum}`);
+  return { valid: true, quorum, acceptedWitnesses: [...accepted.keys()].sort(),
+    timestamps: Object.fromEntries([...accepted.entries()].sort(([left], [right]) => left.localeCompare(right))) };
 }
 
 function createWitnessRequest({ oldSize, consistencyPath, signedCheckpoint }) {
@@ -175,4 +234,5 @@ module.exports = {
   createSignedCheckpoint,
   createWitnessRequest,
   parseAndVerifySignedCheckpoint,
+  verifyWitnessCosignatures,
 };

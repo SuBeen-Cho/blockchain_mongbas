@@ -4,7 +4,8 @@
 const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
-const { createC2spSubmissionFromV3Log, createWitnessRequest, parseAndVerifySignedCheckpoint } = require('../src/c2sp-adapter');
+const { createC2spSubmissionFromV3Log, createWitnessRequest, parseAndVerifySignedCheckpoint,
+  verifyWitnessCosignatures } = require('../src/c2sp-adapter');
 const { readBoundedRegularFile, MAX_PRIVATE_KEY_BYTES } = require('../src/input');
 const { parseCanonicalLog } = require('../src/witness');
 
@@ -15,7 +16,12 @@ const NOFOLLOW = fs.constants.O_NOFOLLOW ?? 0;
 
 function usage() {
   console.error('Usage: mongbas-c2sp publish <checkpoint-v3.jsonl> <witness-trust.json> <origin> <log-operator-private.pem> <state-directory> <request-output>');
+  console.error('       mongbas-c2sp verify-cosignatures <cosigned-checkpoint.note> <log-trust.json> <witness-policy.json>');
   process.exit(2);
+}
+
+function readJson(file, label) {
+  return JSON.parse(readBoundedRegularFile(file, label, MAX_TRUST_BYTES, { encoding: 'utf8' }));
 }
 
 function privateKey(file) {
@@ -103,10 +109,27 @@ function publish(logFile, trustFile, origin, keyFile, stateDirectory, outputFile
   }
 }
 
+function verifyCosignatures(noteFile, logTrustFile, policyFile) {
+  const note = readBoundedRegularFile(noteFile, 'cosigned checkpoint', MAX_NOTE_BYTES, { encoding: 'utf8' });
+  const logTrust = readJson(logTrustFile, 'C2SP log trust');
+  const policy = readJson(policyFile, 'C2SP witness policy');
+  if (!policy || typeof policy !== 'object' || Array.isArray(policy) ||
+      Object.keys(policy).sort().join('\0') !== 'quorum\0schema\0witnesses' ||
+      policy.schema !== 'mongbas-c2sp-witness-policy/v1') throw new Error('unsupported C2SP witness policy');
+  if (policy.witnesses.some(witness => witness?.publicKeyDer === logTrust.publicKeyDer)) {
+    throw new Error('C2SP log operator and witness policy keys must be distinct');
+  }
+  const checkpoint = parseAndVerifySignedCheckpoint(note, logTrust);
+  const result = verifyWitnessCosignatures(note, { witnesses: policy.witnesses, quorum: policy.quorum });
+  console.log(`VALID C2SP CHECKPOINT: origin=${checkpoint.origin} treeSize=${checkpoint.treeSize}`);
+  console.log(`WITNESS QUORUM: ${result.acceptedWitnesses.length}/${result.quorum} ids=${result.acceptedWitnesses.join(',')}`);
+}
+
 try {
   const [command, ...args] = process.argv.slice(2);
-  if (command !== 'publish' || args.length !== 6) usage();
-  publish(...args);
+  if (command === 'publish' && args.length === 6) publish(...args);
+  else if (command === 'verify-cosignatures' && args.length === 3) verifyCosignatures(...args);
+  else usage();
 } catch (error) {
   console.error(`ERROR: ${error.message}`);
   process.exit(1);

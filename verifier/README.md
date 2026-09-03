@@ -220,6 +220,15 @@ node bin/mongbas-c2sp.js publish \
   /secure/log-operator-ed25519.pem /secure/c2sp-state request.txt
 ```
 
+A received cosigned checkpoint can be checked against a separately pinned log key and a strict `mongbas-c2sp-witness-policy/v1` k-of-n policy. The verifier accepts at most 32 distinct witness identities/names/Ed25519 keys, ignores unknown signatures, rejects a malformed signature whose known name and key ID match, rejects duplicate cosignatures and zero/future timestamps, and never counts the log key as a witness key.
+
+```bash
+node bin/mongbas-c2sp.js verify-cosignatures \
+  cosigned-checkpoint.note log-trust.json witness-policy.json
+```
+
+This fixed k-of-n policy is intentionally narrower than the full C2SP policy language. It does not establish that the listed operators are institutionally independent.
+
 ## Implemented checks
 
 - exact schema and algorithm identifiers;
