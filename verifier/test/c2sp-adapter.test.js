@@ -12,6 +12,7 @@ const {
   createWitnessRequest,
   createC2spSubmissionFromV3Log,
   parseAndVerifySignedCheckpoint,
+  submitWitnessRequest,
   verifyWitnessCosignatures,
 } = require('../src/c2sp-adapter');
 const { createOpeningCheckpoint, publicKeyDer, TRUST_SCHEMA } = require('../src/witness');
@@ -158,6 +159,75 @@ function appendCosignature(note, name, pair, timestamp) {
   crypto.sign(null, message, pair.privateKey).copy(encoded, 12);
   return `${note.trimEnd()}\n— ${name} ${encoded.toString('base64')}\n`;
 }
+
+function cosignatureLine(note, name, pair, timestamp) {
+  return `${appendCosignature(note, name, pair, timestamp).trimEnd().split('\n').at(-1)}\n`;
+}
+
+test('C2SP witness transport posts an exact bounded request and accepts only a verified quorum', async () => {
+  const operator = crypto.generateKeyPairSync('ed25519');
+  const witness = crypto.generateKeyPairSync('ed25519');
+  const origin = 'mongbas.example/cast-history/election-a';
+  const signedCheckpoint = createSignedCheckpoint({ origin, treeSize: 0,
+    rootHash: crypto.createHash('sha256').update(Buffer.alloc(0)).digest('hex'), privateKeyPem: pem(operator) });
+  const request = createWitnessRequest({ oldSize: 0, consistencyPath: [], signedCheckpoint });
+  const timestamp = Math.floor(Date.now() / 1000);
+  const line = cosignatureLine(signedCheckpoint, 'witness.example/one', witness, timestamp);
+  const calls = [];
+  const result = await submitWitnessRequest({ endpoint: 'https://witness.example/add-checkpoint', request,
+    signedCheckpoint, logTrust: { origin,
+      publicKeyDer: operator.publicKey.export({ format: 'der', type: 'spki' }).toString('base64') },
+    witnessPolicy: { quorum: 1, witnesses: [{ id: 'one', name: 'witness.example/one',
+      publicKeyDer: witness.publicKey.export({ format: 'der', type: 'spki' }).toString('base64') }] },
+    fetchImpl: async (url, options) => {
+      calls.push({ url, options });
+      return new Response(line, { status: 200, headers: { 'content-type': 'text/plain',
+        'content-length': String(Buffer.byteLength(line)) } });
+    } });
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].url, 'https://witness.example/add-checkpoint');
+  assert.equal(calls[0].options.method, 'POST');
+  assert.equal(calls[0].options.redirect, 'error');
+  assert.equal(calls[0].options.headers['content-type'], 'application/octet-stream');
+  assert.equal(calls[0].options.body, request);
+  assert.ok(calls[0].options.signal instanceof AbortSignal);
+  assert.deepEqual(result.quorumResult.acceptedWitnesses, ['one']);
+  assert.equal(result.cosignedCheckpoint, `${signedCheckpoint.trimEnd()}\n${line}`);
+});
+
+test('C2SP witness transport rejects unsafe endpoints without making a request', async () => {
+  const invalid = ['http://witness.example/add-checkpoint', 'https://user@witness.example/add-checkpoint',
+    'https://witness.example/add-checkpoint?x=1', 'https://witness.example/checkpoint'];
+  let calls = 0;
+  for (const endpoint of invalid) {
+    await assert.rejects(submitWitnessRequest({ endpoint, request: '', signedCheckpoint: '', logTrust: {},
+      witnessPolicy: {}, fetchImpl: async () => { calls += 1; } }), /HTTPS add-checkpoint/);
+  }
+  assert.equal(calls, 0);
+});
+
+test('C2SP witness transport fails closed on conflicts, status and bounded response violations', async () => {
+  const operator = crypto.generateKeyPairSync('ed25519');
+  const origin = 'mongbas.example/cast-history/election-a';
+  const signedCheckpoint = createSignedCheckpoint({ origin, treeSize: 0,
+    rootHash: crypto.createHash('sha256').update(Buffer.alloc(0)).digest('hex'), privateKeyPem: pem(operator) });
+  const request = createWitnessRequest({ oldSize: 0, consistencyPath: [], signedCheckpoint });
+  const common = { endpoint: 'https://witness.example/add-checkpoint', request, signedCheckpoint,
+    logTrust: { origin, publicKeyDer: operator.publicKey.export({ format: 'der', type: 'spki' }).toString('base64') },
+    witnessPolicy: { quorum: 1, witnesses: [{ id: 'unused', name: 'witness.example/unused',
+      publicKeyDer: operator.publicKey.export({ format: 'der', type: 'spki' }).toString('base64') }] } };
+  await assert.rejects(submitWitnessRequest({ ...common, fetchImpl: async () => new Response('17\n', {
+    status: 409, headers: { 'content-type': 'text/x.tlog.size' } }) }), /conflict at tree size 17/);
+  await assert.rejects(submitWitnessRequest({ ...common, fetchImpl: async () => new Response('17', {
+    status: 409, headers: { 'content-type': 'text/x.tlog.size' } }) }), /malformed conflict/);
+  await assert.rejects(submitWitnessRequest({ ...common, fetchImpl: async () => new Response('failure', { status: 503 }) }), /HTTP 503/);
+  await assert.rejects(submitWitnessRequest({ ...common, fetchImpl: async () => new Response('x', {
+    status: 200, headers: { 'content-length': '65537' } }) }), /size limit/);
+  await assert.rejects(submitWitnessRequest({ ...common, fetchImpl: async () => new Response(Buffer.from([0xff]), { status: 200 }) }),
+    /encoded data|encoding|UTF-8/i);
+  await assert.rejects(submitWitnessRequest({ ...common, fetchImpl: async () => new Response('not-a-signature\n', { status: 200 }) }),
+    /malformed or excessive/);
+});
 
 test('timestamped C2SP witness cosignatures satisfy only an explicit distinct k-of-n policy', () => {
   const operator = crypto.generateKeyPairSync('ed25519');

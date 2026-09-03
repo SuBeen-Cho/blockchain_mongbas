@@ -5,6 +5,8 @@ const crypto = require('node:crypto');
 const MAX_NOTE_BYTES = 64 * 1024;
 const MAX_SIGNATURES = 16;
 const MAX_CONSISTENCY_NODES = 63;
+const MAX_WITNESS_REQUEST_BYTES = 128 * 1024;
+const MAX_WITNESS_RESPONSE_BYTES = 64 * 1024;
 const HASH_RE = /^[0-9a-f]{64}$/;
 const ORIGIN_RE = /^[^\s+\u0000-\u001f\u007f]{1,255}$/u;
 const ED25519_SPKI_PREFIX = Buffer.from('302a300506032b6570032100', 'hex');
@@ -196,7 +198,77 @@ function createWitnessRequest({ oldSize, consistencyPath, signedCheckpoint }) {
     if (typeof node !== 'string' || !HASH_RE.test(node)) throw new Error(`consistency node ${index} is invalid`);
     return Buffer.from(node, 'hex').toString('base64');
   });
-  return `old ${oldSize}\n${lines.length ? `${lines.join('\n')}\n` : ''}\n${signedCheckpoint}`;
+  const request = `old ${oldSize}\n${lines.length ? `${lines.join('\n')}\n` : ''}\n${signedCheckpoint}`;
+  if (Buffer.byteLength(request) > MAX_WITNESS_REQUEST_BYTES) throw new Error('C2SP witness request exceeds size limit');
+  return request;
+}
+
+function requireWitnessEndpoint(value) {
+  let endpoint;
+  try { endpoint = new URL(value); } catch { throw new Error('C2SP witness endpoint is invalid'); }
+  if (endpoint.protocol !== 'https:' || endpoint.username || endpoint.password || endpoint.search || endpoint.hash ||
+      !endpoint.pathname.endsWith('/add-checkpoint')) throw new Error('C2SP witness endpoint must be an exact HTTPS add-checkpoint URL');
+  return endpoint.href;
+}
+
+async function readBoundedResponse(response, maximumBytes = MAX_WITNESS_RESPONSE_BYTES) {
+  const declared = response.headers.get('content-length');
+  if (declared !== null && (!/^(?:0|[1-9][0-9]*)$/.test(declared) || Number(declared) > maximumBytes)) {
+    throw new Error('C2SP witness response exceeds size limit');
+  }
+  if (!response.body || typeof response.body.getReader !== 'function') throw new Error('C2SP witness response has no readable body');
+  const reader = response.body.getReader();
+  const chunks = [];
+  let total = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      if (total > maximumBytes) throw new Error('C2SP witness response exceeds size limit');
+      chunks.push(Buffer.from(value));
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  return new TextDecoder('utf-8', { fatal: true }).decode(Buffer.concat(chunks, total));
+}
+
+async function submitWitnessRequest({ endpoint, request, signedCheckpoint, logTrust, witnessPolicy,
+  timeoutMs = 10_000, fetchImpl = globalThis.fetch }) {
+  const url = requireWitnessEndpoint(endpoint);
+  if (typeof request !== 'string' || Buffer.byteLength(request) > MAX_WITNESS_REQUEST_BYTES ||
+      !request.endsWith(signedCheckpoint) || typeof fetchImpl !== 'function') throw new Error('invalid C2SP witness submission input');
+  if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1_000 || timeoutMs > 60_000) throw new Error('C2SP witness timeout is invalid');
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  let response;
+  let responseBody;
+  try {
+    response = await fetchImpl(url, { method: 'POST', headers: { 'content-type': 'application/octet-stream' },
+      body: request, redirect: 'error', signal: controller.signal });
+    responseBody = await readBoundedResponse(response);
+  } finally {
+    clearTimeout(timer);
+  }
+  if (response.status === 409) {
+    const contentType = response.headers.get('content-type')?.split(';', 1)[0].trim().toLowerCase();
+    if (contentType !== 'text/x.tlog.size' || !/^(?:0|[1-9][0-9]*)\n$/.test(responseBody)) {
+      throw new Error('C2SP witness returned a malformed conflict');
+    }
+    throw new Error(`C2SP witness state conflict at tree size ${responseBody.trim()}`);
+  }
+  if (response.status !== 200) throw new Error(`C2SP witness rejected checkpoint with HTTP ${response.status}`);
+  if (!responseBody.endsWith('\n') || responseBody.includes('\n\n')) throw new Error('C2SP witness returned malformed cosignature lines');
+  const lines = responseBody.slice(0, -1).split('\n');
+  if (lines.length === 0 || lines.length > MAX_SIGNATURES || lines.some(line => !/^— [^\s+]+ [A-Za-z0-9+/]+=*$/u.test(line))) {
+    throw new Error('C2SP witness returned malformed or excessive cosignatures');
+  }
+  const cosignedCheckpoint = `${signedCheckpoint.trimEnd()}\n${responseBody}`;
+  parseAndVerifySignedCheckpoint(cosignedCheckpoint, logTrust);
+  const quorumResult = verifyWitnessCosignatures(cosignedCheckpoint, { witnesses: witnessPolicy.witnesses,
+    quorum: witnessPolicy.quorum });
+  return { cosignedCheckpoint, quorumResult };
 }
 
 function createC2spSubmissionFromV3Log({ origin, checkpointLog, trust, logPrivateKeyPem, previousSignedCheckpoint = null }) {
@@ -230,9 +302,12 @@ function createC2spSubmissionFromV3Log({ origin, checkpointLog, trust, logPrivat
 module.exports = {
   MAX_CONSISTENCY_NODES,
   MAX_NOTE_BYTES,
+  MAX_WITNESS_REQUEST_BYTES,
+  MAX_WITNESS_RESPONSE_BYTES,
   createC2spSubmissionFromV3Log,
   createSignedCheckpoint,
   createWitnessRequest,
   parseAndVerifySignedCheckpoint,
+  submitWitnessRequest,
   verifyWitnessCosignatures,
 };
