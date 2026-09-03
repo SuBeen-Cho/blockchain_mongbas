@@ -211,7 +211,7 @@ The process exits `0` only when every implemented check passes, `1` for an inval
 - can submit a bounded request only to an exact HTTPS `/add-checkpoint` URL with redirects disabled and a bounded timeout/response; and
 - accepts a response only after the pinned log signature and configured timestamped witness quorum both verify.
 
-This is an adapter library and local state-transition primitive, not a deployed C2SP HTTP witness. The HTTP transport is covered with an injected in-process response harness, including conflict and malformed/oversized response cases, but has not yet interoperated with an external witness implementation. Consequently the project does not yet claim C2SP compatibility. Existing Mongbas checkpoint-v3 JSON and signature semantics are unchanged.
+This is an adapter library and local state-transition primitive, not a deployed C2SP HTTP witness. The HTTP transport is covered with both an injected response harness for conflict/malformed/oversized cases and a real loopback TLS round trip through a separate CLI process. It has not yet interoperated with an independently developed external witness implementation. Consequently the project does not yet claim C2SP compatibility. Existing Mongbas checkpoint-v3 JSON and signature semantics are unchanged.
 
 The local publication CLI persists the operator-signed checkpoint with fsync plus atomic rename before releasing a non-overwriting request artifact. Its state directory is mode `0700`, its checkpoint/request files are mode `0600`, and a lock serializes publishers. Re-running the same verified source produces the same request without replacing state. Publication itself does not transmit anything.
 

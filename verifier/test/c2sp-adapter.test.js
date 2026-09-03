@@ -3,9 +3,10 @@
 const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
 const fs = require('node:fs');
+const https = require('node:https');
 const os = require('node:os');
 const path = require('node:path');
-const { spawnSync } = require('node:child_process');
+const { spawn, spawnSync } = require('node:child_process');
 const test = require('node:test');
 const {
   createSignedCheckpoint,
@@ -356,4 +357,82 @@ test('C2SP submit CLI fails closed before creating output for an unsafe endpoint
   assert.equal(result.status, 1);
   assert.match(result.stderr, /exact HTTPS/);
   assert.equal(fs.existsSync(outputFile), false);
+});
+
+function spawnCapture(command, args, options) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, args, { ...options, stdio: ['ignore', 'pipe', 'pipe'] });
+    let stdout = '';
+    let stderr = '';
+    child.stdout.setEncoding('utf8'); child.stdout.on('data', chunk => { stdout += chunk; });
+    child.stderr.setEncoding('utf8'); child.stderr.on('data', chunk => { stderr += chunk; });
+    child.once('error', reject);
+    child.once('close', (code, signal) => resolve({ code, signal, stdout, stderr }));
+  });
+}
+
+test('C2SP submit CLI completes a real local TLS round trip and fsyncs a verified non-overwriting output', async t => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'mongbas-c2sp-submit-tls-'));
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+  const tlsKey = path.join(directory, 'tls-key.pem');
+  const tlsCertificate = path.join(directory, 'tls-cert.pem');
+  const generated = spawnSync('openssl', ['req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-days', '1',
+    '-subj', '/CN=127.0.0.1', '-addext', 'subjectAltName=IP:127.0.0.1',
+    '-addext', 'basicConstraints=critical,CA:TRUE', '-keyout', tlsKey, '-out', tlsCertificate], { encoding: 'utf8' });
+  assert.equal(generated.status, 0, generated.stderr);
+
+  const operator = crypto.generateKeyPairSync('ed25519');
+  const witness = crypto.generateKeyPairSync('ed25519');
+  const origin = 'mongbas.example/cast-history/election-a';
+  const note = createSignedCheckpoint({ origin, treeSize: 0,
+    rootHash: crypto.createHash('sha256').update(Buffer.alloc(0)).digest('hex'), privateKeyPem: pem(operator) });
+  const requestText = createWitnessRequest({ oldSize: 0, consistencyPath: [], signedCheckpoint: note });
+  const responseLine = cosignatureLine(note, 'witness.example/one', witness, Math.floor(Date.now() / 1000));
+  let received = null;
+  const server = https.createServer({ key: fs.readFileSync(tlsKey), cert: fs.readFileSync(tlsCertificate) }, (request, response) => {
+    const chunks = [];
+    request.on('data', chunk => chunks.push(chunk));
+    request.on('end', () => {
+      received = { method: request.method, url: request.url, contentType: request.headers['content-type'],
+        body: Buffer.concat(chunks).toString('utf8') };
+      response.writeHead(200, { 'content-type': 'text/plain', 'content-length': Buffer.byteLength(responseLine) });
+      response.end(responseLine);
+    });
+  });
+  await new Promise((resolve, reject) => server.listen(0, '127.0.0.1', resolve).once('error', reject));
+  t.after(() => new Promise(resolve => server.close(resolve)));
+  const port = server.address().port;
+
+  const requestFile = path.join(directory, 'request.txt');
+  const noteFile = path.join(directory, 'checkpoint.note');
+  const trustFile = path.join(directory, 'log-trust.json');
+  const policyFile = path.join(directory, 'witness-policy.json');
+  const outputFile = path.join(directory, 'cosigned.note');
+  fs.writeFileSync(requestFile, requestText);
+  fs.writeFileSync(noteFile, note);
+  fs.writeFileSync(trustFile, JSON.stringify({ origin,
+    publicKeyDer: operator.publicKey.export({ format: 'der', type: 'spki' }).toString('base64') }));
+  const policy = { schema: 'mongbas-c2sp-witness-policy/v1', quorum: 1,
+    witnesses: [{ id: 'one', name: 'witness.example/one',
+      publicKeyDer: witness.publicKey.export({ format: 'der', type: 'spki' }).toString('base64') }] };
+  fs.writeFileSync(policyFile, JSON.stringify(policy));
+
+  const cli = path.join(__dirname, '../bin/mongbas-c2sp.js');
+  const result = await spawnCapture(process.execPath, [cli, 'submit', requestFile, noteFile,
+    `https://127.0.0.1:${port}/add-checkpoint`, trustFile, policyFile, outputFile], {
+    env: { ...process.env, NODE_EXTRA_CA_CERTS: tlsCertificate },
+  });
+  assert.equal(result.code, 0, result.stderr);
+  assert.match(result.stdout, /quorum=1\/1 ids=one/);
+  assert.deepEqual(received, { method: 'POST', url: '/add-checkpoint', contentType: 'application/octet-stream', body: requestText });
+  assert.equal(fs.statSync(outputFile).mode & 0o777, 0o600);
+  const output = fs.readFileSync(outputFile, 'utf8');
+  parseAndVerifySignedCheckpoint(output, JSON.parse(fs.readFileSync(trustFile, 'utf8')));
+  assert.equal(verifyWitnessCosignatures(output, { witnesses: policy.witnesses, quorum: 1 }).valid, true);
+  const overwrite = await spawnCapture(process.execPath, [cli, 'submit', requestFile, noteFile,
+    `https://127.0.0.1:${port}/add-checkpoint`, trustFile, policyFile, outputFile], {
+    env: { ...process.env, NODE_EXTRA_CA_CERTS: tlsCertificate },
+  });
+  assert.equal(overwrite.code, 1);
+  assert.match(overwrite.stderr, /already exists/);
 });
