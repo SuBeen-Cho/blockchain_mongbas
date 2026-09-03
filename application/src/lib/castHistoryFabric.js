@@ -54,9 +54,12 @@ function privateRecordToProducerRecord(source, encoded) {
   };
 }
 
-async function collectCastHistoryRecords({ blocks, contract, electionID, endBlock }) {
+async function collectCastHistoryRecords({ blocks, contract, electionID, endBlock, maxRecords = 10_000,
+  maxRecordBytes = 16 * 1024 * 1024 }) {
   if (!blocks || !contract || typeof electionID !== 'string' || electionID.length === 0 ||
-      !Number.isSafeInteger(endBlock) || endBlock < 0) throw new Error('invalid cast history collection options');
+      !Number.isSafeInteger(endBlock) || endBlock < 0 || !Number.isSafeInteger(maxRecords) || maxRecords < 1 ||
+      maxRecords > 100_000 || !Number.isSafeInteger(maxRecordBytes) || maxRecordBytes < 1024 ||
+      maxRecordBytes > 64 * 1024 * 1024) throw new Error('invalid cast history collection options');
   const records = [];
   for await (const block of blocks) {
     const blockNumber = block.getNumber();
@@ -64,7 +67,10 @@ async function collectCastHistoryRecords({ blocks, contract, electionID, endBloc
     for (const source of extractAcceptedCastEvents(block)) {
       if (source.electionID !== electionID) continue;
       const encoded = await contract.evaluateTransaction('GetPrivateCastEvent', source.transactionID);
-      records.push(privateRecordToProducerRecord(source, Buffer.from(encoded).toString('utf8')));
+      const bytes = Buffer.from(encoded);
+      if (bytes.length > maxRecordBytes) throw new Error('private cast record exceeds byte limit');
+      if (records.length >= maxRecords) throw new Error('cast history record count exceeds limit');
+      records.push(privateRecordToProducerRecord(source, bytes.toString('utf8')));
     }
     if (blockNumber === endBlock) break;
   }

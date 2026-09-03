@@ -17,11 +17,19 @@ function blockOption(name) {
   return value;
 }
 
+function optionalPositiveInteger(name, fallback, maximum) {
+  const raw = option(name);
+  const value = raw === undefined ? fallback : Number(raw);
+  if (!Number.isSafeInteger(value) || value < 1 || value > maximum) throw new Error(`--${name} must be an integer from 1 to ${maximum}`);
+  return value;
+}
+
 async function main() {
   const electionID = option('election-id');
   const output = option('output');
   const startBlock = blockOption('start-block');
   const endBlock = blockOption('end-block');
+  const maxRecords = optionalPositiveInteger('max-records', 10_000, 100_000);
   if (!electionID || !/^[A-Za-z0-9_-]{1,128}$/.test(electionID)) throw new Error('--election-id is invalid');
   if (!output || startBlock > endBlock) throw new Error('--output is required and start-block must not exceed end-block');
   const target = path.resolve(output);
@@ -32,7 +40,7 @@ async function main() {
   let blocks;
   try {
     blocks = await network.getFilteredBlockEvents({ startBlock: BigInt(startBlock) });
-    const records = await collectCastHistoryRecords({ blocks, contract, electionID, endBlock });
+    const records = await collectCastHistoryRecords({ blocks, contract, electionID, endBlock, maxRecords });
     const document = { schema: 'mongbas-fabric-cast-history-input/v1', electionID, startBlock, endBlock, records };
     fs.writeFileSync(temporary, `${JSON.stringify(document, null, 2)}\n`, { flag: 'wx', mode: 0o600 });
     fs.renameSync(temporary, target);

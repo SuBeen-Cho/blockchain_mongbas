@@ -66,7 +66,9 @@ node bin/mongbas-cast-history.js /private/fabric-history-input.json <context-sha
 
 The exporter reads valid transactions from filtered block events, preserves the
 actual transaction index in each block, and opens each notice using the PDC
-record keyed by transaction ID. It refuses to overwrite output. This command
+record keyed by transaction ID. It refuses to overwrite output and defaults to
+at most 10,000 records and 16 MiB per private response (`--max-records` can be
+raised only to the hard 100,000 ceiling). This command
 requires a separately approved chaincode deployment before it can be exercised
 against a live Fabric ledger.
 

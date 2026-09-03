@@ -54,3 +54,18 @@ test('bounded collector exports only the selected election and stops at the requ
   assert.equal(records.length, 1);
   assert.deepEqual(records[0].position, { blockNumber: 4, transactionIndex: 0 });
 });
+
+test('collector rejects record-count and private-response resource overflow', async () => {
+  const notice = { schema: 'mongbas-cast-accepted-notice/v1', electionID: 'election-a' };
+  async function* oneBlock() {
+    yield { getNumber: () => 4, getFilteredTransactionsList: () => [tx(hash('1'), 0,
+      [event('MongbasCastAccepted', notice)])] };
+  }
+  const valid = Buffer.from(JSON.stringify({ schema: 'mongbas-fabric-private-cast-event/v1', electionID: 'election-a',
+    transactionID: hash('1'), committedAt: 1, commitmentNonce: hash('a'), receiptNonce: hash('b'),
+    selectionKey: hash('c'), ballotArtifact: { electionID: 'election-a', nullifierHash: hash('c') } }));
+  await assert.rejects(collectCastHistoryRecords({ blocks: oneBlock(), contract: { evaluateTransaction: async () => Buffer.alloc(1025) },
+    electionID: 'election-a', endBlock: 4, maxRecords: 100, maxRecordBytes: 1024 }), /byte limit/);
+  await assert.rejects(collectCastHistoryRecords({ blocks: oneBlock(), contract: { evaluateTransaction: async () => valid },
+    electionID: 'election-a', endBlock: 4, maxRecords: 0 }), /invalid/);
+});
