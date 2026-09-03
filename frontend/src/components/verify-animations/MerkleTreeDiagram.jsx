@@ -56,7 +56,7 @@ export default function MerkleTreeDiagram({ verifySteps = [], result = null }) {
         </div>
         <div>
           <p className="text-sm font-bold text-slate-800">Merkle Proof 검증 흐름</p>
-          <p className="text-[11px] text-slate-400">Recorded-as-Cast — 내 투표가 변조 없이 기록되었음을 증명</p>
+          <p className="text-[11px] text-slate-400">게시판 포함 검사 — 제공된 leaf와 Merkle 경로가 공개 Root에 연결되는지 확인</p>
         </div>
       </div>
 
@@ -171,7 +171,7 @@ export default function MerkleTreeDiagram({ verifySteps = [], result = null }) {
           className="flex items-center gap-2 px-4 py-3 bg-blue-50 border border-blue-200 rounded-xl">
           <svg className="w-5 h-5 text-blue-600 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
           <div className="text-xs text-blue-700 space-y-1">
-            <p><span className="font-bold">직접 계산한 Root = 블록체인 Root</span> → 투표가 변조 없이 포함됨 증명</p>
+            <p><span className="font-bold">직접 계산한 Root = 블록체인 Root</span> → 제공된 leaf의 게시판 포함 경로 일치</p>
             {computedRoot && chainRoot && (
               <div className="flex gap-3 font-mono text-[10px] text-blue-500 bg-blue-100/50 rounded-lg px-3 py-1.5">
                 <span>Leaf: <span className="font-bold">{leafHash}</span></span>

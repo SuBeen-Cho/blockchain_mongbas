@@ -343,7 +343,7 @@ export default function VerifyPage() {
             </div>
             <div>
               <p className="font-bold text-emerald-800">검증 성공</p>
-              <p className="text-xs text-emerald-600">투표가 집계에 포함됨 — Merkle proof 검증 완료
+              <p className="text-xs text-emerald-600">암호문 게시판 포함 경로 — Merkle proof 검증 완료
                 {mode === 'deniable'
                   ? <span className="ml-2 px-1.5 py-0.5 bg-red-200/60 text-red-800 rounded text-[10px] font-bold">Deniable API Proof</span>
                   : <span className="ml-2 px-1.5 py-0.5 bg-emerald-200/60 text-emerald-800 rounded text-[10px] font-bold">Recorded-as-Cast</span>
@@ -363,7 +363,7 @@ export default function VerifyPage() {
             {result.localVerification?.computedRoot && result.localVerification.computedRoot === result.localVerification.chainRoot && (
               <div className="flex items-center gap-2 text-xs text-emerald-600 bg-emerald-50 rounded-lg px-3 py-2 border border-emerald-200">
                 <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" /></svg>
-                <span>직접 계산한 Root = 블록체인 Root → <span className="font-bold">투표가 변조 없이 포함되어 있음을 증명</span></span>
+                <span>직접 계산한 Root = 블록체인 Root → <span className="font-bold">제공된 leaf의 게시판 포함 경로가 일치</span></span>
               </div>
             )}
             {result.proof && (

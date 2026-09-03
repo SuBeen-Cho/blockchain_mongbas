@@ -81,7 +81,7 @@ export default function TrackPage({ electionId }) {
     <div style={{ boxSizing: 'border-box', width: '100%', minHeight: '100vh', overflowX: 'hidden', background: '#f1f5f9', fontFamily: 'system-ui,-apple-system,sans-serif', padding: '20px 16px 48px' }}>
       <div style={{ boxSizing: 'border-box', width: '100%', maxWidth: 720, margin: '0 auto' }}>
         <h1 style={{ fontSize: 26 }}>🔎 내 표 추적</h1>
-        <p style={{ color: '#64748b', fontSize: 14, marginBottom: 16 }}>택배 송장처럼, 추적번호로 <b>내 표가 변조 없이 집계에 들어갔는지</b> 확인합니다.</p>
+        <p style={{ color: '#64748b', fontSize: 14, marginBottom: 16 }}>택배 송장처럼, 추적번호로 <b>내 암호문이 공개 게시판에 포함됐는지</b> 확인합니다.</p>
 
         <div style={card}>
           <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
@@ -138,7 +138,7 @@ export default function TrackPage({ electionId }) {
               <Row label="블록체인에 저장된 봉인" val={res.chainRoot} />
               <div style={{ marginTop: 10, padding: 12, borderRadius: 10, fontWeight: 700, textAlign: 'center',
                 background: res.sealMatch ? '#dcfce7' : '#fee2e2', color: res.sealMatch ? '#166534' : '#b91c1c' }}>
-                {res.sealMatch ? '✅ 봉인 일치 — 내 표를 넣어 다시 계산해도 봉인이 똑같습니다 (아무도 못 건드림)' : '❌ 봉인 불일치 — 변조 감지'}
+                {res.sealMatch ? '✅ 포함 증명 일치 — 제공된 leaf와 경로로 공개 Root가 재계산됩니다' : '❌ 포함 증명 불일치 — 입력 또는 게시판 경로 확인 필요'}
               </div>
             </div>
 

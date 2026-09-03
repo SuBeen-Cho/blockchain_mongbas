@@ -14,6 +14,7 @@ test('runtime metadata and UI do not self-certify coercion resistance', () => {
   const verifyPage = read('frontend/src/pages/VerifyPage.jsx');
   const voterPage = read('frontend/src/pages/VoterPage.jsx');
   const controlPage = read('frontend/src/pages/ControlPage.jsx');
+  const kioskPage = read('frontend/src/pages/KioskPage.jsx');
   const trackPage = read('frontend/src/pages/TrackPage.jsx');
   const receiptFree = read('frontend/src/components/verify-animations/ReceiptFreeDiagram.jsx');
   const diagram = read('frontend/src/components/verify-animations/DeniableDiagram.jsx');
@@ -27,6 +28,9 @@ test('runtime metadata and UI do not self-certify coercion resistance', () => {
   assert.doesNotMatch(voterPage, /Idemix 익명 자격 증명을 발급|100% 동일/);
   assert.doesNotMatch(controlPage, /100% 동일|강압자 구별 불가/);
   assert.doesNotMatch(trackPage, /시스템이 절대 복호화하지 않/);
+  assert.doesNotMatch(trackPage, /아무도 못 건드림|변조 없이 집계에 들어갔/);
+  assert.doesNotMatch(kioskPage, /변조 없이 집계에 들어갔/);
+  assert.doesNotMatch(controlPage, /변조 없이 집계에 포함됨/);
   assert.doesNotMatch(receiptFree, /receipt 생성이 원천 불가|강압자에게 누구를 찍었는지 증명할 수 없/);
   assert.doesNotMatch(diagram, /Coercion Resistance —/);
   assert.doesNotMatch(diagram, /강압자가 구분 불가/);

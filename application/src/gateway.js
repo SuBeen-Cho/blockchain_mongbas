@@ -187,7 +187,8 @@ async function connectGateway() {
 /**
  * 유권자용 Gateway 연결을 생성합니다.
  *
- * 실제 투표 시 유권자 자신의 인증서로 서명해야 익명성이 보장됩니다.
+ * 실제 투표 시 유권자 자신의 인증서로 요청 주체를 인증합니다.
+ * 인증서 사용만으로 익명성이 보장되지는 않으며 credential/nullifier 설계와 운영 분리가 함께 필요합니다.
  * voterCertPem, voterKeyPem은 클라이언트에서 전달받거나
  * Fabric CA에서 등록 발급한 인증서를 사용합니다.
  *

@@ -134,7 +134,7 @@ export default function KioskPage({ electionId }) {
         <div style={{ width: '100%', background: C.blue, color: '#fff', padding: '26px 0', margin: '18px 0', fontSize: 46, fontWeight: 900, letterSpacing: 6, boxSizing: 'border-box', fontFamily: 'monospace' }}>
           {receipt.code}
         </div>
-        <p style={{ color: C.sub, fontSize: 13, lineHeight: 1.6, fontWeight: 600 }}>이 번호로 <b style={{ color: C.ink }}>내 표가 변조 없이 집계에 들어갔는지</b> 확인할 수 있습니다. 누구에게 투표했는지는 드러나지 않습니다.</p>
+        <p style={{ color: C.sub, fontSize: 13, lineHeight: 1.6, fontWeight: 600 }}>이 번호로 <b style={{ color: C.ink }}>내 암호문이 공개 게시판에 포함됐는지</b> 확인할 수 있습니다. 이 포함 증명만으로 전체 집계·비밀성·강압저항성이 증명되지는 않습니다.</p>
         <button onClick={() => { setPick(null); setMode(null); setSent(false); setPhase('choose'); }}
           style={{ width: '100%', marginTop: 4, marginBottom: 8, padding: 15, border: `2px solid ${C.line}`, background: '#fff', color: C.ink, fontSize: 15, fontWeight: 900, fontFamily: 'inherit', cursor: 'pointer', boxSizing: 'border-box' }}>
           ↺ 다시 투표하기 <span style={{ fontWeight: 700, color: C.sub, fontSize: 12 }}>(마지막 표만 유효)</span>

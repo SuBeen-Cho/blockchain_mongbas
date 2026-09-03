@@ -113,7 +113,7 @@ export default function BulletinBoardPipeline({ verifySteps = [], result = null 
           className="px-4 py-3 bg-blue-50 border border-blue-200 rounded-xl flex items-center gap-2">
           <svg className="w-5 h-5 text-blue-600 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
           <div className="text-xs text-blue-700 space-y-1">
-            <p><span className="font-bold">브라우저 + 서버 이중 검증 완료</span> — 누구나 독립적으로 집계 정확성을 확인할 수 있음</p>
+            <p><span className="font-bold">브라우저 + 서버 계산값 비교</span> — 표시된 게시판 입력에 대한 결과를 재계산하며, 전체 집계 정확성은 독립 bundle verifier로 별도 확인</p>
             {(totalBallots || tallyResults) && (
               <div className="flex flex-wrap gap-2 font-mono text-[10px] text-blue-500 bg-blue-100/50 rounded-lg px-3 py-1.5">
                 {totalBallots && <span>투표: <span className="font-bold">{validCount || totalBallots}/{totalBallots}건</span> 복호화</span>}

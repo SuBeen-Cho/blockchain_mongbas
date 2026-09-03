@@ -569,7 +569,7 @@ function VerifyView({ code, setCode, run, tamper, res, fail, busy, status, rootH
             </div>
           </section>
           <section style={{ ...box, background: res.sealMatch ? T.blue : T.ink, color: '#fff', border: 'none' }}>
-            <div style={{ fontSize: 18, fontWeight: 900, letterSpacing: '-0.03em' }}>{res.sealMatch ? '✓ 봉인 일치 — 변조 없이 집계에 포함됨' : '✗ 봉인 불일치 — 변조 감지'}</div>
+            <div style={{ fontSize: 18, fontWeight: 900, letterSpacing: '-0.03em' }}>{res.sealMatch ? '✓ 포함 증명 일치 — 공개 게시판 Root 재계산 성공' : '✗ 포함 증명 불일치'}</div>
             <div style={{ marginTop: 12, display: 'grid', gridTemplateColumns: '1fr', gap: 6, fontFamily: 'monospace', fontSize: 12 }}>
               <Kv k="내가 다시 계산한 봉인(root)" v={res.computedRoot} />
               <Kv k="블록체인에 저장된 봉인(root)" v={res.chainRoot} />
