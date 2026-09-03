@@ -500,6 +500,40 @@ test('builds and verifies vector-v3 one-hot ballots and per-candidate threshold 
   assert.equal(verifyBundle(bundle).valid, false, 'tampered vector sum proof must fail');
 });
 
+test('independent Python/OpenSSL verifier checks the complete vector-v4 bundle', () => {
+  const bundle = buildVectorBundle();
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'mongbas-python-bundle-v4-'));
+  const referencePath = path.join(__dirname, '../reference/python_bundle_v4_verify.py');
+  const run = value => {
+    const bundlePath = path.join(directory, `bundle-${crypto.randomUUID()}.json`);
+    fs.writeFileSync(bundlePath, canonicalize(value));
+    return spawnSync('python3', [referencePath, bundlePath], { encoding: 'utf8', timeout: 120_000 });
+  };
+  try {
+    const accepted = run(bundle);
+    assert.equal(accepted.status, 0, accepted.stderr);
+    assert.deepEqual(JSON.parse(accepted.stdout), {
+      auditDisclosures: 1, ballots: 4, schema: 'mongbas-election-bundle/v4', valid: true, validPartials: 2, validSignatures: 2,
+    });
+    const mutations = [
+      [/bit proof equation/, value => { value.ballots[0].validityProof.bitProofs[0].zs[0] = '0'; }],
+      [/vector aggregate/, value => { value.aggregateCiphertextVector[0].c1 = '2'; }],
+      [/vector partial proof/, value => { value.vectorPartialDecryptions[0].proofs[0].z = '0'; }],
+      [/audit re-encryption/, value => { value.vectorAuditDisclosures[0].randomness[0] = '1'; }],
+      [/signature verification/, value => { value.signatures[0].signature = Buffer.alloc(64).toString('base64'); }],
+    ];
+    for (const [expectedError, mutate] of mutations) {
+      const changed = structuredClone(bundle);
+      mutate(changed);
+      const rejected = run(changed);
+      assert.equal(rejected.status, 1, `v4 mutation unexpectedly accepted: ${rejected.stdout}`);
+      assert.match(rejected.stderr, expectedError);
+    }
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
 test('rejects a signed vector-v4 bundle with an invalid unused trustee public share', () => {
   let bundle = buildVectorBundle();
   bundle.trusteePublicShares[2].publicKeyY = '0';
@@ -514,6 +548,52 @@ test('rejects a signed vector-v4 bundle with an invalid unused trustee public sh
   const result = verifyBundle(bundle);
   assert.equal(result.valid, false, 'invalid unused vector public share unexpectedly accepted');
   assert.match(result.errors.join('\n'), /publicShare\[2\]\.publicKeyY/);
+});
+
+test('rejects re-signed vector-v4 audit evidence outside schema timestamp and transaction bounds', () => {
+  const original = buildVectorBundle();
+  const cases = [
+    value => { value.vectorBallotReceipts[0].createdAt = -1; },
+    value => { value.vectorBallotReceipts[0].terminalAt = -1; },
+    value => { value.vectorAuditDisclosures[0].auditedAt = -1; },
+    value => { value.vectorAuditDisclosures[0].auditedTxID = ''; },
+  ];
+  for (const mutate of cases) {
+    let bundle = structuredClone(original);
+    mutate(bundle);
+    const keys = [crypto.generateKeyPairSync('ed25519'), crypto.generateKeyPairSync('ed25519')];
+    bundle.configuration.organizations = keys.map((key, index) => ({
+      id: index ? 'civil' : 'ec', ed25519PublicKeyDer: key.publicKey.export({ format: 'der', type: 'spki' }).toString('base64'),
+    }));
+    bundle.signatures = [];
+    bundle = signBundle(bundle, 'ec', keys[0].privateKey.export({ format: 'pem', type: 'pkcs8' }));
+    bundle = signBundle(bundle, 'civil', keys[1].privateKey.export({ format: 'pem', type: 'pkcs8' }));
+    assert.equal(verifyBundle(bundle).valid, false, 'out-of-schema audit metadata unexpectedly accepted');
+  }
+});
+
+test('runtime rejects re-signed nested fields forbidden by the published schemas', () => {
+  const cases = [
+    [buildBundle(), value => { value.ballots[0].unexpected = true; }],
+    [buildBundle(), value => { value.ballots[0].ciphertext.unexpected = true; }],
+    [buildBundle(), value => { value.aggregateCiphertext.unexpected = true; }],
+    [buildBundle(), value => { value.decryptionProof.unexpected = true; }],
+    [buildVectorBundle(), value => { value.ballots[0].validityProof.unexpected = true; }],
+    [buildVectorBundle(), value => { value.aggregateCiphertextVector[0].unexpected = true; }],
+    [buildVectorBundle(), value => { value.vectorPartialDecryptions[0].unexpected = true; }],
+  ];
+  for (const [original, mutate] of cases) {
+    let bundle = structuredClone(original);
+    mutate(bundle);
+    const keys = [crypto.generateKeyPairSync('ed25519'), crypto.generateKeyPairSync('ed25519')];
+    bundle.configuration.organizations = keys.map((key, index) => ({
+      id: index ? 'civil' : 'ec', ed25519PublicKeyDer: key.publicKey.export({ format: 'der', type: 'spki' }).toString('base64'),
+    }));
+    bundle.signatures = [];
+    bundle = signBundle(bundle, 'ec', keys[0].privateKey.export({ format: 'pem', type: 'pkcs8' }));
+    bundle = signBundle(bundle, 'civil', keys[1].privateKey.export({ format: 'pem', type: 'pkcs8' }));
+    assert.equal(verifyBundle(bundle).valid, false, 'schema-forbidden nested field unexpectedly accepted');
+  }
 });
 
 const vectorMutations = {

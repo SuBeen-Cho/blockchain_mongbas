@@ -103,6 +103,12 @@ Lagrange combination at zero, the combined election key, and the decrypted
 tally in addition to the shared v1 ballot, aggregate, Merkle, and signature
 checks. It still does not cover current vector-v4/v5 or DKG/audit-or-cast.
 
+`reference/python_bundle_v4_verify.py` covers the complete vector-v4 envelope:
+per-candidate bit proofs, one-hot sum proofs, vector aggregation and threshold
+decryption, cast/audited receipt binding, disclosed-randomness re-encryption,
+Merkle root, and organization signatures. DKG-bearing v5 remains a separate
+unimplemented cross-verification layer.
+
 To build and sign an exported source without sending private keys to the server:
 
 ```bash

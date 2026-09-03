@@ -148,6 +148,9 @@ function candidateMessage(index) {
 }
 
 function verifyBallotProof(publicKeyY, ballot, candidates) {
+  requireExactKeys(ballot, ['nullifierHash', 'candidateCommitment', 'ciphertext', 'validityProof'], 'ballot');
+  requireExactKeys(ballot.ciphertext, ['c1', 'c2'], 'ballot.ciphertext');
+  requireExactKeys(ballot.validityProof, ['a1s', 'a2s', 'es', 'zs'], 'ballot.validityProof');
   const c1 = parseHex(ballot.ciphertext.c1, 'ballot.c1', { subgroup: true });
   const c2 = parseHex(ballot.ciphertext.c2, 'ballot.c2', { subgroup: true });
   const proof = ballot.validityProof;
@@ -191,6 +194,7 @@ function encodedTally(results, candidates) {
 }
 
 function verifyDecryptionProof(publicKeyY, aggregate, results, candidates, proof) {
+  requireExactKeys(proof, ['nullifierHash', 'c1', 'c2', 'decryptedHash', 'a1', 'a2', 'e', 'z'], 'decryptionProof');
   if (!proof || proof.nullifierHash !== 'HOMOMORPHIC_TALLY') throw new Error('missing homomorphic tally proof');
   if (proof.c1 !== aggregate.c1 || proof.c2 !== aggregate.c2) throw new Error('tally proof ciphertext mismatch');
   const sum = encodedTally(results, candidates);
@@ -261,6 +265,7 @@ function verifyThresholdDecryptions(publicKeyY, aggregate, results, candidates, 
   const values = new Map();
   const publicValues = new Map();
   for (const partial of partials) {
+    requireExactKeys(partial, ['index', 'mspID', 'publicKeyY', 'value', 'proof'], `partial[${partial.index}]`);
     if (values.has(partial.index)) throw new Error(`duplicate partial decryption index: ${partial.index}`);
     const expected = configured.get(partial.index);
     if (!expected || expected.mspID !== partial.mspID || expected.publicKeyY !== partial.publicKeyY) {
@@ -293,15 +298,18 @@ function verifyThresholdDecryptions(publicKeyY, aggregate, results, candidates, 
 }
 
 function verifyVectorBallotProof(publicKeyY, ballot, candidateCount) {
+  requireExactKeys(ballot.validityProof, ['bitProofs', 'sumProof'], 'vector validityProof');
   if (!Array.isArray(ballot.ciphertextVector) || ballot.ciphertextVector.length !== candidateCount ||
       !Array.isArray(ballot.validityProof?.bitProofs) || ballot.validityProof.bitProofs.length !== candidateCount) {
     throw new Error('invalid vector ballot/proof dimensions');
   }
   let productC1 = 1n, productC2 = 1n;
   ballot.ciphertextVector.forEach((ciphertext, index) => {
+    requireExactKeys(ciphertext, ['c1', 'c2'], `ciphertextVector[${index}]`);
     const c1 = parseHex(ciphertext.c1, `ciphertextVector[${index}].c1`, { subgroup: true });
     const c2 = parseHex(ciphertext.c2, `ciphertextVector[${index}].c2`, { subgroup: true });
     const proof = ballot.validityProof.bitProofs[index], messages = [1n, G];
+    requireExactKeys(proof, ['a1s', 'a2s', 'es', 'zs'], `bitProof[${index}]`);
     for (const name of ['a1s', 'a2s', 'es', 'zs']) if (!Array.isArray(proof?.[name]) || proof[name].length !== 2) throw new Error(`bit proof ${index}.${name} invalid`);
     let sum = 0n;
     const domain = `mongbas/vector-v3/bit/${index}`;
@@ -321,6 +329,7 @@ function verifyVectorBallotProof(publicKeyY, ballot, candidateCount) {
   });
   const result2 = (productC2 * modInverse(G, P)) % P;
   const proof = ballot.validityProof.sumProof;
+  requireExactKeys(proof, ['a1', 'a2', 'e', 'z'], 'sumProof');
   const a1 = parseHex(proof?.a1, 'sumProof.a1', { subgroup: true }), a2 = parseHex(proof?.a2, 'sumProof.a2', { subgroup: true });
   const e = parseHex(proof?.e, 'sumProof.e', { scalar: true }), z = parseHex(proof?.z, 'sumProof.z', { scalar: true });
   const transcript = `mongbas/vector-v3/sum|${G.toString(16)}|${publicKeyY.toString(16)}|${productC1.toString(16)}|${result2.toString(16)}|${a1.toString(16)}|${a2.toString(16)}`;
@@ -333,6 +342,7 @@ function verifyVectorThresholdDecryptions(publicKeyY, aggregates, results, candi
   const configured = validateTrusteePublicShares(publicShares);
   const publicValues = new Map(), values = aggregates.map(() => new Map());
   for (const partial of partials) {
+    requireExactKeys(partial, ['index', 'mspID', 'publicKeyY', 'values', 'proofs'], `vectorPartial[${partial.index}]`);
     if (publicValues.has(partial.index) || !Array.isArray(partial.values) || partial.values.length !== candidates.length || !Array.isArray(partial.proofs) || partial.proofs.length !== candidates.length) throw new Error(`partial ${partial.index} shape/duplicate failure`);
     const expected = configured.get(partial.index);
     if (!expected || expected.mspID !== partial.mspID || expected.publicKeyY !== partial.publicKeyY) throw new Error(`partial ${partial.index} trustee binding mismatch`);
@@ -437,6 +447,7 @@ function verifyVectorAuditTrail(bundle, y) {
     if (receipt.schema !== 'mongbas-vector-ballot-receipt/v1' || !/^[0-9a-f]{64}$/.test(receipt.ballotID) ||
         !/^[0-9a-f]{64}$/.test(receipt.artifactHash) || receipt.electionID !== bundle.configuration.electionID ||
         !['cast', 'audited'].includes(receipt.status) || !Number.isSafeInteger(receipt.createdAt) || !Number.isSafeInteger(receipt.terminalAt) ||
+        receipt.createdAt < 0 || receipt.terminalAt < 0 ||
         typeof receipt.createdTxID !== 'string' || !receipt.createdTxID || typeof receipt.terminalTxID !== 'string' || !receipt.terminalTxID ||
         receiptByID.has(receipt.ballotID)) throw new Error(`invalid/duplicate receipt ${index}`);
     receiptByID.set(receipt.ballotID, receipt);
@@ -458,6 +469,8 @@ function verifyVectorAuditTrail(bundle, y) {
         disclosure.electionID !== bundle.configuration.electionID || !/^[0-9a-f]{64}$/.test(disclosure.clientNonce) ||
         !Array.isArray(disclosure.randomness) || disclosure.randomness.length !== bundle.configuration.candidates.length ||
         !Number.isInteger(disclosure.selectedIndex) || disclosure.selectedIndex < 0 || disclosure.selectedIndex >= bundle.configuration.candidates.length ||
+        !Number.isSafeInteger(disclosure.auditedAt) || disclosure.auditedAt < 0 ||
+        typeof disclosure.auditedTxID !== 'string' || disclosure.auditedTxID.length === 0 ||
         disclosedIDs.has(disclosure.ballotID)) throw new Error(`invalid/duplicate disclosure ${index}`);
     disclosedIDs.add(disclosure.ballotID);
     const receipt = receiptByID.get(disclosure.ballotID);
@@ -568,6 +581,7 @@ function verifyVectorBundle(bundle) {
   // already-invalid bundle must not force minutes of modular proof work.
   // Honest bundles and proof-only mutations still execute every ZKP below.
   if (Array.isArray(ballots) && y && Array.isArray(candidates)) ballots.forEach((ballot, index) => check(`ballots[${index}].binding`, () => {
+    requireExactKeys(ballot, ['nullifierHash', 'preparedBallotID', 'candidateCommitment', 'ciphertextVector', 'validityProof'], `ballots[${index}]`);
     if (!/^[0-9a-f]{64}$/.test(ballot.nullifierHash) || seen.has(ballot.nullifierHash)) throw new Error('invalid/duplicate nullifier');
     seen.add(ballot.nullifierHash);
     const canonicalVector = JSON.stringify(ballot.ciphertextVector);
@@ -637,6 +651,7 @@ function verifyBundleUnchecked(bundle) {
     }));
   }
   const aggregate = bundle?.aggregateCiphertext;
+  check('aggregateCiphertext envelope', () => requireExactKeys(aggregate, ['c1', 'c2'], 'aggregateCiphertext'));
   if (aggregate?.c1 !== aggregateC1.toString(16) || aggregate?.c2 !== aggregateC2.toString(16)) errors.push('aggregateCiphertext: does not equal product of ballots');
   if (bundle?.tally?.totalVotes !== ballots?.length) errors.push('tally.totalVotes: does not equal ballot count');
   if (candidates && bundle?.tally?.results) {
