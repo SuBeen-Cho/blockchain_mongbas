@@ -181,7 +181,7 @@ async function connectGateway() {
   const network  = gateway.getNetwork(CHANNEL_NAME);
   const contract = network.getContract(CHAINCODE_NAME);
 
-  return { gateway, contract };
+  return { gateway, network, contract };
 }
 
 /**
@@ -210,7 +210,7 @@ async function connectGatewayAsVoter(mspId, voterCertPem, voterKeyPem) {
   const network  = gateway.getNetwork(CHANNEL_NAME);
   const contract = network.getContract(CHAINCODE_NAME);
 
-  return { gateway, contract };
+  return { gateway, network, contract };
 }
 
 async function connectGatewayForOrg(mspId) {
@@ -237,7 +237,7 @@ async function connectGatewayForOrg(mspId) {
 
   const network  = gateway.getNetwork(CHANNEL_NAME);
   const contract = network.getContract(CHAINCODE_NAME);
-  return { gateway, contract };
+  return { gateway, network, contract };
 }
 
 async function connectGatewayForShareIndex(shareIndex) {

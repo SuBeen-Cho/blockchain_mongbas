@@ -53,6 +53,23 @@ node bin/mongbas-witness.js observe-cast-history cast-history.json election-bund
 node bin/mongbas-witness.js verify-cast-history cast-history.json cast-checkpoints.jsonl witness-trust.json 2
 ```
 
+For a deployed history-enabled chaincode, export an explicitly bounded Fabric
+block range and then build the public history plus its separately protected
+private selection manifest:
+
+```bash
+cd application
+npm run history:export -- --election-id election-2026 --start-block 100 --end-block 250 --output /private/fabric-history-input.json
+cd ../verifier
+node bin/mongbas-cast-history.js /private/fabric-history-input.json <context-sha256> 300 cast-history.json /private/cast-selection-manifest.json
+```
+
+The exporter reads valid transactions from filtered block events, preserves the
+actual transaction index in each block, and opens each notice using the PDC
+record keyed by transaction ID. It refuses to overwrite output. This command
+requires a separately approved chaincode deployment before it can be exercised
+against a live Fabric ledger.
+
 These commands use checkpoint v3 with discriminated `opening` and
 `observation` entries. The opening has tree size zero and no bundle fields; an
 observation signs the cast-history summary, the complete artifact hash and the

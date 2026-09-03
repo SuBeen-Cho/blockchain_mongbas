@@ -31,6 +31,7 @@ const crypto  = require('crypto');
 const { connectGateway } = require('../gateway');
 const { fabricConcurrencyGate } = require('../lib/fabricConcurrencyGate');
 const { submitTransactionAndWait } = require('../lib/submitTransaction');
+const { createCastHistoryTransient } = require('../lib/castHistory');
 const liveCount = require('../lib/liveCount');  // [부스 시연] 라이브 투표 카운터
 const demoLive  = require('../lib/demoLive');   // [부스 시연] 라이브 암호문 표 + 셔플 + 이벤트 버스
 const { demoEndpointsEnabled, requireDemoEndpoint } = require('../lib/demoFeatures');
@@ -178,6 +179,7 @@ router.post('/', async (req, res) => {
     // submit()은 오더러 전송까지만 기다림. 커밋 확인을 위해 getStatus() 필요.
     const transientData = {
       votePrivate: Buffer.from(JSON.stringify(votePrivateData)),
+      ...createCastHistoryTransient(),
     };
 
     // [CRIT-01/02 FIX] 자격증명 메타데이터를 체인코드로 전달 — 체인코드 독립 검증용
@@ -217,7 +219,7 @@ router.post('/', async (req, res) => {
     }
 
     // blind mode: candidateID를 빈 문자열로 전달 → 체인코드가 transient의 encryptedCandidateID 사용
-    const proposal = contract.newProposal('CastVote', {
+    const proposal = contract.newProposal('CastVoteWithHistory', {
       arguments: [electionID, isBlindMode ? '' : candidateID, nullifierHash],
       transientData,
     });
@@ -372,6 +374,7 @@ router.post('/cast-vector', async (req, res) => {
     ...credential.transientData,
     votePrivate: Buffer.from(JSON.stringify(votePrivate)),
     vectorBallotValidityProof: Buffer.from(JSON.stringify(vectorBallotValidityProof)),
+    ...createCastHistoryTransient(),
   };
   if (credentialType === 'panic') transientData.credentialType = Buffer.from('panic');
   if ((normalLookupToken && panicLookupToken) || (normalPWHash && panicPWHash)) {
@@ -384,7 +387,7 @@ router.post('/cast-vector', async (req, res) => {
     releaseFabricSlot = await fabricConcurrencyGate.acquire();
     const connection = await connectGateway();
     gateway = connection.gateway;
-    await submitTransactionAndWait(connection.contract, 'CastPreparedVectorBallot',
+    await submitTransactionAndWait(connection.contract, 'CastPreparedVectorBallotWithHistory',
       [electionID, ballotID, nullifierHash], { transientData });
     let evictCount = 0;
     try {

@@ -11,6 +11,101 @@ import (
 	bn256 "github.com/ethereum/go-ethereum/crypto/bn256/cloudflare"
 )
 
+type castHistoryStub struct {
+	private      map[string][]byte
+	eventName    string
+	eventPayload []byte
+}
+
+func (stub *castHistoryStub) GetPrivateData(collection, key string) ([]byte, error) {
+	return stub.private[collection+"\x00"+key], nil
+}
+func (stub *castHistoryStub) PutPrivateData(collection, key string, value []byte) error {
+	stub.private[collection+"\x00"+key] = append([]byte(nil), value...)
+	return nil
+}
+func (stub *castHistoryStub) SetEvent(name string, payload []byte) error {
+	stub.eventName, stub.eventPayload = name, append([]byte(nil), payload...)
+	return nil
+}
+
+func TestCastHistoryNoncesRequireDistinctCanonicalHashes(t *testing.T) {
+	validA := strings.Repeat("a", 64)
+	validB := strings.Repeat("b", 64)
+	commitment, receipt, err := parseCastHistoryNonces(map[string][]byte{
+		"castHistoryCommitmentNonce": []byte(validA),
+		"castHistoryReceiptNonce":    []byte(validB),
+	})
+	if err != nil || commitment != validA || receipt != validB {
+		t.Fatalf("valid history nonces rejected: %v", err)
+	}
+	for name, transient := range map[string]map[string][]byte{
+		"missing": {"castHistoryCommitmentNonce": []byte(validA)},
+		"uppercase": {
+			"castHistoryCommitmentNonce": []byte(strings.ToUpper(validA)),
+			"castHistoryReceiptNonce":    []byte(validB),
+		},
+		"equal": {
+			"castHistoryCommitmentNonce": []byte(validA),
+			"castHistoryReceiptNonce":    []byte(validA),
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, _, err := parseCastHistoryNonces(transient); err == nil {
+				t.Fatal("invalid history nonce pair accepted")
+			}
+		})
+	}
+}
+
+func TestPrivateCastEventRecordBindsCommittedArtifact(t *testing.T) {
+	nullifier := Nullifier{ObjectType: "nullifier", NullifierHash: strings.Repeat("c", 64), ElectionID: "election-a",
+		CandidateCommitment: strings.Repeat("d", 64), Timestamp: 1234, EvictCount: 1}
+	txID := strings.Repeat("7", 64)
+	record, err := buildPrivateCastEventRecord(txID, 1234, strings.Repeat("a", 64), strings.Repeat("b", 64), &nullifier)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if record.Schema != castHistoryPrivateRecordSchema || record.TransactionID != txID ||
+		record.SelectionKey != nullifier.NullifierHash || record.CommittedAt != 1234 ||
+		record.BallotArtifact.NullifierHash != nullifier.NullifierHash {
+		t.Fatalf("private cast record lost authoritative fields: %+v", record)
+	}
+	nullifier.NullifierHash = strings.Repeat("e", 64)
+	if record.BallotArtifact.NullifierHash == nullifier.NullifierHash {
+		t.Fatal("private cast record aliases mutable source ballot")
+	}
+	if _, err := buildPrivateCastEventRecord("", 1234, strings.Repeat("a", 64), strings.Repeat("b", 64), &nullifier); err == nil {
+		t.Fatal("empty transaction ID accepted")
+	}
+}
+
+func TestPrivateCastEventPersistenceIsImmutableAndPublicNoticeIsOpaque(t *testing.T) {
+	txID := strings.Repeat("7", 64)
+	nullifier := Nullifier{ObjectType: "nullifier", NullifierHash: strings.Repeat("c", 64), ElectionID: "election-a",
+		CandidateCommitment: strings.Repeat("d", 64), Timestamp: 1234, EvictCount: 1}
+	record, err := buildPrivateCastEventRecord(txID, 1234, strings.Repeat("a", 64), strings.Repeat("b", 64), &nullifier)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stub := &castHistoryStub{private: make(map[string][]byte)}
+	if err := persistPrivateCastEvent(stub, record); err != nil {
+		t.Fatal(err)
+	}
+	stored, err := stub.GetPrivateData(VotePrivatePDC, castHistoryPrivateKeyPrefix+txID)
+	if err != nil || !strings.Contains(string(stored), nullifier.NullifierHash) {
+		t.Fatalf("private opening missing: %v", err)
+	}
+	payload := string(stub.eventPayload)
+	if stub.eventName != castHistoryAcceptedEventName || strings.Contains(payload, nullifier.NullifierHash) ||
+		strings.Contains(payload, record.CommitmentNonce) || strings.Contains(payload, record.ReceiptNonce) {
+		t.Fatalf("public notice leaked private linkage: %s", payload)
+	}
+	if err := persistPrivateCastEvent(stub, record); err == nil {
+		t.Fatal("immutable txID record was overwritten")
+	}
+}
+
 func TestValidateElectionCandidatesAtAuthoritativeBoundary(t *testing.T) {
 	valid := []string{"A", "B"}
 	if err := validateElectionCandidates(valid); err != nil {

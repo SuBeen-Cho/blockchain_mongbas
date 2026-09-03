@@ -187,6 +187,94 @@ type Nullifier struct {
 	IsPadding bool `json:"isPadding,omitempty" metadata:",optional"`
 }
 
+const (
+	castHistoryPrivateRecordSchema = "mongbas-fabric-private-cast-event/v1"
+	castHistoryAcceptedEventName   = "MongbasCastAccepted"
+	castHistoryPrivateKeyPrefix    = "CAST_EVENT_PRIVATE_"
+)
+
+// PrivateCastEventRecord is an immutable PDC opening for one committed cast.
+// It is keyed by Fabric transaction ID. Neither this record nor its nonces are
+// emitted in the public chaincode event.
+type PrivateCastEventRecord struct {
+	Schema          string    `json:"schema"`
+	ElectionID      string    `json:"electionID"`
+	TransactionID   string    `json:"transactionID"`
+	CommittedAt     int64     `json:"committedAt"`
+	CommitmentNonce string    `json:"commitmentNonce"`
+	ReceiptNonce    string    `json:"receiptNonce"`
+	SelectionKey    string    `json:"selectionKey"`
+	BallotArtifact  Nullifier `json:"ballotArtifact"`
+}
+
+type CastHistoryAcceptedEvent struct {
+	Schema     string `json:"schema"`
+	ElectionID string `json:"electionID"`
+}
+
+func parseCastHistoryNonces(transient map[string][]byte) (string, string, error) {
+	commitment := strings.TrimSpace(string(transient["castHistoryCommitmentNonce"]))
+	receipt := strings.TrimSpace(string(transient["castHistoryReceiptNonce"]))
+	if !isCanonicalSHA256Hex(commitment) || !isCanonicalSHA256Hex(receipt) {
+		return "", "", fmt.Errorf("cast history nonce는 64자 소문자 SHA-256 hex여야 합니다")
+	}
+	if subtle.ConstantTimeCompare([]byte(commitment), []byte(receipt)) == 1 {
+		return "", "", fmt.Errorf("cast history commitment/receipt nonce는 서로 달라야 합니다")
+	}
+	return commitment, receipt, nil
+}
+
+func buildPrivateCastEventRecord(txID string, committedAt int64, commitmentNonce, receiptNonce string,
+	ballot *Nullifier) (*PrivateCastEventRecord, error) {
+	if !isCanonicalSHA256Hex(txID) {
+		return nil, fmt.Errorf("Fabric transaction ID는 64자 소문자 SHA-256 hex여야 합니다")
+	}
+	if ballot == nil || !isCanonicalSHA256Hex(ballot.NullifierHash) || ballot.ElectionID == "" {
+		return nil, fmt.Errorf("유효한 committed ballot artifact가 필요합니다")
+	}
+	if !isCanonicalSHA256Hex(commitmentNonce) || !isCanonicalSHA256Hex(receiptNonce) || commitmentNonce == receiptNonce {
+		return nil, fmt.Errorf("유효하고 서로 다른 cast history nonce가 필요합니다")
+	}
+	return &PrivateCastEventRecord{Schema: castHistoryPrivateRecordSchema, ElectionID: ballot.ElectionID,
+		TransactionID: txID, CommittedAt: committedAt, CommitmentNonce: commitmentNonce,
+		ReceiptNonce: receiptNonce, SelectionKey: ballot.NullifierHash, BallotArtifact: *ballot}, nil
+}
+
+type castHistoryPersistenceStub interface {
+	GetPrivateData(collection, key string) ([]byte, error)
+	PutPrivateData(collection, key string, value []byte) error
+	SetEvent(name string, payload []byte) error
+}
+
+func persistPrivateCastEvent(stub castHistoryPersistenceStub, record *PrivateCastEventRecord) error {
+	if record == nil {
+		return fmt.Errorf("cast history private record가 필요합니다")
+	}
+	privateKey := castHistoryPrivateKeyPrefix + record.TransactionID
+	existingRecord, err := stub.GetPrivateData(VotePrivatePDC, privateKey)
+	if err != nil {
+		return fmt.Errorf("cast history private record 중복 확인 실패: %w", err)
+	}
+	if existingRecord != nil {
+		return fmt.Errorf("cast history private record가 이미 존재합니다")
+	}
+	recordBytes, err := json.Marshal(record)
+	if err != nil {
+		return fmt.Errorf("cast history private record 직렬화 실패: %w", err)
+	}
+	if err := stub.PutPrivateData(VotePrivatePDC, privateKey, recordBytes); err != nil {
+		return fmt.Errorf("cast history private record 저장 실패: %w", err)
+	}
+	publicEvent, err := json.Marshal(CastHistoryAcceptedEvent{Schema: "mongbas-cast-accepted-notice/v1", ElectionID: record.ElectionID})
+	if err != nil {
+		return fmt.Errorf("cast history 공개 이벤트 직렬화 실패: %w", err)
+	}
+	if err := stub.SetEvent(castHistoryAcceptedEventName, publicEvent); err != nil {
+		return fmt.Errorf("cast history 공개 이벤트 설정 실패: %w", err)
+	}
+	return nil
+}
+
 // CredentialVerification [CRIT-01/02 FIX] 체인코드 독립 검증용 자격증명 메타데이터
 // API 서버가 transient map "credentialVerification" 키로 전달.
 // 원본 토큰 대신 구조적 속성만 전달하여 신원 노출 방지.
@@ -1784,7 +1872,25 @@ func (c *VotingContract) CastVote(
 	if election.EncryptionMode == "elgamal-vector-v3" {
 		return fmt.Errorf("vector-v3 투표는 PrepareVectorBallot 후 CastPreparedVectorBallot으로만 제출할 수 있습니다")
 	}
-	return c.castVoteInternal(ctx, electionID, candidateID, nullifierHash, "")
+	return c.castVoteInternal(ctx, electionID, candidateID, nullifierHash, "", false)
+}
+
+// CastVoteWithHistory preserves the legacy CastVote semantics while requiring
+// the private nonces needed to produce an append-only cast-event history.
+func (c *VotingContract) CastVoteWithHistory(
+	ctx contractapi.TransactionContextInterface,
+	electionID string,
+	candidateID string,
+	nullifierHash string,
+) error {
+	election, err := c.GetElection(ctx, electionID)
+	if err != nil {
+		return err
+	}
+	if election.EncryptionMode == "elgamal-vector-v3" {
+		return fmt.Errorf("vector-v3 투표는 PrepareVectorBallot 후 CastPreparedVectorBallotWithHistory로만 제출할 수 있습니다")
+	}
+	return c.castVoteInternal(ctx, electionID, candidateID, nullifierHash, "", true)
 }
 
 // castVoteInternal contains the existing validated ledger write. It is not a
@@ -1796,6 +1902,7 @@ func (c *VotingContract) castVoteInternal(
 	candidateID string,
 	nullifierHash string,
 	preparedBallotID string,
+	requireCastHistory bool,
 ) error {
 
 	// ── Step 0: 입력 형식 검증 (CouchDB 인젝션 방지) ──────────
@@ -1829,6 +1936,13 @@ func (c *VotingContract) castVoteInternal(
 	transient, err := ctx.GetStub().GetTransient()
 	if err != nil {
 		return fmt.Errorf("transient 읽기 실패: %w", err)
+	}
+	var historyCommitmentNonce, historyReceiptNonce string
+	if requireCastHistory {
+		historyCommitmentNonce, historyReceiptNonce, err = parseCastHistoryNonces(transient)
+		if err != nil {
+			return err
+		}
 	}
 
 	// ── Step 2: 재투표 확인 / Eviction 처리 (최종 1표만 유효) ──
@@ -2113,6 +2227,17 @@ func (c *VotingContract) castVoteInternal(
 		return fmt.Errorf("Nullifier 원장 저장 실패: %w", err)
 	}
 
+	if requireCastHistory {
+		txID := ctx.GetStub().GetTxID()
+		record, recordErr := buildPrivateCastEventRecord(txID, now, historyCommitmentNonce, historyReceiptNonce, &nullifier)
+		if recordErr != nil {
+			return recordErr
+		}
+		if persistErr := persistPrivateCastEvent(ctx.GetStub(), record); persistErr != nil {
+			return persistErr
+		}
+	}
+
 	log.Printf("[CastVote] 투표 완료 — election: %s, candidate: %s, eviction: %v", electionID, candidateID, isEviction)
 	return nil
 }
@@ -2360,6 +2485,27 @@ func (c *VotingContract) CastPreparedVectorBallot(
 	ballotID string,
 	nullifierHash string,
 ) error {
+	return c.castPreparedVectorBallotInternal(ctx, electionID, ballotID, nullifierHash, false)
+}
+
+// CastPreparedVectorBallotWithHistory is the history-producing counterpart of
+// CastPreparedVectorBallot. The prepared artifact and tally semantics are unchanged.
+func (c *VotingContract) CastPreparedVectorBallotWithHistory(
+	ctx contractapi.TransactionContextInterface,
+	electionID string,
+	ballotID string,
+	nullifierHash string,
+) error {
+	return c.castPreparedVectorBallotInternal(ctx, electionID, ballotID, nullifierHash, true)
+}
+
+func (c *VotingContract) castPreparedVectorBallotInternal(
+	ctx contractapi.TransactionContextInterface,
+	electionID string,
+	ballotID string,
+	nullifierHash string,
+	requireCastHistory bool,
+) error {
 	if err := validateElectionID(electionID); err != nil {
 		return err
 	}
@@ -2425,7 +2571,7 @@ func (c *VotingContract) CastPreparedVectorBallot(
 	if subtle.ConstantTimeCompare([]byte(preparation.ArtifactHash), []byte(artifactHash)) != 1 {
 		return fmt.Errorf("cast artifact가 준비된 vector ballot과 일치하지 않습니다")
 	}
-	if err := c.castVoteInternal(ctx, electionID, "", nullifierHash, ballotID); err != nil {
+	if err := c.castVoteInternal(ctx, electionID, "", nullifierHash, ballotID, requireCastHistory); err != nil {
 		return err
 	}
 	now, err := getTxTime(ctx)
@@ -2965,6 +3111,34 @@ func (c *VotingContract) GetNullifier(
 		return nil, err
 	}
 	return &n, nil
+}
+
+// GetPrivateCastEvent returns the immutable PDC opening for a committed cast.
+// Fabric collection membership remains the authoritative read boundary.
+func (c *VotingContract) GetPrivateCastEvent(
+	ctx contractapi.TransactionContextInterface,
+	transactionID string,
+) (*PrivateCastEventRecord, error) {
+	if !isCanonicalSHA256Hex(transactionID) {
+		return nil, fmt.Errorf("Fabric transaction ID는 64자 소문자 SHA-256 hex여야 합니다")
+	}
+	encoded, err := ctx.GetStub().GetPrivateData(VotePrivatePDC, castHistoryPrivateKeyPrefix+transactionID)
+	if err != nil {
+		return nil, fmt.Errorf("cast history private record 조회 실패: %w", err)
+	}
+	if encoded == nil {
+		return nil, fmt.Errorf("cast history private record를 찾을 수 없습니다")
+	}
+	var record PrivateCastEventRecord
+	if err := json.Unmarshal(encoded, &record); err != nil {
+		return nil, fmt.Errorf("cast history private record 파싱 실패: %w", err)
+	}
+	if record.Schema != castHistoryPrivateRecordSchema || record.TransactionID != transactionID ||
+		record.ElectionID == "" || record.SelectionKey != record.BallotArtifact.NullifierHash ||
+		record.ElectionID != record.BallotArtifact.ElectionID {
+		return nil, fmt.Errorf("cast history private record 무결성 검증 실패")
+	}
+	return &record, nil
 }
 
 func resolveCandidateID(ctx contractapi.TransactionContextInterface, electionID string, n *Nullifier) string {

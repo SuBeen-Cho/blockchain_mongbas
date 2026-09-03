@@ -15,6 +15,7 @@
     "e2e:vector-aoc": "node scripts/vector-audit-or-cast-e2e.js",
     "e2e:merkle": "node scripts/merkle-e2e-smoke.js",
     "e2e:full": "node scripts/full-election-e2e.js",
+    "history:export": "node scripts/export-cast-history-records.js",
     "bench:elgamal": "node benchmark/elgamal-e2e-bench.js",
     "bench:elgamal:conc": "node benchmark/elgamal-concurrency-bench.js",
     "bench:elgamal:rate": "node benchmark/elgamal-rate-bench.js",
