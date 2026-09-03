@@ -11,6 +11,27 @@ import (
 	bn256 "github.com/ethereum/go-ethereum/crypto/bn256/cloudflare"
 )
 
+func TestValidateElectionCandidatesAtAuthoritativeBoundary(t *testing.T) {
+	valid := []string{"A", "B"}
+	if err := validateElectionCandidates(valid); err != nil {
+		t.Fatalf("valid candidates rejected: %v", err)
+	}
+	for name, candidates := range map[string][]string{
+		"empty":     {"A", ""},
+		"duplicate": {"A", "A"},
+		"overlong":  {"A", strings.Repeat("나", 257)},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if err := validateElectionCandidates(candidates); err == nil {
+				t.Fatal("invalid candidate configuration accepted")
+			}
+		})
+	}
+	if err := validateElectionCandidates([]string{"A", strings.Repeat("나", 256)}); err != nil {
+		t.Fatalf("256-character boundary rejected: %v", err)
+	}
+}
+
 func TestPSCredentialPairingSerializationAndTamper(t *testing.T) {
 	x := big.NewInt(17)
 	ys := []*big.Int{big.NewInt(19), big.NewInt(23), big.NewInt(29), big.NewInt(31)}

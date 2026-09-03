@@ -31,6 +31,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	ml "github.com/IBM/mathlib"
 	bn256 "github.com/ethereum/go-ethereum/crypto/bn256/cloudflare"
@@ -1234,8 +1235,8 @@ func (c *VotingContract) CreateElection(
 	if err := json.Unmarshal([]byte(candidatesJSON), &candidates); err != nil {
 		return fmt.Errorf("후보자 JSON 파싱 실패: %w", err)
 	}
-	if len(candidates) < 2 {
-		return fmt.Errorf("후보자는 최소 2명 이상이어야 합니다")
+	if err := validateElectionCandidates(candidates); err != nil {
+		return err
 	}
 
 	// 시간 유효성
@@ -3564,6 +3565,27 @@ func ComputeNullifierHash(voterSecret, electionID string) string {
 	h := sha256.New()
 	h.Write([]byte(voterSecret + electionID))
 	return fmt.Sprintf("%x", h.Sum(nil))
+}
+
+// validateElectionCandidates enforces the same candidate-name and uniqueness
+// contract at the authoritative Fabric boundary as the HTTP admission layer.
+// A candidate-count ceiling is intentionally a separate, measured policy decision.
+func validateElectionCandidates(candidates []string) error {
+	if len(candidates) < 2 {
+		return fmt.Errorf("후보자는 최소 2명 이상이어야 합니다")
+	}
+	seen := make(map[string]struct{}, len(candidates))
+	for _, candidate := range candidates {
+		length := utf8.RuneCountInString(candidate)
+		if length < 1 || length > 256 {
+			return fmt.Errorf("후보자 이름은 1~256자의 문자열이어야 합니다")
+		}
+		if _, duplicate := seen[candidate]; duplicate {
+			return fmt.Errorf("중복된 후보자가 있습니다")
+		}
+		seen[candidate] = struct{}{}
+	}
+	return nil
 }
 
 // contains 슬라이스에 특정 문자열이 포함되어 있는지 확인합니다.
