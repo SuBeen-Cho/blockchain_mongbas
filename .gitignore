@@ -83,6 +83,7 @@ Thumbs.db
 showcase-dist/
 
 # 평가 원자료(로컬 유지, GitHub 미포함)
+.private-results/
 docs/performance/
 docs/security-eval/
 
