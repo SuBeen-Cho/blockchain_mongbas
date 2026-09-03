@@ -7,6 +7,7 @@ const { generateVectorBallot } = require('../src/lib/vectorElgamal');
 const baseURL = String(process.env.E2E_BASE_URL || 'http://127.0.0.1:3000').replace(/\/$/, '');
 const adminToken = process.env.ADMIN_API_TOKEN || '';
 const electionID = process.env.E2E_ELECTION_ID || `QR_LIVE_${new Date().toISOString().replace(/[-:.TZ]/g, '')}`;
+const reuseElection = process.env.E2E_REUSE_ELECTION === 'true';
 const candidates = ['ALPHA', 'BRAVO', 'CHARLIE'];
 
 function sha256(value) {
@@ -44,14 +45,20 @@ async function main() {
     throw new Error('backend is not using the bounded QR admission profile');
   }
 
-  const now = Math.floor(Date.now() / 1000);
-  requireStatus('create election', await request('/api/elections', {
-    admin: true, method: 'POST', body: JSON.stringify({ electionID, title: 'QR live E2E', candidates,
-      startTime: now - 5, endTime: now + 3600, encryptionMode: 'elgamal-vector-v3' }),
-  }), 201);
-  requireStatus('activate election', await request(`/api/elections/${electionID}/activate`, {
-    admin: true, method: 'POST', body: '{}',
-  }), 200);
+  let initialCount = 0;
+  if (reuseElection) {
+    initialCount = requireStatus('read initial live count',
+      await request(`/api/elections/${electionID}/live-count`, { admin: true }), 200).totalVotes;
+  } else {
+    const now = Math.floor(Date.now() / 1000);
+    requireStatus('create election', await request('/api/elections', {
+      admin: true, method: 'POST', body: JSON.stringify({ electionID, title: 'QR live E2E', candidates,
+        startTime: now - 5, endTime: now + 3600, encryptionMode: 'elgamal-vector-v3' }),
+    }), 201);
+    requireStatus('activate election', await request(`/api/elections/${electionID}/activate`, {
+      admin: true, method: 'POST', body: '{}',
+    }), 200);
+  }
 
   requireStatus('unauthorized issue', await request('/api/credential/demo-admission', {
     method: 'POST', body: JSON.stringify({ electionID, ttlSeconds: 120 }),
@@ -99,13 +106,14 @@ async function main() {
   const liveVotes = requireStatus('read live votes', await request(`/api/elections/${electionID}/live-votes`, { admin: true }), 200);
   const events = requireStatus('read dashboard events', await request(`/api/elections/${electionID}/demo-events?since=0`, { admin: true }), 200);
   const ledgerLookup = requireStatus('read committed nullifier', await request(`/api/nullifier/${nullifierHash}`), 200);
-  if (liveCount.totalVotes !== 1 || liveVotes.votes?.length !== 1 ||
+  if (liveCount.totalVotes !== initialCount + 1 || liveVotes.votes?.length !== initialCount + 1 ||
       !events.events?.some(event => event.type === 'verify') || !ledgerLookup.credVerifyLevel?.startsWith('chaincode-')) {
     throw new Error('dashboard or Fabric post-cast evidence is incomplete');
   }
 
   process.stdout.write(`${JSON.stringify({ schema: 'mongbas-qr-admission-live-e2e/v1', electionID,
-    encryptionMode: election.encryptionMode, admission: { unauthorizedIssue: 401, wrongElection: 401,
+    reusedElection: reuseElection, encryptionMode: election.encryptionMode,
+    admission: { unauthorizedIssue: 401, wrongElection: 401,
       firstRedemption: 200, replay: 401 }, cast: { prepared: true, committed: true,
       isRevote: Boolean(cast.isRevote), credentialVerification: ledgerLookup.credVerifyLevel },
     dashboard: { totalVotes: liveCount.totalVotes, encryptedRows: liveVotes.votes.length,
