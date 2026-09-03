@@ -1,7 +1,6 @@
 'use strict';
 
 const ACCEPTED_EVENT_NAME = 'MongbasCastAccepted';
-const ACCEPTED_EVENT_SCHEMA = 'mongbas-cast-accepted-notice/v1';
 const PRIVATE_RECORD_SCHEMA = 'mongbas-fabric-private-cast-event/v1';
 const HASH_RE = /^[0-9a-f]{64}$/;
 
@@ -23,12 +22,12 @@ function extractAcceptedCastEvents(block, chaincodeName = 'voting') {
     actions.getChaincodeActionsList().forEach(action => {
       const event = action.getChaincodeEvent();
       if (!event || event.getChaincodeId() !== chaincodeName || event.getEventName() !== ACCEPTED_EVENT_NAME) return;
-      const notice = JSON.parse(Buffer.from(event.getPayload_asU8()).toString('utf8'));
-      exactKeys(notice, ['schema', 'electionID'], 'cast accepted notice');
-      if (notice.schema !== ACCEPTED_EVENT_SCHEMA || typeof notice.electionID !== 'string' || notice.electionID.length === 0) {
-        throw new Error('cast accepted notice: invalid schema or election');
-      }
-      result.push({ blockNumber, transactionIndex, transactionID: txID, electionID: notice.electionID });
+      // Fabric filtered-block delivery deliberately omits the chaincode-event
+      // payload. The event name and committed transaction ID identify a
+      // candidate record; its election binding is authenticated by the PDC
+      // opening fetched below. Mocking a payload here masked this live-Fabric
+      // behavior and made the original exporter fail with an empty JSON parse.
+      result.push({ blockNumber, transactionIndex, transactionID: txID });
     });
   });
   return result;
@@ -39,7 +38,9 @@ function privateRecordToProducerRecord(source, encoded) {
   exactKeys(record, ['schema', 'electionID', 'transactionID', 'committedAt', 'commitmentNonce', 'receiptNonce',
     'selectionKey', 'ballotArtifact'], 'private cast record');
   if (record.schema !== PRIVATE_RECORD_SCHEMA || record.transactionID !== source.transactionID ||
-      record.electionID !== source.electionID || !Number.isSafeInteger(record.committedAt) || record.committedAt < 0 ||
+      (source.electionID !== undefined && record.electionID !== source.electionID) ||
+      typeof record.electionID !== 'string' || record.electionID.length === 0 ||
+      !Number.isSafeInteger(record.committedAt) || record.committedAt < 0 ||
       !HASH_RE.test(record.commitmentNonce) || !HASH_RE.test(record.receiptNonce) ||
       record.commitmentNonce === record.receiptNonce || !HASH_RE.test(record.selectionKey) ||
       !record.ballotArtifact || record.ballotArtifact.electionID !== source.electionID ||
@@ -65,12 +66,13 @@ async function collectCastHistoryRecords({ blocks, contract, electionID, endBloc
     const blockNumber = block.getNumber();
     if (blockNumber > endBlock) break;
     for (const source of extractAcceptedCastEvents(block)) {
-      if (source.electionID !== electionID) continue;
       const encoded = await contract.evaluateTransaction('GetPrivateCastEvent', source.transactionID);
       const bytes = Buffer.from(encoded);
       if (bytes.length > maxRecordBytes) throw new Error('private cast record exceeds byte limit');
+      const privateRecord = JSON.parse(bytes.toString('utf8'));
+      if (privateRecord.electionID !== electionID) continue;
       if (records.length >= maxRecords) throw new Error('cast history record count exceeds limit');
-      records.push(privateRecordToProducerRecord(source, bytes.toString('utf8')));
+      records.push(privateRecordToProducerRecord({ ...source, electionID }, privateRecord));
     }
     if (blockNumber === endBlock) break;
   }

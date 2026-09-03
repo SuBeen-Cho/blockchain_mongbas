@@ -5,9 +5,10 @@ const test = require('node:test');
 const { extractAcceptedCastEvents, privateRecordToProducerRecord, collectCastHistoryRecords } = require('../src/lib/castHistoryFabric');
 
 const hash = value => value.repeat(64);
-const event = (name, payload, chaincode = 'voting') => ({
+const event = (name, _payload, chaincode = 'voting') => ({
   getChaincodeId: () => chaincode, getEventName: () => name,
-  getPayload_asU8: () => Buffer.from(JSON.stringify(payload)),
+  // Real filtered blocks omit chaincode-event payload bytes.
+  getPayload_asU8: () => Buffer.alloc(0),
 });
 const tx = (id, code, events) => ({ getTxid: () => id, getTxValidationCode: () => code,
   getTransactionActions: () => ({ getChaincodeActionsList: () => events.map(item => ({ getChaincodeEvent: () => item })) }) });
@@ -20,7 +21,7 @@ test('filtered block extraction preserves the actual Fabric transaction index', 
     tx(hash('3'), 0, [event('MongbasCastAccepted', notice)]),
   ] };
   assert.deepEqual(extractAcceptedCastEvents(block), [{ blockNumber: 19, transactionIndex: 2,
-    transactionID: hash('3'), electionID: 'election-a' }]);
+    transactionID: hash('3') }]);
 });
 
 test('private opening is strictly bound to its public Fabric source', () => {
@@ -46,7 +47,7 @@ test('bounded collector exports only the selected election and stops at the requ
     yield block(6, hash('3'), 'election-a');
   }
   const contract = { evaluateTransaction: async (_name, transactionID) => Buffer.from(JSON.stringify({
-    schema: 'mongbas-fabric-private-cast-event/v1', electionID: 'election-a', transactionID, committedAt: 1234,
+    schema: 'mongbas-fabric-private-cast-event/v1', electionID: transactionID === hash('2') ? 'election-b' : 'election-a', transactionID, committedAt: 1234,
     commitmentNonce: hash('a'), receiptNonce: hash('b'), selectionKey: hash('c'),
     ballotArtifact: { electionID: 'election-a', nullifierHash: hash('c') },
   })) };
