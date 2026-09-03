@@ -13,11 +13,16 @@ function checkpoint(kind, sequence, treeSize) {
 test('exclusive signed-checkpoint window reveals target participation or abstention', () => {
   const cast = evaluateExclusiveTargetWindow([checkpoint('opening', 1, 0), checkpoint('observation', 2, 1)]);
   assert.equal(cast.inferredTargetParticipated, true);
+  assert.equal(cast.inferredTargetCastEvents, 1);
+  assert.equal(cast.patternedRevoteObservable, false);
   assert.equal(cast.verdict, 'failed-under-declared-model');
   assert.equal(cast.deterministicClassifierAccuracy, 1);
   assert.equal(cast.forcedAbstentionResistance, false);
   const abstained = evaluateExclusiveTargetWindow([checkpoint('opening', 1, 0), checkpoint('observation', 2, 0)]);
   assert.equal(abstained.inferredTargetParticipated, false);
+  const revoted = evaluateExclusiveTargetWindow([checkpoint('opening', 1, 0), checkpoint('observation', 2, 2)]);
+  assert.equal(revoted.inferredTargetCastEvents, 2);
+  assert.equal(revoted.patternedRevoteObservable, true);
   assert.throws(() => evaluateExclusiveTargetWindow([checkpoint('observation', 1, 0), checkpoint('observation', 2, 1)]),
     /genuine empty opening/);
   assert.throws(() => evaluateExclusiveTargetWindow([checkpoint('opening', 1, 0), checkpoint('observation', 2, 2),

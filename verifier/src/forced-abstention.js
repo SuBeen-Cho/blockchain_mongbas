@@ -37,10 +37,12 @@ function evaluateExclusiveTargetWindow(checkpoints) {
     exclusiveTargetWindowAssumed: true,
     observedDelta,
     inferredTargetParticipated: observedDelta > 0,
+    inferredTargetCastEvents: observedDelta,
+    patternedRevoteObservable: observedDelta > 1,
     deterministicClassifierAccuracy: 1,
     verdict: 'failed-under-declared-model',
     forcedAbstentionResistance: false,
-    limitation: 'The inference is valid only when the adversary knows no other voter can create an event in the observed window. It does not identify a voter in a multi-voter or cover-traffic window.',
+    limitation: 'Participation and event-count inference are valid only when the adversary knows no other voter can create an event in the observed window. They do not identify a voter or a revote in a multi-voter or cover-traffic window.',
   };
 }
 

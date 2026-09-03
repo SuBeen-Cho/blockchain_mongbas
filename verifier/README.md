@@ -82,8 +82,10 @@ node bin/mongbas-forced-abstention.js cast-checkpoints.jsonl witness-trust.json 
 
 For a valid log the command emits a bounded JSON evaluation and exits `1` to
 represent a failed security property under that declared model. Invalid input
-exits `2`. A positive tree-size delta does not identify a target in a multi-voter
-or cover-traffic window, and this evaluator is not evidence of a general voter
+exits `2`. Under the declared exclusive-target assumption the delta also exposes
+the number of cast events and therefore whether more than one event occurred. A
+positive delta does not identify a target or revote in a multi-voter or
+cover-traffic window, and this evaluator is not evidence of a general voter
 identity linkage attack.
 
 For a deployed history-enabled chaincode, export an explicitly bounded Fabric
