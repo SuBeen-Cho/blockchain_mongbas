@@ -285,6 +285,20 @@ Use this launcher as the systemd `ExecStart` command rather than exposing a
 separate unchecked `omniwitness` start path. A failed, missing, stale or forked
 anchor exits before `exec` and therefore before the HTTP listener starts.
 
+Create a consistent SQLite snapshot with the online-backup API rather than
+copying the database, WAL and SHM files independently. The destination must not
+exist and is published atomically with mode `0600`:
+
+```bash
+./deploy/linux/witness-db-snapshot.py \
+  /witness-state/witness.db /separate-backup/witness-2026-09-04.db
+```
+
+The tool integrity-checks both source and snapshot. Before switching a restored
+copy into service, keep the witness stopped and run the same external-anchor
+preflight against that copy. Snapshot creation does not advance the anchor and
+does not authorize signing from an older database.
+
 A database behind the anchor is rejected as rollback. A database ahead of the
 anchor is also rejected: verify and advance the protected anchor through the
 normal consistency-proof path before restarting. This wrapper understands the
