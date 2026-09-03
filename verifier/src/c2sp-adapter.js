@@ -266,6 +266,27 @@ function advanceCheckpointAnchor({ cosignedCheckpoint, request, logTrust, witnes
   return { anchor, quorumResult: quorum };
 }
 
+function verifyCheckpointAnchorState({ cosignedCheckpoint, logTrust, witnessPolicy, anchor }) {
+  if (!anchor || typeof anchor !== 'object' || Array.isArray(anchor) ||
+      Object.keys(anchor).sort().join('\0') !== 'checkpointSha256\0origin\0rootHash\0schema\0treeSize' ||
+      anchor.schema !== 'mongbas-c2sp-checkpoint-anchor/v1' || typeof anchor.origin !== 'string' ||
+      !Number.isSafeInteger(anchor.treeSize) || anchor.treeSize < 0 ||
+      !HASH_RE.test(anchor.rootHash) || !HASH_RE.test(anchor.checkpointSha256)) {
+    throw new Error('invalid C2SP checkpoint anchor');
+  }
+  const checkpoint = parseAndVerifySignedCheckpoint(cosignedCheckpoint, logTrust);
+  const quorum = verifyWitnessCosignatures(cosignedCheckpoint, {
+    witnesses: witnessPolicy?.witnesses, quorum: witnessPolicy?.quorum,
+  });
+  const checkpointSha256 = crypto.createHash('sha256').update(cosignedCheckpoint).digest('hex');
+  if (checkpoint.origin !== anchor.origin) throw new Error('C2SP witness state origin does not match external anchor');
+  if (checkpoint.treeSize < anchor.treeSize) throw new Error('C2SP witness database rollback detected');
+  if (checkpoint.treeSize > anchor.treeSize) throw new Error('C2SP external anchor is stale; advance it before witness startup');
+  if (checkpoint.rootHash !== anchor.rootHash) throw new Error('C2SP witness database fork detected');
+  if (checkpointSha256 !== anchor.checkpointSha256) throw new Error('C2SP witness checkpoint bytes do not match external anchor');
+  return { valid: true, checkpoint, quorumResult: quorum };
+}
+
 async function readBoundedResponse(response, maximumBytes = MAX_WITNESS_RESPONSE_BYTES) {
   const declared = response.headers.get('content-length');
   if (declared !== null && (!/^(?:0|[1-9][0-9]*)$/.test(declared) || Number(declared) > maximumBytes)) {
@@ -367,5 +388,6 @@ module.exports = {
   createWitnessRequest,
   parseAndVerifySignedCheckpoint,
   submitWitnessRequest,
+  verifyCheckpointAnchorState,
   verifyWitnessCosignatures,
 };

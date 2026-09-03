@@ -256,6 +256,27 @@ node bin/mongbas-c2sp.js advance-anchor \
 
 The anchor must be stored on a separately protected or immutable system and compared before a witness resumes signing. Keeping it beside the same rollback-prone database does not mitigate host compromise or storage rollback.
 
+For the pinned `transparency-dev/witness` SQLite schema, run the Linux startup
+preflight while the witness is stopped and before starting its HTTP listener. It
+performs SQLite integrity checking, extracts exactly one checkpoint for the
+configured origin through a read-only connection, verifies the log signature
+and witness quorum, and requires the origin, size, root and complete cosigned
+checkpoint hash to match the external anchor exactly:
+
+```bash
+./deploy/linux/witness-anchor-preflight.sh \
+  /witness-state/witness.db mongbas.example/cast-history/election-id \
+  log-trust.json witness-policy.json /separate-state/c2sp-anchor.json
+```
+
+A database behind the anchor is rejected as rollback. A database ahead of the
+anchor is also rejected: verify and advance the protected anchor through the
+normal consistency-proof path before restarting. This wrapper understands the
+pinned upstream `logs`/`chkpts` SQLite schema; re-audit it before upgrading the
+upstream witness. It is a startup gate, not a substitute for separate storage,
+an immutable anchor, independent administration or consistent DB/WAL/SHM
+snapshots.
+
 ## Implemented checks
 
 - exact schema and algorithm identifiers;

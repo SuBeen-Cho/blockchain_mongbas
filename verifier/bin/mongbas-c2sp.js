@@ -5,7 +5,7 @@ const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
 const { advanceCheckpointAnchor, createC2spSubmissionFromV3Log, createWitnessRequest, parseAndVerifySignedCheckpoint,
-  submitWitnessRequest, verifyWitnessCosignatures } = require('../src/c2sp-adapter');
+  submitWitnessRequest, verifyCheckpointAnchorState, verifyWitnessCosignatures } = require('../src/c2sp-adapter');
 const { readBoundedRegularFile, MAX_PRIVATE_KEY_BYTES } = require('../src/input');
 const { parseCanonicalLog } = require('../src/witness');
 
@@ -20,7 +20,17 @@ function usage() {
   console.error('       mongbas-c2sp verify-cosignatures <cosigned-checkpoint.note> <log-trust.json> <witness-policy.json>');
   console.error('       mongbas-c2sp initialize-anchor <request> <cosigned-checkpoint.note> <log-trust.json> <witness-policy.json> <anchor.json>');
   console.error('       mongbas-c2sp advance-anchor <request> <cosigned-checkpoint.note> <log-trust.json> <witness-policy.json> <anchor.json>');
+  console.error('       mongbas-c2sp check-anchor <cosigned-checkpoint.note> <log-trust.json> <witness-policy.json> <anchor.json>');
   process.exit(2);
+}
+
+function checkAnchor(noteFile, logTrustFile, policyFile, anchorFile) {
+  const note = readBoundedRegularFile(noteFile, 'witness database checkpoint', MAX_NOTE_BYTES, { encoding: 'utf8' });
+  const logTrust = readJson(logTrustFile, 'C2SP log trust');
+  const policy = strictPolicy(readJson(policyFile, 'C2SP witness policy'), logTrust);
+  const anchor = readJson(anchorFile, 'C2SP checkpoint anchor');
+  const result = verifyCheckpointAnchorState({ cosignedCheckpoint: note, logTrust, witnessPolicy: policy, anchor });
+  console.log(`C2SP ANCHOR MATCH: origin=${result.checkpoint.origin} treeSize=${result.checkpoint.treeSize} quorum=${result.quorumResult.acceptedWitnesses.length}/${result.quorumResult.quorum}`);
 }
 
 function readJson(file, label) {
@@ -178,6 +188,7 @@ async function main() {
   else if (command === 'verify-cosignatures' && args.length === 3) verifyCosignatures(...args);
   else if (command === 'initialize-anchor' && args.length === 5) updateAnchor(true, ...args);
   else if (command === 'advance-anchor' && args.length === 5) updateAnchor(false, ...args);
+  else if (command === 'check-anchor' && args.length === 4) checkAnchor(...args);
   else usage();
 }
 

@@ -16,6 +16,7 @@ const {
   parseAndVerifySignedCheckpoint,
   submitWitnessRequest,
   verifyWitnessCosignatures,
+  verifyCheckpointAnchorState,
 } = require('../src/c2sp-adapter');
 const { createOpeningCheckpoint, publicKeyDer, TRUST_SCHEMA } = require('../src/witness');
 const { canonicalize } = require('../src/verify');
@@ -372,10 +373,56 @@ test('C2SP anchor CLI requires explicit initialization and preserves state on ro
   const original = fs.readFileSync(files.anchor, 'utf8');
   const duplicateInit = spawnSync(process.execPath, [cli, 'initialize-anchor', files.request, files.note, files.trust, files.policy, files.anchor], { encoding: 'utf8' });
   assert.equal(duplicateInit.status, 1); assert.match(duplicateInit.stderr, /already exists/);
+  const matching = spawnSync(process.execPath, [cli, 'check-anchor', files.note, files.trust, files.policy, files.anchor], { encoding: 'utf8' });
+  assert.equal(matching.status, 0, matching.stderr); assert.match(matching.stdout, /C2SP ANCHOR MATCH/);
+  const anchor = JSON.parse(fs.readFileSync(files.anchor, 'utf8'));
+  assert.equal(verifyCheckpointAnchorState({ cosignedCheckpoint: cosigned, logTrust: trust,
+    witnessPolicy: policy, anchor }).valid, true);
+  const rolledBackSigned = createSignedCheckpoint({ origin, treeSize: 0, rootHash: crypto.createHash('sha256').update('').digest('hex'), privateKeyPem: pem(operator) });
+  const rolledBack = appendCosignature(rolledBackSigned, 'witness.example/one', witness, now);
+  assert.throws(() => verifyCheckpointAnchorState({ cosignedCheckpoint: rolledBack, logTrust: trust,
+    witnessPolicy: policy, anchor }), /database rollback/);
   const rollback = spawnSync(process.execPath, [cli, 'advance-anchor', files.request, files.note, files.trust, files.policy, files.anchor], { encoding: 'utf8' });
   assert.equal(rollback.status, 1); assert.match(rollback.stderr, /does not start at previous size/);
   assert.equal(fs.readFileSync(files.anchor, 'utf8'), original);
   assert.equal(fs.existsSync(`${files.anchor}.lock`), false);
+});
+
+test('Linux witness startup preflight rejects a SQLite checkpoint behind its external anchor', t => {
+  if (spawnSync('python3', ['--version']).status !== 0) return t.skip('python3 is unavailable');
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'mongbas-witness-db-preflight-'));
+  fs.chmodSync(directory, 0o700);
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+  const operator = crypto.generateKeyPairSync('ed25519'), witness = crypto.generateKeyPairSync('ed25519');
+  const origin = 'mongbas.example/cast-history/sqlite-preflight', now = Math.floor(Date.now() / 1000);
+  const trust = { origin, publicKeyDer: operator.publicKey.export({ format: 'der', type: 'spki' }).toString('base64') };
+  const policy = { schema: 'mongbas-c2sp-witness-policy/v1', quorum: 1, witnesses: [{ id: 'one', name: 'witness.example/one',
+    publicKeyDer: witness.publicKey.export({ format: 'der', type: 'spki' }).toString('base64') }] };
+  const root = crypto.createHash('sha256').update('current').digest('hex');
+  const signed = createSignedCheckpoint({ origin, treeSize: 2, rootHash: root, privateKeyPem: pem(operator) });
+  const current = appendCosignature(signed, 'witness.example/one', witness, now);
+  const anchor = advanceCheckpointAnchor({ cosignedCheckpoint: current,
+    request: createWitnessRequest({ oldSize: 0, consistencyPath: [], signedCheckpoint: signed }),
+    logTrust: trust, witnessPolicy: policy }).anchor;
+  const files = { db: path.join(directory, 'witness.db'), note: path.join(directory, 'checkpoint.note'),
+    trust: path.join(directory, 'trust.json'), policy: path.join(directory, 'policy.json'), anchor: path.join(directory, 'anchor.json') };
+  fs.writeFileSync(files.note, current); fs.writeFileSync(files.trust, JSON.stringify(trust));
+  fs.writeFileSync(files.policy, JSON.stringify(policy)); fs.writeFileSync(files.anchor, JSON.stringify(anchor));
+  const sqlite = 'import sqlite3,sys\n' +
+    'db,origin,note=sys.argv[1:]\ncon=sqlite3.connect(db)\n' +
+    'con.executescript("CREATE TABLE logs(logID BLOB PRIMARY KEY, origin STRING NOT NULL, vkey STRING NOT NULL, contact STRING, qpd FLOAT64, disabled BOOL); CREATE TABLE chkpts(logID BLOB PRIMARY KEY, chkpt BLOB);")\n' +
+    'key=b"log-id"\ncon.execute("INSERT INTO logs(logID,origin,vkey) VALUES(?,?,?)",(key,origin,"unused"))\n' +
+    'con.execute("INSERT INTO chkpts(logID,chkpt) VALUES(?,?)",(key,open(note,"rb").read()))\ncon.commit()\n';
+  assert.equal(spawnSync('python3', ['-c', sqlite, files.db, origin, files.note], { encoding: 'utf8' }).status, 0);
+  const preflight = path.join(__dirname, '../../deploy/linux/witness-anchor-preflight.sh');
+  const accepted = spawnSync(preflight, [files.db, origin, files.trust, files.policy, files.anchor], { encoding: 'utf8' });
+  assert.equal(accepted.status, 0, accepted.stderr); assert.match(accepted.stdout, /PREFLIGHT PASSED/);
+  const oldSigned = createSignedCheckpoint({ origin, treeSize: 1, rootHash: crypto.createHash('sha256').update('old').digest('hex'), privateKeyPem: pem(operator) });
+  fs.writeFileSync(files.note, appendCosignature(oldSigned, 'witness.example/one', witness, now));
+  const replace = 'import sqlite3,sys\ncon=sqlite3.connect(sys.argv[1])\ncon.execute("UPDATE chkpts SET chkpt=?",(open(sys.argv[2],"rb").read(),))\ncon.commit()\n';
+  assert.equal(spawnSync('python3', ['-c', replace, files.db, files.note], { encoding: 'utf8' }).status, 0);
+  const rejected = spawnSync(preflight, [files.db, origin, files.trust, files.policy, files.anchor], { encoding: 'utf8' });
+  assert.equal(rejected.status, 1); assert.match(rejected.stderr, /database rollback detected/);
 });
 
 test('C2SP CLI verifies both the pinned log signature and witness quorum', t => {
