@@ -223,6 +223,9 @@ test('C2SP witness transport fails closed on conflicts, status and bounded respo
   await assert.rejects(submitWitnessRequest({ ...common, fetchImpl: async () => new Response('failure', { status: 503 }) }), /HTTP 503/);
   await assert.rejects(submitWitnessRequest({ ...common, fetchImpl: async () => new Response('x', {
     status: 200, headers: { 'content-length': '65537' } }) }), /size limit/);
+  await assert.rejects(submitWitnessRequest({ ...common, fetchImpl: async () => new Response(new ReadableStream({
+    start(controller) { controller.enqueue(new Uint8Array(65_537)); controller.close(); },
+  }), { status: 200 }) }), /size limit/);
   await assert.rejects(submitWitnessRequest({ ...common, fetchImpl: async () => new Response(Buffer.from([0xff]), { status: 200 }) }),
     /encoded data|encoding|UTF-8/i);
   await assert.rejects(submitWitnessRequest({ ...common, fetchImpl: async () => new Response('not-a-signature\n', { status: 200 }) }),
