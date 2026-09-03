@@ -150,6 +150,8 @@ N=100 측정은 독립된 loopback 벤치마크 백엔드를 `DISABLE_RATE_LIMIT
 `supply-chain-evidence.sh`는 application/frontend/verifier의 production dependency CycloneDX 1.5 SBOM, deployed npm audit, vendored Go module/toolchain inventory, Docker image digest inventory를 외부 runtime에 저장한다. strict validator는 중복 component reference나 deployed high/critical npm finding이 있으면 non-zero로 종료한다. npm dev/build dependency는 이 production inventory에 포함되지 않으므로 별도 build-tool SBOM/audit이 필요하다. SBOM 존재는 취약점 부재나 공급망 인증을 의미하지 않으며, Go/container/OS 취약점 scanner와 signed provenance는 별도 gate로 남는다.
 `web-security-evaluation.sh`는 일반 backend에서 정적 UI/asset/API의 CSP·frame·nosniff·referrer header, Express 지문 부재, sensitive no-store, allowed/denied CORS, cross-site/`text/plain` mutation 거부, admin/trustee authorization과 demo endpoint 비활성화를 fail closed로 검사한다. 터널 TLS/HSTS/cipher 검증은 이 loopback gate의 범위가 아니다.
 
+`frontend-regression-evidence.sh`는 깨끗한 Git checkout에서 프론트엔드 테스트와 production build를 각각 측정하고, 커밋·환경·종료 코드·GNU time 자원 사용량 및 전체 SHA-256 인벤토리를 mode `0700` 결과 디렉터리에 원자적으로 공개한다. 브라우저나 실제 휴대폰을 조작하지 않으므로 이 결과만으로 QR 시각·HTTPS·원격 네트워크 실증을 주장하지 않는다.
+
 ## 안전한 종료
 
 ```bash
