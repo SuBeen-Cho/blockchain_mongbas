@@ -663,6 +663,7 @@ test('witness CLI observes and independently verifies a bundle', () => {
     fs.unlinkSync(lockPath);
     const observed = spawnSync(process.execPath, [cli, 'observe', bundlePath, logPath, 'mac-observer', keyPath], { encoding: 'utf8' });
     assert.equal(observed.status, 0, observed.stderr);
+    assert.equal(fs.statSync(logPath).mode & 0o777, 0o600);
     const verified = spawnSync(process.execPath, [cli, 'verify', logPath, trustPath], { encoding: 'utf8' });
     assert.equal(verified.status, 0, verified.stderr);
     assert.match(verified.stdout, /VALID: 1 witnessed checkpoint/);
@@ -687,6 +688,40 @@ test('witness CLI observes and independently verifies a bundle', () => {
     const migratedEntries = parseCanonicalLog(fs.readFileSync(migrationLog, 'utf8'));
     assert.deepEqual(migratedEntries.map(entry => entry.schema), [CHECKPOINT_SCHEMA, CHECKPOINT_V2_SCHEMA]);
     assert.equal(verifyCheckpointLog(migratedEntries, JSON.parse(fs.readFileSync(trustPath))).historyVerifiedFromSequence, 2);
+
+    if (process.platform !== 'win32') {
+      const exposedKey = path.join(temporary, 'exposed-key.pem');
+      fs.copyFileSync(keyPath, exposedKey);
+      fs.chmodSync(exposedKey, 0o644);
+      const exposedTrust = path.join(temporary, 'exposed-trust.json');
+      const rejectedMode = spawnSync(process.execPath, [cli, 'init-trust', 'mode-test', exposedKey, exposedTrust], { encoding: 'utf8' });
+      assert.equal(rejectedMode.status, 1);
+      assert.match(rejectedMode.stderr, /permissions must not grant group or other access/);
+      assert.equal(fs.existsSync(exposedTrust), false);
+
+      const linkedKey = path.join(temporary, 'linked-key.pem');
+      fs.symlinkSync(keyPath, linkedKey);
+      const linkedTrust = path.join(temporary, 'linked-trust.json');
+      const rejectedKeyLink = spawnSync(process.execPath, [cli, 'init-trust', 'link-test', linkedKey, linkedTrust], { encoding: 'utf8' });
+      assert.equal(rejectedKeyLink.status, 1);
+      assert.match(rejectedKeyLink.stderr, /regular non-symlink file/);
+
+      const logTarget = path.join(temporary, 'log-target.jsonl');
+      const linkedLog = path.join(temporary, 'linked-log.jsonl');
+      fs.writeFileSync(logTarget, 'sentinel', { mode: 0o600 });
+      fs.symlinkSync(logTarget, linkedLog);
+      const rejectedLogLink = spawnSync(process.execPath, [cli, 'observe', bundlePath, linkedLog, 'mac-observer', keyPath], { encoding: 'utf8' });
+      assert.equal(rejectedLogLink.status, 1);
+      assert.match(rejectedLogLink.stderr, /regular non-symlink file/);
+      assert.equal(fs.readFileSync(logTarget, 'utf8'), 'sentinel');
+    }
+
+    const oversizedLog = path.join(temporary, 'oversized.jsonl');
+    fs.writeFileSync(oversizedLog, '', { mode: 0o600 });
+    fs.truncateSync(oversizedLog, 16 * 1024 * 1024 + 1);
+    const rejectedOversized = spawnSync(process.execPath, [cli, 'verify', oversizedLog, trustPath], { encoding: 'utf8' });
+    assert.equal(rejectedOversized.status, 1);
+    assert.match(rejectedOversized.stderr, /checkpoint log exceeds 16777216 bytes/);
   } finally {
     fs.rmSync(temporary, { recursive: true, force: true });
   }

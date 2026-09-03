@@ -24,6 +24,11 @@ with mode `0600`, and refuses to overwrite an existing trust document.
 `compare` verifies every supplied log and rejects two individually valid,
 same-witness histories if they contain different signed checkpoints at the same
 sequence. A shorter log that is an exact prefix of a longer log is accepted.
+Witness private-key inputs must be regular, non-symlink files with no group or
+other permission bits. Checkpoint logs are opened without following symlinks,
+forced to mode `0600`, fsynced after append, and bounded to 16 MiB; trust files
+are bounded to 1 MiB and bundle inputs to 256 MiB. These are local CLI resource
+and file-substitution guards, not a replacement for host-level key custody.
 
 The trust document pins witness identities to Ed25519 public keys:
 

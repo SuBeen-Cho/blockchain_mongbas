@@ -7,6 +7,52 @@ const { canonicalize, verifyBundleBytes } = require('../src/verify');
 const { CHECKPOINT_SCHEMA, CHECKPOINT_V2_SCHEMA, TRUST_SCHEMA, checkpointHash, compareCheckpointLogs,
   createHistoryCheckpoint, parseCanonicalLog, publicKeyDer, verifyCheckpointLog, verifyHistoryBinding } = require('../src/witness');
 
+const MAX_BUNDLE_BYTES = 256 * 1024 * 1024;
+const MAX_LOG_BYTES = 16 * 1024 * 1024;
+const MAX_TRUST_BYTES = 1024 * 1024;
+const MAX_PRIVATE_KEY_BYTES = 64 * 1024;
+const NOFOLLOW = fs.constants.O_NOFOLLOW || 0;
+
+function readRegularFile(filePath, label, maximumBytes, { privateFile = false, encoding } = {}) {
+  const before = fs.lstatSync(filePath);
+  if (!before.isFile() || before.isSymbolicLink()) throw new Error(`${label} must be a regular non-symlink file`);
+  if (before.size > maximumBytes) throw new Error(`${label} exceeds ${maximumBytes} bytes`);
+  const fd = fs.openSync(filePath, fs.constants.O_RDONLY | NOFOLLOW);
+  try {
+    const current = fs.fstatSync(fd);
+    if (!current.isFile()) throw new Error(`${label} must be a regular file`);
+    if (current.size > maximumBytes) throw new Error(`${label} exceeds ${maximumBytes} bytes`);
+    if (privateFile && process.platform !== 'win32' && (current.mode & 0o077) !== 0) {
+      throw new Error(`${label} permissions must not grant group or other access`);
+    }
+    return fs.readFileSync(fd, encoding ? { encoding } : undefined);
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
+function syncDirectory(directory) {
+  if (process.platform === 'win32') return;
+  const fd = fs.openSync(directory, fs.constants.O_RDONLY);
+  try { fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
+}
+
+function readBundle(filePath) {
+  return readRegularFile(filePath, 'bundle', MAX_BUNDLE_BYTES);
+}
+
+function readLog(filePath) {
+  return readRegularFile(filePath, 'checkpoint log', MAX_LOG_BYTES, { encoding: 'utf8' });
+}
+
+function readTrust(filePath) {
+  return JSON.parse(readRegularFile(filePath, 'witness trust document', MAX_TRUST_BYTES, { encoding: 'utf8' }));
+}
+
+function readPrivateKey(filePath) {
+  return readRegularFile(filePath, 'witness private key', MAX_PRIVATE_KEY_BYTES, { privateFile: true });
+}
+
 function usage(exitCode = 2) {
   console.error('Usage:');
   console.error('  mongbas-witness init-trust <witness-id> <ed25519-private.pem> <witness-trust.json>');
@@ -20,17 +66,18 @@ function usage(exitCode = 2) {
 
 function initTrust(witnessID, keyPath, trustPath) {
   if (!/^[A-Za-z0-9_.-]{1,128}$/.test(witnessID || '')) throw new Error('invalid witnessID');
-  const encodedPublicKey = publicKeyDer(fs.readFileSync(keyPath));
+  const encodedPublicKey = publicKeyDer(readPrivateKey(keyPath));
   const trust = { schema: TRUST_SCHEMA, witnesses: [{ id: witnessID, ed25519PublicKeyDer: encodedPublicKey }] };
   const resolvedTrust = path.resolve(trustPath);
   fs.mkdirSync(path.dirname(resolvedTrust), { recursive: true, mode: 0o700 });
-  const fd = fs.openSync(resolvedTrust, 'wx', 0o600);
+  const fd = fs.openSync(resolvedTrust, fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL | NOFOLLOW, 0o600);
   try {
     fs.writeSync(fd, `${canonicalize(trust)}\n`);
     fs.fsyncSync(fd);
   } finally {
     fs.closeSync(fd);
   }
+  syncDirectory(path.dirname(resolvedTrust));
   console.log(`TRUST INITIALIZED: witnessID=${witnessID}`);
   console.log(`trustPath=${resolvedTrust}`);
 }
@@ -40,7 +87,7 @@ function withLogLock(logPath, action) {
   let lock;
   try {
     fs.mkdirSync(path.dirname(logPath), { recursive: true, mode: 0o700 });
-    lock = fs.openSync(lockPath, 'wx', 0o600);
+    lock = fs.openSync(lockPath, fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL | NOFOLLOW, 0o600);
     return action();
   } finally {
     if (lock !== undefined) {
@@ -51,24 +98,40 @@ function withLogLock(logPath, action) {
 }
 
 function appendAndSync(logPath, line) {
-  const fd = fs.openSync(logPath, 'a', 0o600);
-  try { fs.writeSync(fd, `${line}\n`); fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
+  const existed = fs.existsSync(logPath);
+  if (existed) {
+    const current = fs.lstatSync(logPath);
+    if (!current.isFile() || current.isSymbolicLink()) throw new Error('checkpoint log must be a regular non-symlink file');
+    if (current.size + Buffer.byteLength(line) + 1 > MAX_LOG_BYTES) throw new Error(`checkpoint log exceeds ${MAX_LOG_BYTES} bytes`);
+  }
+  const fd = fs.openSync(logPath, fs.constants.O_WRONLY | fs.constants.O_APPEND | fs.constants.O_CREAT | NOFOLLOW, 0o600);
+  try {
+    const current = fs.fstatSync(fd);
+    if (!current.isFile()) throw new Error('checkpoint log must be a regular file');
+    if (current.size + Buffer.byteLength(line) + 1 > MAX_LOG_BYTES) throw new Error(`checkpoint log exceeds ${MAX_LOG_BYTES} bytes`);
+    if (process.platform !== 'win32') fs.fchmodSync(fd, 0o600);
+    fs.writeFileSync(fd, `${line}\n`);
+    fs.fsyncSync(fd);
+  } finally {
+    fs.closeSync(fd);
+  }
+  if (!existed) syncDirectory(path.dirname(logPath));
 }
 
 function observe(bundlePath, logPath, witnessID, keyPath) {
-  const bundleBytes = fs.readFileSync(bundlePath);
+  const bundleBytes = readBundle(bundlePath);
   const verification = verifyBundleBytes(bundleBytes);
   if (!verification.valid) throw new Error(`bundle rejected: ${verification.summary}: ${verification.errors.join('; ')}`);
   const bundle = JSON.parse(bundleBytes);
-  const privateKeyPem = fs.readFileSync(keyPath);
+  const privateKeyPem = readPrivateKey(keyPath);
   const encodedPublicKey = publicKeyDer(privateKeyPem);
   const trust = { schema: TRUST_SCHEMA, witnesses: [{ id: witnessID, ed25519PublicKeyDer: encodedPublicKey }] };
   let checkpoint;
   const resolvedLog = path.resolve(logPath);
   withLogLock(resolvedLog, () => {
     let existing = [];
-    if (fs.existsSync(resolvedLog) && fs.statSync(resolvedLog).size > 0) {
-      existing = parseCanonicalLog(fs.readFileSync(resolvedLog, 'utf8'));
+    if (fs.existsSync(resolvedLog) && fs.lstatSync(resolvedLog).size > 0) {
+      existing = parseCanonicalLog(readLog(resolvedLog));
       verifyCheckpointLog(existing, trust);
     }
     const previous = existing.at(-1) ?? null;
@@ -82,17 +145,17 @@ function observe(bundlePath, logPath, witnessID, keyPath) {
 }
 
 function migrateHistory(bundlePath, logPath, witnessID, keyPath) {
-  const bundleBytes = fs.readFileSync(bundlePath);
+  const bundleBytes = readBundle(bundlePath);
   const verification = verifyBundleBytes(bundleBytes);
   if (!verification.valid) throw new Error(`bundle rejected: ${verification.summary}: ${verification.errors.join('; ')}`);
   const bundle = JSON.parse(bundleBytes);
-  const privateKeyPem = fs.readFileSync(keyPath);
+  const privateKeyPem = readPrivateKey(keyPath);
   const trust = { schema: TRUST_SCHEMA, witnesses: [{ id: witnessID, ed25519PublicKeyDer: publicKeyDer(privateKeyPem) }] };
   let checkpoint;
   const resolvedLog = path.resolve(logPath);
   withLogLock(resolvedLog, () => {
-    if (!fs.existsSync(resolvedLog) || fs.statSync(resolvedLog).size === 0) throw new Error('migration requires a non-empty v1 log');
-    const existing = parseCanonicalLog(fs.readFileSync(resolvedLog, 'utf8'));
+    if (!fs.existsSync(resolvedLog) || fs.lstatSync(resolvedLog).size === 0) throw new Error('migration requires a non-empty v1 log');
+    const existing = parseCanonicalLog(readLog(resolvedLog));
     verifyCheckpointLog(existing, trust);
     const previous = existing.at(-1);
     if (previous.schema !== CHECKPOINT_SCHEMA) throw new Error('migration requires the latest checkpoint to be v1');
@@ -105,8 +168,8 @@ function migrateHistory(bundlePath, logPath, witnessID, keyPath) {
 }
 
 function verify(logPath, trustPath) {
-  const entries = parseCanonicalLog(fs.readFileSync(logPath, 'utf8'));
-  const trust = JSON.parse(fs.readFileSync(trustPath, 'utf8'));
+  const entries = parseCanonicalLog(readLog(logPath));
+  const trust = readTrust(trustPath);
   const result = verifyCheckpointLog(entries, trust);
   console.log(`VALID: ${result.checkpoints} witnessed checkpoint(s)`);
   console.log(`latestCheckpointHash=${result.latestCheckpointHash}`);
@@ -120,12 +183,12 @@ function verifyBundleCheckpoint(bundlePath, logPath, trustPath, sequenceText) {
   if (!/^[1-9][0-9]*$/.test(sequenceText)) throw new Error('sequence must be a positive integer');
   const sequence = Number(sequenceText);
   if (!Number.isSafeInteger(sequence)) throw new Error('sequence exceeds safe integer range');
-  const bundleBytes = fs.readFileSync(bundlePath);
+  const bundleBytes = readBundle(bundlePath);
   const bundleVerification = verifyBundleBytes(bundleBytes);
   if (!bundleVerification.valid) throw new Error(`bundle rejected: ${bundleVerification.summary}: ${bundleVerification.errors.join('; ')}`);
   const bundle = JSON.parse(bundleBytes);
-  const entries = parseCanonicalLog(fs.readFileSync(logPath, 'utf8'));
-  const trust = JSON.parse(fs.readFileSync(trustPath, 'utf8'));
+  const entries = parseCanonicalLog(readLog(logPath));
+  const trust = readTrust(trustPath);
   verifyCheckpointLog(entries, trust);
   const checkpoint = entries[sequence - 1];
   if (!checkpoint || checkpoint.sequence !== sequence) throw new Error('checkpoint sequence not found');
@@ -139,8 +202,8 @@ function verifyBundleCheckpoint(bundlePath, logPath, trustPath, sequenceText) {
 }
 
 function compare(trustPath, logPaths) {
-  const trust = JSON.parse(fs.readFileSync(trustPath, 'utf8'));
-  const logs = logPaths.map(logPath => parseCanonicalLog(fs.readFileSync(logPath, 'utf8')));
+  const trust = readTrust(trustPath);
+  const logs = logPaths.map(logPath => parseCanonicalLog(readLog(logPath)));
   const result = compareCheckpointLogs(logs, trust);
   console.log(`CONSISTENT: ${result.logs} checkpoint logs for witness ${result.witnessID}`);
   console.log(`latestCheckpointHash=${result.latestCheckpointHash}`);
