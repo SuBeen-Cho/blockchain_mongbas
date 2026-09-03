@@ -6,6 +6,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 const test = require('node:test');
+const { canonicalize } = require('../src/verify');
 
 test('Fabric input CLI separates public history from private linkage', () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'mongbas-cast-history-'));
@@ -22,6 +23,7 @@ test('Fabric input CLI separates public history from private linkage', () => {
       'd'.repeat(64), '300', history, manifest], { encoding: 'utf8' });
     assert.equal(result.status, 0, result.stderr);
     const publicText = fs.readFileSync(history, 'utf8');
+	assert.equal(publicText.trim(), canonicalize(JSON.parse(publicText)), 'history output must be canonical for witness ingestion');
     assert.doesNotMatch(publicText, new RegExp(selectionKey));
     assert.doesNotMatch(publicText, /nullifierHash|commitmentNonce|receiptNonce/);
     assert.match(fs.readFileSync(manifest, 'utf8'), new RegExp(selectionKey));
