@@ -8,6 +8,7 @@ const baseURL = String(process.env.E2E_BASE_URL || 'http://127.0.0.1:3000').repl
 const adminToken = process.env.ADMIN_API_TOKEN || '';
 const electionID = process.env.E2E_ELECTION_ID || `QR_LIVE_${new Date().toISOString().replace(/[-:.TZ]/g, '')}`;
 const reuseElection = process.env.E2E_REUSE_ELECTION === 'true';
+const revoteSameCredential = process.env.E2E_REVOTE_SAME_CREDENTIAL === 'true';
 const candidates = ['ALPHA', 'BRAVO', 'CHARLIE'];
 
 function sha256(value) {
@@ -46,9 +47,12 @@ async function main() {
   }
 
   let initialCount = 0;
+  let initialRows = 0;
   if (reuseElection) {
     initialCount = requireStatus('read initial live count',
       await request(`/api/elections/${electionID}/live-count`, { admin: true }), 200).totalVotes;
+    initialRows = requireStatus('read initial live votes',
+      await request(`/api/elections/${electionID}/live-votes`, { admin: true }), 200).votes.length;
   } else {
     const now = Math.floor(Date.now() / 1000);
     requireStatus('create election', await request('/api/elections', {
@@ -99,6 +103,23 @@ async function main() {
     credential: issued.credential, method: 'POST', body: JSON.stringify({ ...common, ballotID: prepared.ballotID }),
   }), 200);
 
+  let revote = null;
+  if (revoteSameCredential) {
+    const replacement = generateVectorBallot(publicKey, 2, candidates.length);
+    const replacementCommon = { ...common, encryptedCandidateVector: replacement.encryptedCandidateVector,
+      vectorBallotValidityProof: replacement.vectorBallotValidityProof };
+    const replacementPrepared = requireStatus('prepare replacement vector ballot',
+      await request('/api/vote/prepare-vector', { credential: issued.credential, method: 'POST',
+        body: JSON.stringify({ ...replacementCommon, clientNonceHash: sha256(crypto.randomBytes(32)) }) }), 200);
+    revote = requireStatus('cast replacement vector ballot', await request('/api/vote/cast-vector', {
+      credential: issued.credential, method: 'POST',
+      body: JSON.stringify({ ...replacementCommon, ballotID: replacementPrepared.ballotID }),
+    }), 200);
+    if (revote.isRevote !== true || !Number.isSafeInteger(revote.evictCount) || revote.evictCount < 1) {
+      throw new Error('same-credential replacement was not classified as a revote');
+    }
+  }
+
   requireStatus('emit authenticated dashboard event', await request('/api/vote/demo-event', {
     credential: issued.credential, method: 'POST', body: JSON.stringify({ electionID, nullifierHash }),
   }), 200);
@@ -106,16 +127,18 @@ async function main() {
   const liveVotes = requireStatus('read live votes', await request(`/api/elections/${electionID}/live-votes`, { admin: true }), 200);
   const events = requireStatus('read dashboard events', await request(`/api/elections/${electionID}/demo-events?since=0`, { admin: true }), 200);
   const ledgerLookup = requireStatus('read committed nullifier', await request(`/api/nullifier/${nullifierHash}`), 200);
-  if (liveCount.totalVotes !== initialCount + 1 || liveVotes.votes?.length !== initialCount + 1 ||
+  const expectedRows = initialRows + (revoteSameCredential ? 2 : 1);
+  if (liveCount.totalVotes !== initialCount + 1 || liveVotes.votes?.length !== expectedRows ||
       !events.events?.some(event => event.type === 'verify') || !ledgerLookup.credVerifyLevel?.startsWith('chaincode-')) {
     throw new Error('dashboard or Fabric post-cast evidence is incomplete');
   }
 
   process.stdout.write(`${JSON.stringify({ schema: 'mongbas-qr-admission-live-e2e/v1', electionID,
-    reusedElection: reuseElection, encryptionMode: election.encryptionMode,
+    reusedElection: reuseElection, sameCredentialRevote: revoteSameCredential, encryptionMode: election.encryptionMode,
     admission: { unauthorizedIssue: 401, wrongElection: 401,
       firstRedemption: 200, replay: 401 }, cast: { prepared: true, committed: true,
-      isRevote: Boolean(cast.isRevote), credentialVerification: ledgerLookup.credVerifyLevel },
+      isRevote: Boolean(cast.isRevote), replacementCommitted: Boolean(revote),
+      replacementEvictCount: revote?.evictCount ?? 0, credentialVerification: ledgerLookup.credVerifyLevel },
     dashboard: { totalVotes: liveCount.totalVotes, encryptedRows: liveVotes.votes.length,
       verificationEvent: true } }, null, 2)}\n`);
 }
