@@ -148,13 +148,13 @@ test('BBS runtime and Linux build stay on the audited WASM dependency path', () 
   const runGuide = read('docs/RUN_GUIDE.md');
 
   assert.match(bbs, /process\.env\.BBS_SIGNATURES_MODE\s*=\s*['"]WASM['"]/);
-  assert.match(build, /npm --prefix \"\$\{MONGBAS_REPO_DIR\}\/application\" ci --omit=optional/);
-  assert.match(build, /npm --prefix \"\$\{MONGBAS_REPO_DIR\}\/application\" audit --omit=optional --audit-level=high/);
+  assert.match(build, /npm --prefix \"\$\{MONGBAS_REPO_DIR\}\/application\" ci --omit=dev --omit=optional/);
+  assert.match(build, /npm --prefix \"\$\{MONGBAS_REPO_DIR\}\/application\" audit --omit=dev --omit=optional --audit-level=high/);
   assert.match(docs, /BBS_SIGNATURES_MODE=WASM/);
-  assert.match(docs, /npm ci --omit=optional/);
-  assert.match(readme, /npm ci --omit=optional/);
+  assert.match(docs, /npm ci --omit=dev --omit=optional/);
+  assert.match(readme, /npm ci --omit=dev --omit=optional/);
   assert.doesNotMatch(readme, /cd application[\s\S]{0,160}npm install/);
-  assert.match(runGuide, /application[\s\S]{0,100}npm ci --omit=optional/);
+  assert.match(runGuide, /application[\s\S]{0,100}npm ci --omit=dev --omit=optional/);
   assert.doesNotMatch(runGuide, /cd application[\s\S]{0,100}npm install/);
 });
 

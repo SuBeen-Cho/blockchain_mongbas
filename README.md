@@ -189,7 +189,7 @@ cd network
 ```bash
 cd ../application
 cp .env.example .env          # 환경변수 설정 (.env.example 참고)
-npm ci --omit=optional
+npm ci --omit=dev --omit=optional
 npm start                     # http://localhost:3000
 ```
 
