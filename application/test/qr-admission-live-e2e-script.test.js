@@ -1,0 +1,16 @@
+'use strict';
+
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+const test = require('node:test');
+
+test('live QR E2E script keeps admission, credential and nullifier material out of its summary', () => {
+  const source = fs.readFileSync(path.join(__dirname, '../scripts/qr-admission-live-e2e.js'), 'utf8');
+  const summary = source.slice(source.indexOf("process.stdout.write"));
+  assert.match(summary, /mongbas-qr-admission-live-e2e\/v1/);
+  assert.doesNotMatch(summary, /admission\.token|issued\.credential|issued\.nullifierMaterial|nullifierHash/);
+  assert.match(source, /wrong-election redemption/);
+  assert.match(source, /replay redemption/);
+  assert.match(source, /credentialVerification/);
+});
