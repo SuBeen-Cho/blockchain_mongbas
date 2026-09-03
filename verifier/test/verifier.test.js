@@ -664,6 +664,41 @@ test('independent witnesses agree on shared history snapshots and reject split v
     /no shared history snapshot/);
 });
 
+test('Python/OpenSSL independently verifies canonical checkpoint signed bytes and context binding', () => {
+  const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'mongbas-python-checkpoint-'));
+  try {
+    const source = buildBundle();
+    const signer = crypto.generateKeyPairSync('ed25519');
+    const privateKeyPem = signer.privateKey.export({ format: 'pem', type: 'pkcs8' });
+    const checkpoint = createHistoryCheckpoint({ bundle: source, verification: verifyBundle(source),
+      witnessID: 'python-cross-check', privateKeyPem, observedAt: '2026-09-03T00:00:00.000Z' });
+    const checkpointPath = path.join(temporary, 'checkpoint.json');
+    fs.writeFileSync(checkpointPath, canonicalize(checkpoint));
+    const referencePath = path.join(__dirname, '../reference/python_checkpoint_verify.py');
+    const args = [referencePath, checkpointPath, checkpoint.witnessPublicKeyDer,
+      checkpoint.electionID, checkpoint.history.contextHash];
+    const accepted = spawnSync('python3', args, { encoding: 'utf8', maxBuffer: 1024 * 1024 });
+    assert.equal(accepted.status, 0, accepted.stderr || accepted.stdout);
+    assert.match(accepted.stdout, /VALID independent checkpoint signature/);
+
+    const wrongElection = spawnSync('python3', [...args.slice(0, 3), 'wrong-election', args[4]], { encoding: 'utf8' });
+    assert.equal(wrongElection.status, 1);
+    assert.match(wrongElection.stderr, /election mismatch/);
+    const wrongContext = spawnSync('python3', [...args.slice(0, 4), '00'.repeat(32)], { encoding: 'utf8' });
+    assert.equal(wrongContext.status, 1);
+    assert.match(wrongContext.stderr, /context mismatch/);
+
+    const mutated = structuredClone(checkpoint);
+    mutated.observedAt = '2026-09-03T00:00:01.000Z';
+    fs.writeFileSync(checkpointPath, canonicalize(mutated));
+    const rejected = spawnSync('python3', args, { encoding: 'utf8' });
+    assert.equal(rejected.status, 1);
+    assert.match(rejected.stderr, /invalid signature/);
+  } finally {
+    fs.rmSync(temporary, { recursive: true, force: true });
+  }
+});
+
 test('witness log parser requires one canonical checkpoint per line', () => {
   const bundle = buildBundle(), verification = verifyBundle(bundle), signer = crypto.generateKeyPairSync('ed25519');
   const checkpoint = createCheckpoint({ bundle, verification, witnessID: 'observer',

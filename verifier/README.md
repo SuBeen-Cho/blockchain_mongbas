@@ -76,8 +76,15 @@ standard-library implementation used by the test suite to cross-check fixed
 context hashes, full-ballot commitments, tree roots, and every consistency path
 for sizes zero through eight. It does not import or invoke the Node history
 implementation and is not a second full election verifier. Running the complete
-development test suite therefore requires `python3`; verifier runtime commands
-continue to require only Node.js built-ins.
+development test suite therefore requires `python3`. A second reference,
+`reference/python_checkpoint_verify.py`, independently reconstructs canonical
+checkpoint-v2 signed bytes, validates exact checkpoint/history fields and
+election/context/key binding, and asks the system OpenSSL Ed25519 implementation
+to verify the signature. The tests include valid, wrong-election, wrong-context
+and mutated-signed-byte cases. It verifies one checkpoint rather than a complete
+log, bundle, consistency proof or election cryptosystem, so it is not a complete
+second Mongbas verifier. Development cross-checks require Python 3 and OpenSSL;
+normal verifier runtime commands continue to require only Node.js built-ins.
 
 To build and sign an exported source without sending private keys to the server:
 
