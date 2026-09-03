@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { browserCryptoReady, buildSecureKioskUrl, consumeKioskAdmission } from '../src/utils/kioskUrl.js';
+import { browserCryptoReady, buildSecureKioskUrl, consumeKioskAdmission, displayKioskUrl } from '../src/utils/kioskUrl.js';
 
 test('QR URL encodes only election ID on an exact HTTPS origin', () => {
   assert.equal(
@@ -42,4 +42,12 @@ test('browser crypto readiness requires secure context, CSPRNG and subtle digest
   assert.equal(browserCryptoReady({ isSecureContext: true, crypto }), true);
   assert.equal(browserCryptoReady({ isSecureContext: false, crypto }), false);
   assert.equal(browserCryptoReady({ isSecureContext: true, crypto: { getRandomValues() {} } }), false);
+});
+
+test('dashboard display masks the one-time admission fragment', () => {
+  const token = 'A'.repeat(43);
+  const actual = `https://vote.example.test/?app=kiosk&e=election-1#a=${token}`;
+  const displayed = displayKioskUrl(actual);
+  assert.equal(displayed, 'https://vote.example.test/?app=kiosk&e=election-1#a=<one-time-token-hidden>');
+  assert.doesNotMatch(displayed, new RegExp(token));
 });

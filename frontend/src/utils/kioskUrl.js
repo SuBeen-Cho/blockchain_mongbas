@@ -30,6 +30,11 @@ export function consumeKioskAdmission(scope = window) {
   return match[1];
 }
 
+export function displayKioskUrl(value) {
+  const parsed = new URL(value);
+  return `${parsed.origin}${parsed.pathname}${parsed.search}${parsed.hash ? '#a=<one-time-token-hidden>' : ''}`;
+}
+
 export function browserCryptoReady(scope = globalThis) {
   return scope.isSecureContext === true && typeof scope.crypto?.getRandomValues === 'function' &&
     typeof scope.crypto?.subtle?.digest === 'function';

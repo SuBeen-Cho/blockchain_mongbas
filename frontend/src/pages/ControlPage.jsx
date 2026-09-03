@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import QRCode from 'qrcode';
 import { computeMerkleRootFromProof } from '../utils/crypto.js';
-import { buildSecureKioskUrl } from '../utils/kioskUrl.js';
+import { buildSecureKioskUrl, displayKioskUrl } from '../utils/kioskUrl.js';
 
 /**
  * ControlPage — 발표자 관제판 (Editorial Cobalt 개편)
@@ -157,6 +157,17 @@ export default function ControlPage() {
       setEid(id); setStatus('ACTIVE'); setLive(0); setVotes([]); setShuffled(false);
       setResults(null); setDecrypted(false); setView('session'); setVres(null); setVfail(''); setRootHash(''); setTallyMath(null); evRef.current = 0;
       addLog(`새 세션 시작: ${id}`);
+    } catch (e) { addLog('오류: ' + e.message); }
+    setBusy('');
+  }
+
+  async function renewAdmission() {
+    if (!eid || status !== 'ACTIVE') return;
+    setBusy('새 일회용 QR 발급 중…');
+    try {
+      const issued = await J('/credential/demo-admission', { method: 'POST', body: JSON.stringify({ electionID: eid, ttlSeconds: 120 }) });
+      setAdmission(issued);
+      addLog('새 일회용 QR 발급');
     } catch (e) { addLog('오류: ' + e.message); }
     setBusy('');
   }
@@ -327,7 +338,7 @@ export default function ControlPage() {
             <div style={{ display: 'grid', gridTemplateColumns: narrow ? '1fr' : 'minmax(0,1.6fr) minmax(0,1fr)', gap: 18, alignItems: 'start' }}>
               <VoteTable votes={votes} shuffled={shuffled} status={status} />
               <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
-                <QRCard qr={qr} url={kioskUrl} error={kioskUrlError} />
+                <QRCard qr={qr} url={kioskUrl} error={kioskUrlError} onRenew={renewAdmission} disabled={dis || status !== 'ACTIVE'} expiresAt={admission?.expiresAt} />
                 <LogCard log={log} />
               </div>
             </div>
@@ -432,7 +443,7 @@ function VoteTable({ votes, shuffled, status }) {
     </section>
   );
 }
-function QRCard({ qr, url, error }) {
+function QRCard({ qr, url, error, onRenew, disabled, expiresAt }) {
   return (
     <section style={{ ...box, textAlign: 'center' }}>
       <div style={over}>여기 찍고 투표하세요</div>
@@ -440,7 +451,13 @@ function QRCard({ qr, url, error }) {
         {qr ? <img src={qr} alt="QR" style={{ width: 200, height: 200, border: `1.5px solid ${T.line}` }} />
           : <div style={{ width: 200, height: 200, padding: 18, boxSizing: 'border-box', background: T.paper2, display: 'flex', alignItems: 'center', justifyContent: 'center', color: error ? '#b42318' : T.sub, fontSize: 13, fontWeight: 700 }}>{error || '새 세션 시작 시 QR 표시'}</div>}
       </div>
-      {url && <div style={{ marginTop: 10, fontSize: 10.5, color: T.sub, wordBreak: 'break-all', fontFamily: 'monospace' }}>{url}</div>}
+      {url && <div style={{ marginTop: 10, fontSize: 10.5, color: T.sub, wordBreak: 'break-all', fontFamily: 'monospace' }}>{displayKioskUrl(url)}</div>}
+      {expiresAt && <div style={{ marginTop: 8, fontSize: 11.5, color: T.sub, fontWeight: 700 }}>일회용 · {new Date(expiresAt).toLocaleTimeString()}까지</div>}
+      <button onClick={onRenew} disabled={disabled}
+        style={{ width: '100%', marginTop: 12, padding: 11, border: `1.5px solid ${T.blue}`, background: disabled ? T.paper2 : '#fff', color: disabled ? T.sub : T.blue, fontSize: 13, fontWeight: 900, fontFamily: 'inherit', cursor: disabled ? 'not-allowed' : 'pointer' }}>
+        다음 참가자용 새 QR 발급
+      </button>
+      <div style={{ marginTop: 8, fontSize: 10.5, lineHeight: 1.5, color: T.sub }}>한 QR은 휴대폰 한 대에서만 사용할 수 있습니다. 다음 투표자 전에 새로 발급하세요.</div>
     </section>
   );
 }
