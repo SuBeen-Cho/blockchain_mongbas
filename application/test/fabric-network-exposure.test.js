@@ -19,3 +19,16 @@ test('single-host Fabric profile does not publish CA, node, admin or operations 
   assert.ok(published.length >= 20, 'expected the complete single-host published-port inventory');
   for (const mapping of published) assert.match(mapping, /^127\.0\.0\.1:[0-9]+:[0-9]+$/);
 });
+
+test('Linux runtime containment is persistent and applies before Tailscale forwarding', () => {
+  const script = fs.readFileSync(path.join(__dirname, '../../deploy/linux/contain-fabric-ingress.sh'), 'utf8');
+  const unit = fs.readFileSync(path.join(__dirname,
+    '../../deploy/linux/systemd/mongbas-fabric-ingress-containment.service'), 'utf8');
+  assert.match(script, /-I FORWARD 1/);
+  assert.match(script, /--ctstate NEW/);
+  assert.match(script, /mongbas-deny-external-container-ingress/);
+  assert.match(script, /apply_family iptables/);
+  assert.match(script, /apply_family ip6tables/);
+  assert.match(unit, /After=docker\.service tailscaled\.service/);
+  assert.match(unit, /ExecStart=\/usr\/local\/sbin\/mongbas-contain-fabric-ingress/);
+});

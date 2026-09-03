@@ -1,0 +1,13 @@
+[Unit]
+Description=Contain Mongbas single-host Fabric containers from external interfaces
+After=docker.service tailscaled.service
+Wants=docker.service
+
+[Service]
+Type=oneshot
+Environment="MONGBAS_INGRESS_INTERFACES=tailscale0 wlo1"
+ExecStart=/usr/local/sbin/mongbas-contain-fabric-ingress
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
