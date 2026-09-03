@@ -13,9 +13,11 @@ const {
 } = require('../src/verify');
 const { buildUnsignedBundle, signBundle } = require('../src/bundle');
 const { readBoundedRegularFile } = require('../src/input');
-const { CHECKPOINT_SCHEMA, CHECKPOINT_V2_SCHEMA, TRUST_SCHEMA, checkpointHash, compareCheckpointLogs,
+const { CHECKPOINT_SCHEMA, CHECKPOINT_V2_SCHEMA, CHECKPOINT_V3_SCHEMA, TRUST_SCHEMA, checkpointHash, compareCheckpointLogs,
   compareIndependentWitnessLogs, createCheckpoint,
-  createHistoryCheckpoint, parseCanonicalLog, publicKeyDer, verifyCheckpointLog } = require('../src/witness');
+  createHistoryCheckpoint, createOpeningCheckpoint, createCastHistoryCheckpoint,
+  parseCanonicalLog, publicKeyDer, verifyCheckpointLog } = require('../src/witness');
+const { createCastEventHistory } = require('../src/cast-event-history');
 const { generateVectorBallot } = require('../../application/src/lib/vectorElgamal');
 
 function scalar(label) {
@@ -824,6 +826,105 @@ test('history checkpoint v2 proves ballot-prefix growth without changing bundle 
   /exact previously witnessed bundle snapshot/);
 });
 
+test('checkpoint v3 starts from a signed empty opening and observes cast-event growth', () => {
+  const bundle = buildBundle(), verification = verifyBundle(bundle);
+  const witness = crypto.generateKeyPairSync('ed25519');
+  const privateKeyPem = witness.privateKey.export({ format: 'pem', type: 'pkcs8' });
+  const trust = { schema: TRUST_SCHEMA, witnesses: [{ id: 'observer', ed25519PublicKeyDer: publicKeyDer(privateKeyPem) }] };
+  const contextHash = 'ab'.repeat(32);
+  const castRecord = marker => ({
+    position: { blockNumber: 7, transactionIndex: marker }, committedAt: 1_800 + marker,
+    commitmentNonce: marker.toString(16).padStart(64, '0'),
+    receiptNonce: (100 + marker).toString(16).padStart(64, '0'),
+    selectionKey: (200 + marker).toString(16).padStart(64, '0'),
+    ballotArtifact: { ciphertext: marker.toString(16), proof: { marker } },
+  });
+  const opening = createOpeningCheckpoint({ electionID: verification.electionID, electionContextHash: contextHash,
+    epochSeconds: 300, witnessID: 'observer', privateKeyPem, observedAt: '2026-09-03T00:00:00.000Z' });
+  const firstHistory = createCastEventHistory({ contextHash, records: [castRecord(1), castRecord(2)], epochSeconds: 300 });
+  const first = createCastHistoryCheckpoint({ history: firstHistory, bundle, verification, witnessID: 'observer',
+    privateKeyPem, previousCheckpoint: opening, observedAt: '2026-09-03T00:01:00.000Z' });
+  const secondHistory = createCastEventHistory({ contextHash, records: [castRecord(1), castRecord(2), castRecord(3)], epochSeconds: 300,
+    previousHistory: firstHistory });
+  const second = createCastHistoryCheckpoint({ history: secondHistory, bundle, verification, witnessID: 'observer',
+    privateKeyPem, previousCheckpoint: first, observedAt: '2026-09-03T00:02:00.000Z' });
+
+  assert.equal(opening.schema, CHECKPOINT_V3_SCHEMA);
+  assert.equal(opening.kind, 'opening');
+  assert.equal(opening.history.treeSize, 0);
+  assert.equal(first.kind, 'observation');
+  assert.equal(first.historyArtifactHash, sha256Hex(canonicalize(firstHistory)));
+  assert.equal(verifyCheckpointLog([opening, first, second], trust).historyVerifiedFromSequence, 1);
+  assert.throws(() => verifyCheckpointLog([first], trust), /begin with a valid empty opening/);
+  assert.throws(() => verifyCheckpointLog([opening, first, createCheckpoint({ bundle, verification, witnessID: 'observer',
+    privateKeyPem, sequence: 3, previousCheckpointHash: checkpointHash(first) })], trust), /cannot mix schema versions/);
+
+  const wrongContext = createCastEventHistory({ contextHash: 'cd'.repeat(32), records: [castRecord(1)], epochSeconds: 300 });
+  assert.throws(() => createCastHistoryCheckpoint({ history: wrongContext, bundle, verification, witnessID: 'observer',
+    privateKeyPem, previousCheckpoint: opening }), /context changed/);
+  const tooShort = createCastEventHistory({ contextHash, records: [castRecord(1)], epochSeconds: 300 });
+  assert.throws(() => createCastHistoryCheckpoint({ history: tooShort, bundle, verification, witnessID: 'observer',
+    privateKeyPem, previousCheckpoint: opening }), /fewer accepted events/);
+});
+
+test('independent v3 witnesses share the opening and detect a cast-history split view', () => {
+  const bundle = buildBundle(), verification = verifyBundle(bundle), contextHash = 'ef'.repeat(32);
+  const keys = [crypto.generateKeyPairSync('ed25519'), crypto.generateKeyPairSync('ed25519')];
+  const pems = keys.map(key => key.privateKey.export({ format: 'pem', type: 'pkcs8' }));
+  const trust = { schema: TRUST_SCHEMA, witnesses: pems.map((pem, index) => ({
+    id: `observer-${index + 1}`, ed25519PublicKeyDer: publicKeyDer(pem),
+  })) };
+  const record = marker => ({ position: { blockNumber: 1, transactionIndex: marker }, committedAt: 300 + marker,
+    commitmentNonce: marker.toString(16).padStart(64, '0'), receiptNonce: (10 + marker).toString(16).padStart(64, '0'),
+    selectionKey: (20 + marker).toString(16).padStart(64, '0'), ballotArtifact: { marker } });
+  const history = createCastEventHistory({ contextHash, records: [record(1), record(2)] });
+  const logs = pems.map((privateKeyPem, index) => {
+    const witnessID = `observer-${index + 1}`;
+    const opening = createOpeningCheckpoint({ electionID: verification.electionID, electionContextHash: contextHash,
+      witnessID, privateKeyPem, observedAt: '2026-09-03T00:00:00.000Z' });
+    const observation = createCastHistoryCheckpoint({ history, bundle, verification, witnessID, privateKeyPem,
+      previousCheckpoint: opening, observedAt: '2026-09-03T00:01:00.000Z' });
+    return [opening, observation];
+  });
+  assert.deepEqual(compareIndependentWitnessLogs(logs, trust).sharedTreeSizes, [0, 2]);
+
+  const forkHistory = createCastEventHistory({ contextHash, records: [record(2), record(3)] });
+  logs[1][1] = createCastHistoryCheckpoint({ history: forkHistory, bundle, verification, witnessID: 'observer-2',
+    privateKeyPem: pems[1], previousCheckpoint: logs[1][0], observedAt: '2026-09-03T00:01:00.000Z' });
+  assert.throws(() => compareIndependentWitnessLogs(logs, trust), /split view/);
+});
+
+test('witness CLI persists and verifies an opening plus bound cast-history observation', () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'mongbas-v3-cli-'));
+  try {
+    const bundle = buildBundle(), contextHash = 'aa'.repeat(32);
+    const history = createCastEventHistory({ contextHash, records: [1, 2].map(index => ({
+      position: { blockNumber: 1, transactionIndex: index }, committedAt: 300 + index,
+      commitmentNonce: index.toString(16).padStart(64, '0'),
+      receiptNonce: (10 + index).toString(16).padStart(64, '0'),
+      selectionKey: (20 + index).toString(16).padStart(64, '0'),
+      ballotArtifact: { ciphertext: `opaque-test-${index}` },
+    })) });
+    const witness = crypto.generateKeyPairSync('ed25519');
+    const keyPath = path.join(directory, 'witness.pem'), trustPath = path.join(directory, 'trust.json');
+    const bundlePath = path.join(directory, 'bundle.json'), historyPath = path.join(directory, 'history.json');
+    const logPath = path.join(directory, 'checkpoints.jsonl'), cli = path.join(__dirname, '../bin/mongbas-witness.js');
+    fs.writeFileSync(keyPath, witness.privateKey.export({ format: 'pem', type: 'pkcs8' }), { mode: 0o600 });
+    fs.writeFileSync(bundlePath, canonicalize(bundle));
+    fs.writeFileSync(historyPath, canonicalize(history));
+    const run = args => spawnSync(process.execPath, [cli, ...args], { encoding: 'utf8' });
+    assert.equal(run(['init-trust', 'observer', keyPath, trustPath]).status, 0);
+    assert.equal(run(['open-cast-history', bundle.configuration.electionID, contextHash, '300', logPath, 'observer', keyPath]).status, 0);
+    assert.equal(run(['observe-cast-history', historyPath, bundlePath, logPath, 'observer', keyPath]).status, 0);
+    const verified = run(['verify-cast-history', historyPath, logPath, trustPath, '2']);
+    assert.equal(verified.status, 0, verified.stderr);
+    assert.match(verified.stdout, /CAST HISTORY BOUND/);
+    assert.deepEqual(parseCanonicalLog(fs.readFileSync(logPath, 'utf8')).map(entry => entry.kind), ['opening', 'observation']);
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
 test('checkpoint log verifier rejects a signed v1 migration to a different snapshot', () => {
   const organizationKeys = [crypto.generateKeyPairSync('ed25519'), crypto.generateKeyPairSync('ed25519')];
   const legacyBundle = buildBundle([0, 1], organizationKeys);
@@ -957,6 +1058,20 @@ test('Python/OpenSSL independently verifies canonical checkpoint signed bytes an
     const rejected = spawnSync('python3', args, { encoding: 'utf8' });
     assert.equal(rejected.status, 1);
     assert.match(rejected.stderr, /invalid signature/);
+
+    const opening = createOpeningCheckpoint({ electionID: checkpoint.electionID, electionContextHash: 'ab'.repeat(32),
+      witnessID: 'python-cross-check', privateKeyPem, observedAt: '2026-09-03T00:00:00.000Z' });
+    fs.writeFileSync(checkpointPath, canonicalize(opening));
+    const openingArgs = [referencePath, checkpointPath, opening.witnessPublicKeyDer,
+      opening.electionID, opening.electionContextHash];
+    const openingAccepted = spawnSync('python3', openingArgs, { encoding: 'utf8' });
+    assert.equal(openingAccepted.status, 0, openingAccepted.stderr || openingAccepted.stdout);
+    const malformedOpening = structuredClone(opening);
+    malformedOpening.history.treeSize = 1;
+    fs.writeFileSync(checkpointPath, canonicalize(malformedOpening));
+    const openingRejected = spawnSync('python3', openingArgs, { encoding: 'utf8' });
+    assert.equal(openingRejected.status, 1);
+    assert.match(openingRejected.stderr, /invalid opening checkpoint/);
   } finally {
     fs.rmSync(temporary, { recursive: true, force: true });
   }

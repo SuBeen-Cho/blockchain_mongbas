@@ -43,13 +43,31 @@ node bin/mongbas-witness.js compare witness-trust.json observer-a.jsonl observer
 node bin/mongbas-witness.js compare-witnesses witness-trust.json mac-witness.jsonl linux-witness.jsonl
 ```
 
+For a new election using the privacy-separated cast-event history, create the
+signed empty checkpoint before accepting the first cast, then bind each
+canonical history artifact and the compatible signed election bundle:
+
+```bash
+node bin/mongbas-witness.js open-cast-history election-2026 <context-sha256> 300 cast-checkpoints.jsonl mac-observer /secure/witness-ed25519.pem
+node bin/mongbas-witness.js observe-cast-history cast-history.json election-bundle.signed.json cast-checkpoints.jsonl mac-observer /secure/witness-ed25519.pem
+node bin/mongbas-witness.js verify-cast-history cast-history.json cast-checkpoints.jsonl witness-trust.json 2
+```
+
+These commands use checkpoint v3 with discriminated `opening` and
+`observation` entries. The opening has tree size zero and no bundle fields; an
+observation signs the cast-history summary, the complete artifact hash and the
+existing bundle metadata. V3 logs cannot implicitly absorb v1/v2 entries, and
+an opening cannot be added retroactively after voting. Existing v1/v2 logs and
+their explicit v1→v2 migration remain supported unchanged.
+
 `init-trust` derives only the public Ed25519 key, creates the trust document
 with mode `0600`, and refuses to overwrite an existing trust document.
 `compare` verifies every supplied log and rejects two individually valid,
 same-witness histories if they contain different signed checkpoints at the same
 sequence. A shorter log that is an exact prefix of a longer log is accepted.
-`compare-witnesses` instead requires distinct trusted witness identities, v2
-history checkpoints, one election/context, and at least one shared tree size.
+`compare-witnesses` instead requires distinct trusted witness identities, one
+homogeneous v2 or v3 history-checkpoint version, one election/context, and at
+least one shared tree size.
 It rejects different roots at a shared size as a split view. Logs with no shared
 snapshot are reported as insufficient evidence rather than accepted as
 consistent. This compares signed observations; the witnesses are operationally
@@ -71,7 +89,7 @@ Checkpoint JSONL is canonical, signed and hash-chained. A changed, inserted or
 reordered observed checkpoint is rejected. The witness private key stays on the
 observer machine.
 
-New logs use checkpoint v2. In addition to the signed checkpoint hash chain,
+Legacy bundle-derived history logs use checkpoint v2. In addition to the signed checkpoint hash chain,
 v2 commits the complete canonical ballot objects in a separate, election-bound
 history tree and verifies an old-to-new prefix consistency proof. The tree uses
 the Merkle Tree Hash and consistency-proof construction from RFC 9162: raw

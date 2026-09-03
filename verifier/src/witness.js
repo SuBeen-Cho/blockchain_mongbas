@@ -10,15 +10,28 @@ const {
   verifyConsistencyProof,
   verifyHistoryBinding,
 } = require('./history');
+const {
+  CAST_EVENT_HISTORY_SCHEMA,
+  CAST_EVENT_LEAF_ALGORITHM,
+  CAST_EVENT_TREE_ALGORITHM,
+  verifyCastEventHistory,
+} = require('./cast-event-history');
 
 const CHECKPOINT_SCHEMA = 'mongbas-bulletin-board-checkpoint/v1';
 const CHECKPOINT_V2_SCHEMA = 'mongbas-bulletin-board-checkpoint/v2';
+const CHECKPOINT_V3_SCHEMA = 'mongbas-bulletin-board-checkpoint/v3';
 const TRUST_SCHEMA = 'mongbas-witness-trust/v1';
 const CHECKPOINT_KEYS = ['schema', 'witnessID', 'witnessPublicKeyDer', 'sequence', 'previousCheckpointHash', 'observedAt',
   'electionID', 'bundleHash', 'bulletinBoardRoot', 'ballotCount', 'publishedAt', 'signature'];
 const CHECKPOINT_V2_KEYS = [...CHECKPOINT_KEYS.filter(key => key !== 'signature'), 'history', 'signature'];
 const HISTORY_KEYS = ['schema', 'treeAlgorithm', 'leafAlgorithm', 'contextHash', 'treeSize', 'rootHash',
   'previousTreeSize', 'previousRootHash', 'consistencyPath'];
+const V3_COMMON_KEYS = ['schema', 'kind', 'witnessID', 'witnessPublicKeyDer', 'sequence', 'previousCheckpointHash',
+  'observedAt', 'electionID', 'electionContextHash', 'epochSeconds', 'history', 'signature'];
+const V3_OBSERVATION_KEYS = [...V3_COMMON_KEYS.filter(key => key !== 'signature'), 'historyArtifactHash', 'bundleHash',
+  'bulletinBoardRoot', 'ballotCount', 'publishedAt', 'signature'];
+const V3_HISTORY_KEYS = ['schema', 'treeAlgorithm', 'leafAlgorithm', 'treeSize', 'rootHash', 'previousTreeSize',
+  'previousRootHash', 'consistencyPath'];
 
 function exactKeys(value, expected, label) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error(`${label}: expected object`);
@@ -79,6 +92,96 @@ function validateHistoryShape(history, index) {
   });
   const maxPath = Math.ceil(Math.log2(history.treeSize)) + 1;
   if (history.consistencyPath.length > maxPath) throw new Error(`checkpoint[${index}].history: too many proof nodes`);
+}
+
+function validateV3Identity(checkpoint, index) {
+  if (!/^[A-Za-z0-9_.-]{1,128}$/.test(checkpoint.witnessID) ||
+      !/^[A-Za-z0-9_.-]{1,256}$/.test(checkpoint.electionID) ||
+      !/^[0-9a-f]{64}$/.test(checkpoint.electionContextHash) ||
+      !Number.isSafeInteger(checkpoint.epochSeconds) || checkpoint.epochSeconds < 1 || checkpoint.epochSeconds > 86_400 ||
+      new Date(checkpoint.observedAt).toISOString() !== checkpoint.observedAt) {
+    throw new Error(`checkpoint[${index}]: invalid v3 identity fields`);
+  }
+}
+
+function validateV3HistoryShape(history, index) {
+  exactKeys(history, V3_HISTORY_KEYS, `checkpoint[${index}].history`);
+  if (history.schema !== CAST_EVENT_HISTORY_SCHEMA || history.treeAlgorithm !== CAST_EVENT_TREE_ALGORITHM ||
+      history.leafAlgorithm !== CAST_EVENT_LEAF_ALGORITHM || !Number.isSafeInteger(history.treeSize) || history.treeSize < 0 ||
+      !Number.isSafeInteger(history.previousTreeSize) || history.previousTreeSize < 0 || history.previousTreeSize > history.treeSize ||
+      !/^[0-9a-f]{64}$/.test(history.rootHash) || !/^[0-9a-f]{64}$/.test(history.previousRootHash) ||
+      !Array.isArray(history.consistencyPath)) throw new Error(`checkpoint[${index}].history: invalid v3 fields`);
+  const maxPath = history.treeSize === 0 ? 0 : Math.ceil(Math.log2(history.treeSize)) + 1;
+  if (history.consistencyPath.length > maxPath || history.consistencyPath.some(node => !/^[0-9a-f]{64}$/.test(node))) {
+    throw new Error(`checkpoint[${index}].history: invalid v3 consistency path`);
+  }
+}
+
+function signCheckpoint(checkpoint, privateKeyPem) {
+  checkpoint.signature = crypto.sign(null, Buffer.from(canonicalize(unsignedCheckpoint(checkpoint))),
+    crypto.createPrivateKey(privateKeyPem)).toString('base64');
+  return checkpoint;
+}
+
+function v3HistorySummary(history) {
+  return {
+    schema: history.schema, treeAlgorithm: history.treeAlgorithm, leafAlgorithm: history.leafAlgorithm,
+    treeSize: history.treeSize, rootHash: history.rootHash, previousTreeSize: history.previousTreeSize,
+    previousRootHash: history.previousRootHash, consistencyPath: structuredClone(history.consistencyPath),
+  };
+}
+
+function createOpeningCheckpoint({ electionID, electionContextHash, epochSeconds = 300, witnessID, privateKeyPem,
+  observedAt = new Date().toISOString() }) {
+  const emptyRoot = sha256Hex('');
+  const checkpoint = {
+    schema: CHECKPOINT_V3_SCHEMA, kind: 'opening', witnessID, witnessPublicKeyDer: publicKeyDer(privateKeyPem),
+    sequence: 1, previousCheckpointHash: null, observedAt, electionID, electionContextHash, epochSeconds,
+    history: { schema: CAST_EVENT_HISTORY_SCHEMA, treeAlgorithm: CAST_EVENT_TREE_ALGORITHM,
+      leafAlgorithm: CAST_EVENT_LEAF_ALGORITHM, treeSize: 0, rootHash: emptyRoot, previousTreeSize: 0,
+      previousRootHash: emptyRoot, consistencyPath: [] }, signature: '',
+  };
+  exactKeys(checkpoint, V3_COMMON_KEYS, 'opening checkpoint');
+  validateV3Identity(checkpoint, 0);
+  validateV3HistoryShape(checkpoint.history, 0);
+  return signCheckpoint(checkpoint, privateKeyPem);
+}
+
+function createCastHistoryCheckpoint({ history, bundle, verification, witnessID, privateKeyPem, previousCheckpoint,
+  observedAt = new Date().toISOString() }) {
+  verifyCastEventHistory(history);
+  assertVerificationMatchesBundle(bundle, verification);
+  if (previousCheckpoint?.schema !== CHECKPOINT_V3_SCHEMA) throw new Error('v3 observation requires a v3 predecessor');
+  if (!['opening', 'observation'].includes(previousCheckpoint.kind)) throw new Error('v3 predecessor kind is invalid');
+  const predecessorKey = crypto.createPublicKey({ key: canonicalBase64(previousCheckpoint.witnessPublicKeyDer,
+    'v3 predecessor public key'), format: 'der', type: 'spki' });
+  if (!crypto.verify(null, Buffer.from(canonicalize(unsignedCheckpoint(previousCheckpoint))), predecessorKey,
+    canonicalBase64(previousCheckpoint.signature, 'v3 predecessor signature'))) {
+    throw new Error('v3 predecessor signature is invalid');
+  }
+  const checkpoint = {
+    schema: CHECKPOINT_V3_SCHEMA, kind: 'observation', witnessID, witnessPublicKeyDer: publicKeyDer(privateKeyPem),
+    sequence: previousCheckpoint.sequence + 1, previousCheckpointHash: checkpointHash(previousCheckpoint), observedAt,
+    electionID: verification.electionID, electionContextHash: history.electionContextHash, epochSeconds: history.epochSeconds,
+    history: v3HistorySummary(history), historyArtifactHash: sha256Hex(canonicalize(history)),
+    bundleHash: verification.bundleHash, bulletinBoardRoot: bundle.bulletinBoard.root,
+    ballotCount: verification.ballots, publishedAt: bundle.bulletinBoard.publishedAt, signature: '',
+  };
+  if (checkpoint.witnessID !== previousCheckpoint.witnessID || checkpoint.witnessPublicKeyDer !== previousCheckpoint.witnessPublicKeyDer ||
+      checkpoint.electionID !== previousCheckpoint.electionID || checkpoint.electionContextHash !== previousCheckpoint.electionContextHash ||
+      checkpoint.epochSeconds !== previousCheckpoint.epochSeconds) throw new Error('v3 checkpoint identity or context changed');
+  if (checkpoint.observedAt < previousCheckpoint.observedAt ||
+      (previousCheckpoint.kind === 'observation' && checkpoint.publishedAt < previousCheckpoint.publishedAt)) {
+    throw new Error('v3 checkpoint timestamp rollback');
+  }
+  if (history.previousTreeSize !== previousCheckpoint.history.treeSize || history.previousRootHash !== previousCheckpoint.history.rootHash) {
+    throw new Error('cast history is not an append-only extension of predecessor');
+  }
+  if (history.treeSize < verification.ballots) throw new Error('cast history cannot contain fewer accepted events than active bundle ballots');
+  exactKeys(checkpoint, V3_OBSERVATION_KEYS, 'observation checkpoint');
+  validateV3Identity(checkpoint, checkpoint.sequence - 1);
+  validateV3HistoryShape(checkpoint.history, checkpoint.sequence - 1);
+  return signCheckpoint(checkpoint, privateKeyPem);
 }
 
 function createCheckpoint({ bundle, verification, witnessID, privateKeyPem, sequence, previousCheckpointHash = null, observedAt = new Date().toISOString() }) {
@@ -170,7 +273,67 @@ function validateTrust(trust) {
   return result;
 }
 
+function verifyV3CheckpointLog(lines, trust) {
+  const trusted = validateTrust(trust);
+  if (!Array.isArray(lines) || lines.length === 0) throw new Error('checkpoint log is empty');
+  let previous = null;
+  let previousHash = null;
+  lines.forEach((checkpoint, index) => {
+    if (checkpoint?.schema !== CHECKPOINT_V3_SCHEMA) throw new Error(`checkpoint[${index}]: v3 log cannot mix schema versions`);
+    const opening = checkpoint.kind === 'opening';
+    if (index === 0 && !opening) throw new Error('v3 log must begin with a valid empty opening checkpoint');
+    exactKeys(checkpoint, opening ? V3_COMMON_KEYS : V3_OBSERVATION_KEYS, `checkpoint[${index}]`);
+    if ((!opening && checkpoint.kind !== 'observation') || checkpoint.sequence !== index + 1 ||
+        checkpoint.previousCheckpointHash !== previousHash) throw new Error(`checkpoint[${index}]: broken v3 kind, sequence or hash chain`);
+    validateV3Identity(checkpoint, index);
+    validateV3HistoryShape(checkpoint.history, index);
+    const witness = trusted.get(checkpoint.witnessID);
+    if (!witness || witness.encoded !== checkpoint.witnessPublicKeyDer) throw new Error(`checkpoint[${index}]: untrusted witness key`);
+    const signature = canonicalBase64(checkpoint.signature, `checkpoint[${index}].signature`);
+    if (!crypto.verify(null, Buffer.from(canonicalize(unsignedCheckpoint(checkpoint))), witness.key, signature)) {
+      throw new Error(`checkpoint[${index}]: invalid signature`);
+    }
+    if (index === 0) {
+      const emptyRoot = sha256Hex('');
+      if (!opening || checkpoint.sequence !== 1 || checkpoint.previousCheckpointHash !== null ||
+          checkpoint.history.treeSize !== 0 || checkpoint.history.previousTreeSize !== 0 ||
+          checkpoint.history.rootHash !== emptyRoot || checkpoint.history.previousRootHash !== emptyRoot ||
+          checkpoint.history.consistencyPath.length !== 0) throw new Error('v3 log must begin with a valid empty opening checkpoint');
+    } else {
+      if (opening) throw new Error(`checkpoint[${index}]: opening checkpoint can only be first`);
+      if (checkpoint.witnessID !== previous.witnessID || checkpoint.witnessPublicKeyDer !== previous.witnessPublicKeyDer ||
+          checkpoint.electionID !== previous.electionID || checkpoint.electionContextHash !== previous.electionContextHash ||
+          checkpoint.epochSeconds !== previous.epochSeconds || checkpoint.observedAt < previous.observedAt) {
+        throw new Error(`checkpoint[${index}]: v3 identity, context or timestamp changed`);
+      }
+      if (!/^[0-9a-f]{64}$/.test(checkpoint.historyArtifactHash) || !/^[0-9a-f]{64}$/.test(checkpoint.bundleHash) ||
+          !/^[0-9a-f]{64}$/.test(checkpoint.bulletinBoardRoot) || !Number.isSafeInteger(checkpoint.ballotCount) ||
+          checkpoint.ballotCount < 1 || !Number.isSafeInteger(checkpoint.publishedAt) || checkpoint.publishedAt < 0) {
+        throw new Error(`checkpoint[${index}]: invalid v3 observation fields`);
+      }
+      if (checkpoint.history.treeSize < checkpoint.ballotCount) {
+        throw new Error(`checkpoint[${index}]: cast history smaller than active bundle`);
+      }
+      if (previous.kind === 'observation' && checkpoint.publishedAt < previous.publishedAt) {
+        throw new Error(`checkpoint[${index}]: v3 publication timestamp rollback`);
+      }
+      if (checkpoint.history.previousTreeSize !== previous.history.treeSize ||
+          checkpoint.history.previousRootHash !== previous.history.rootHash) throw new Error(`checkpoint[${index}]: v3 history predecessor mismatch`);
+      if (!verifyConsistencyProof({ oldSize: checkpoint.history.previousTreeSize, newSize: checkpoint.history.treeSize,
+        oldRootHash: checkpoint.history.previousRootHash, newRootHash: checkpoint.history.rootHash,
+        consistencyPath: checkpoint.history.consistencyPath })) throw new Error(`checkpoint[${index}]: invalid v3 history consistency proof`);
+    }
+    previousHash = checkpointHash(checkpoint);
+    previous = checkpoint;
+  });
+  return { valid: true, checkpoints: lines.length, latestCheckpointHash: previousHash, latest: previous,
+    historyVerifiedFromSequence: 1 };
+}
+
 function verifyCheckpointLog(lines, trust) {
+  if (Array.isArray(lines) && lines.some(checkpoint => checkpoint?.schema === CHECKPOINT_V3_SCHEMA)) {
+    return verifyV3CheckpointLog(lines, trust);
+  }
   const trusted = validateTrust(trust);
   if (!Array.isArray(lines) || lines.length === 0) throw new Error('checkpoint log is empty');
   let previousHash = null;
@@ -270,6 +433,7 @@ function compareIndependentWitnessLogs(logs, trust) {
   let treeAlgorithm = null;
   let leafAlgorithm = null;
   let largestTreeSize = 0;
+  let checkpointSchema = null;
 
   logs.forEach((lines, logIndex) => {
     verifyCheckpointLog(lines, trust);
@@ -278,18 +442,23 @@ function compareIndependentWitnessLogs(logs, trust) {
     const witnessID = lines[0].witnessID;
     if (witnessIDs.has(witnessID)) throw new Error(`checkpoint log ${logIndex + 1}: witness identity is not independent`);
     witnessIDs.add(witnessID);
-    if (lines.some(checkpoint => checkpoint.schema !== CHECKPOINT_V2_SCHEMA)) {
-      throw new Error(`checkpoint log ${logIndex + 1}: independent comparison requires v2 history checkpoints`);
+    const currentSchema = lines[0].schema;
+    if (![CHECKPOINT_V2_SCHEMA, CHECKPOINT_V3_SCHEMA].includes(currentSchema) ||
+        lines.some(checkpoint => checkpoint.schema !== currentSchema)) {
+      throw new Error(`checkpoint log ${logIndex + 1}: independent comparison requires one history checkpoint schema`);
     }
+    if (checkpointSchema === null) checkpointSchema = currentSchema;
+    else if (currentSchema !== checkpointSchema) throw new Error('independent witness logs use different checkpoint schema versions');
 
     lines.forEach((checkpoint, checkpointIndex) => {
       const history = checkpoint.history;
+      const currentContextHash = currentSchema === CHECKPOINT_V3_SCHEMA ? checkpoint.electionContextHash : history.contextHash;
       if (electionID === null) {
         electionID = checkpoint.electionID;
-        contextHash = history.contextHash;
+        contextHash = currentContextHash;
         treeAlgorithm = history.treeAlgorithm;
         leafAlgorithm = history.leafAlgorithm;
-      } else if (checkpoint.electionID !== electionID || history.contextHash !== contextHash ||
+      } else if (checkpoint.electionID !== electionID || currentContextHash !== contextHash ||
           history.treeAlgorithm !== treeAlgorithm || history.leafAlgorithm !== leafAlgorithm) {
         throw new Error(`checkpoint log ${logIndex + 1} checkpoint ${checkpointIndex + 1}: election or history context mismatch`);
       }
@@ -327,14 +496,18 @@ function parseCanonicalLog(text) {
 module.exports = {
   CHECKPOINT_SCHEMA,
   CHECKPOINT_V2_SCHEMA,
+  CHECKPOINT_V3_SCHEMA,
   TRUST_SCHEMA,
   checkpointHash,
   compareCheckpointLogs,
   compareIndependentWitnessLogs,
   createCheckpoint,
+  createOpeningCheckpoint,
+  createCastHistoryCheckpoint,
   createHistoryCheckpoint,
   parseCanonicalLog,
   publicKeyDer,
   verifyHistoryBinding,
   verifyCheckpointLog,
+  verifyV3CheckpointLog,
 };

@@ -4,14 +4,17 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const { canonicalize, verifyBundleBytes } = require('../src/verify');
-const { CHECKPOINT_SCHEMA, CHECKPOINT_V2_SCHEMA, TRUST_SCHEMA, checkpointHash, compareCheckpointLogs,
+const { CHECKPOINT_SCHEMA, CHECKPOINT_V2_SCHEMA, CHECKPOINT_V3_SCHEMA, TRUST_SCHEMA, checkpointHash, compareCheckpointLogs,
   compareIndependentWitnessLogs,
-  createHistoryCheckpoint, parseCanonicalLog, publicKeyDer, verifyCheckpointLog, verifyHistoryBinding } = require('../src/witness');
+  createHistoryCheckpoint, createOpeningCheckpoint, createCastHistoryCheckpoint,
+  parseCanonicalLog, publicKeyDer, verifyCheckpointLog, verifyHistoryBinding } = require('../src/witness');
+const { verifyCastEventHistory } = require('../src/cast-event-history');
 
 const MAX_BUNDLE_BYTES = 256 * 1024 * 1024;
 const MAX_LOG_BYTES = 16 * 1024 * 1024;
 const MAX_TRUST_BYTES = 1024 * 1024;
 const MAX_PRIVATE_KEY_BYTES = 64 * 1024;
+const MAX_HISTORY_BYTES = 256 * 1024 * 1024;
 const NOFOLLOW = fs.constants.O_NOFOLLOW || 0;
 
 function readRegularFile(filePath, label, maximumBytes, { privateFile = false, encoding } = {}) {
@@ -54,16 +57,68 @@ function readPrivateKey(filePath) {
   return readRegularFile(filePath, 'witness private key', MAX_PRIVATE_KEY_BYTES, { privateFile: true });
 }
 
+function readHistory(filePath) {
+  const bytes = readRegularFile(filePath, 'cast-event history', MAX_HISTORY_BYTES);
+  const text = bytes.toString('utf8');
+  const history = JSON.parse(text);
+  if (canonicalize(history) !== text.trim()) throw new Error('cast-event history is not canonical JSON');
+  verifyCastEventHistory(history);
+  return history;
+}
+
 function usage(exitCode = 2) {
   console.error('Usage:');
   console.error('  mongbas-witness init-trust <witness-id> <ed25519-private.pem> <witness-trust.json>');
   console.error('  mongbas-witness observe <bundle.json> <checkpoint.jsonl> <witness-id> <ed25519-private.pem>');
   console.error('  mongbas-witness migrate-history <bundle.json> <checkpoint.jsonl> <witness-id> <ed25519-private.pem>');
+  console.error('  mongbas-witness open-cast-history <election-id> <context-hash> <epoch-seconds> <checkpoint.jsonl> <witness-id> <ed25519-private.pem>');
+  console.error('  mongbas-witness observe-cast-history <history.json> <bundle.json> <checkpoint.jsonl> <witness-id> <ed25519-private.pem>');
   console.error('  mongbas-witness verify <checkpoint.jsonl> <witness-trust.json>');
   console.error('  mongbas-witness verify-bundle <bundle.json> <checkpoint.jsonl> <witness-trust.json> <sequence>');
+  console.error('  mongbas-witness verify-cast-history <history.json> <checkpoint.jsonl> <witness-trust.json> <sequence>');
   console.error('  mongbas-witness compare <witness-trust.json> <checkpoint-a.jsonl> <checkpoint-b.jsonl> [...]');
   console.error('  mongbas-witness compare-witnesses <witness-trust.json> <witness-a.jsonl> <witness-b.jsonl> [...]');
   process.exit(exitCode);
+}
+
+function openCastHistory(electionID, contextHash, epochText, logPath, witnessID, keyPath) {
+  if (!/^[1-9][0-9]*$/.test(epochText)) throw new Error('epoch-seconds must be a positive integer');
+  const epochSeconds = Number(epochText);
+  const privateKeyPem = readPrivateKey(keyPath);
+  const checkpoint = createOpeningCheckpoint({ electionID, electionContextHash: contextHash, epochSeconds,
+    witnessID, privateKeyPem });
+  const resolvedLog = path.resolve(logPath);
+  withLogLock(resolvedLog, () => {
+    if (fs.existsSync(resolvedLog) && fs.lstatSync(resolvedLog).size > 0) throw new Error('v3 opening requires an empty checkpoint log');
+    appendAndSync(resolvedLog, canonicalize(checkpoint));
+  });
+  console.log(`CAST HISTORY OPENED: electionID=${electionID} sequence=1`);
+  console.log(`checkpointHash=${checkpointHash(checkpoint)}`);
+}
+
+function observeCastHistory(historyPath, bundlePath, logPath, witnessID, keyPath) {
+  const history = readHistory(historyPath);
+  const bundleBytes = readBundle(bundlePath);
+  const verification = verifyBundleBytes(bundleBytes);
+  if (!verification.valid) throw new Error(`bundle rejected: ${verification.summary}: ${verification.errors.join('; ')}`);
+  const bundle = JSON.parse(bundleBytes);
+  const privateKeyPem = readPrivateKey(keyPath);
+  const trust = { schema: TRUST_SCHEMA, witnesses: [{ id: witnessID, ed25519PublicKeyDer: publicKeyDer(privateKeyPem) }] };
+  let checkpoint;
+  const resolvedLog = path.resolve(logPath);
+  withLogLock(resolvedLog, () => {
+    if (!fs.existsSync(resolvedLog) || fs.lstatSync(resolvedLog).size === 0) throw new Error('v3 observation requires an opening checkpoint');
+    const existing = parseCanonicalLog(readLog(resolvedLog));
+    verifyCheckpointLog(existing, trust);
+    const previous = existing.at(-1);
+    if (previous.schema !== CHECKPOINT_V3_SCHEMA) throw new Error('cast-event observation cannot migrate a v1/v2 log implicitly');
+    checkpoint = createCastHistoryCheckpoint({ history, bundle, verification, witnessID, privateKeyPem,
+      previousCheckpoint: previous });
+    appendAndSync(resolvedLog, canonicalize(checkpoint));
+  });
+  console.log(`CAST HISTORY WITNESSED: electionID=${checkpoint.electionID} sequence=${checkpoint.sequence}`);
+  console.log(`checkpointHash=${checkpointHash(checkpoint)}`);
+  console.log(`historyArtifactHash=${checkpoint.historyArtifactHash}`);
 }
 
 function initTrust(witnessID, keyPath, trustPath) {
@@ -203,6 +258,29 @@ function verifyBundleCheckpoint(bundlePath, logPath, trustPath, sequenceText) {
   console.log(`BUNDLE BOUND: sequence=${sequence} bundleHash=${bundleVerification.bundleHash}`);
 }
 
+function verifyCastHistoryCheckpoint(historyPath, logPath, trustPath, sequenceText) {
+  if (!/^[1-9][0-9]*$/.test(sequenceText)) throw new Error('sequence must be a positive integer');
+  const sequence = Number(sequenceText);
+  if (!Number.isSafeInteger(sequence)) throw new Error('sequence exceeds safe integer range');
+  const history = readHistory(historyPath);
+  const entries = parseCanonicalLog(readLog(logPath));
+  verifyCheckpointLog(entries, readTrust(trustPath));
+  const checkpoint = entries[sequence - 1];
+  if (!checkpoint || checkpoint.sequence !== sequence) throw new Error('checkpoint sequence not found');
+  if (checkpoint.schema !== CHECKPOINT_V3_SCHEMA || checkpoint.kind !== 'observation') {
+    throw new Error('checkpoint has no v3 cast-history observation binding');
+  }
+  const expectedSummary = {
+    schema: history.schema, treeAlgorithm: history.treeAlgorithm, leafAlgorithm: history.leafAlgorithm,
+    treeSize: history.treeSize, rootHash: history.rootHash, previousTreeSize: history.previousTreeSize,
+    previousRootHash: history.previousRootHash, consistencyPath: history.consistencyPath,
+  };
+  if (checkpoint.historyArtifactHash !== require('../src/verify').sha256Hex(canonicalize(history)) ||
+      checkpoint.electionContextHash !== history.electionContextHash || checkpoint.epochSeconds !== history.epochSeconds ||
+      canonicalize(checkpoint.history) !== canonicalize(expectedSummary)) throw new Error('cast-event history does not match checkpoint');
+  console.log(`CAST HISTORY BOUND: sequence=${sequence} historyArtifactHash=${checkpoint.historyArtifactHash}`);
+}
+
 function compare(trustPath, logPaths) {
   const trust = readTrust(trustPath);
   const logs = logPaths.map(logPath => parseCanonicalLog(readLog(logPath)));
@@ -227,8 +305,11 @@ try {
   if (command === 'init-trust' && args.length === 3) initTrust(args[0], path.resolve(args[1]), path.resolve(args[2]));
   else if (command === 'observe' && args.length === 4) observe(path.resolve(args[0]), path.resolve(args[1]), args[2], path.resolve(args[3]));
   else if (command === 'migrate-history' && args.length === 4) migrateHistory(path.resolve(args[0]), path.resolve(args[1]), args[2], path.resolve(args[3]));
+  else if (command === 'open-cast-history' && args.length === 6) openCastHistory(args[0], args[1], args[2], path.resolve(args[3]), args[4], path.resolve(args[5]));
+  else if (command === 'observe-cast-history' && args.length === 5) observeCastHistory(path.resolve(args[0]), path.resolve(args[1]), path.resolve(args[2]), args[3], path.resolve(args[4]));
   else if (command === 'verify' && args.length === 2) verify(...args.map(value => path.resolve(value)));
   else if (command === 'verify-bundle' && args.length === 4) verifyBundleCheckpoint(path.resolve(args[0]), path.resolve(args[1]), path.resolve(args[2]), args[3]);
+  else if (command === 'verify-cast-history' && args.length === 4) verifyCastHistoryCheckpoint(path.resolve(args[0]), path.resolve(args[1]), path.resolve(args[2]), args[3]);
   else if (command === 'compare' && args.length >= 3) compare(path.resolve(args[0]), args.slice(1).map(value => path.resolve(value)));
   else if (command === 'compare-witnesses' && args.length >= 3) compareWitnesses(path.resolve(args[0]), args.slice(1).map(value => path.resolve(value)));
   else if (command === '--help' || command === '-h') usage(0);

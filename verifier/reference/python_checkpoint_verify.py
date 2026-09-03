@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Independent verifier for Mongbas checkpoint-v2 canonical signed bytes.
+"""Independent verifier for Mongbas checkpoint-v2/v3 canonical signed bytes.
 
 The script uses Python's JSON/base64 validation and the OpenSSL CLI's Ed25519
 implementation. It intentionally does not import or execute Mongbas Node code.
@@ -15,14 +15,26 @@ import tempfile
 from pathlib import Path
 
 
-CHECKPOINT_KEYS = {
+V2_CHECKPOINT_KEYS = {
     "schema", "witnessID", "witnessPublicKeyDer", "sequence",
     "previousCheckpointHash", "observedAt", "electionID", "bundleHash",
     "bulletinBoardRoot", "ballotCount", "publishedAt", "history", "signature",
 }
-HISTORY_KEYS = {
+V2_HISTORY_KEYS = {
     "schema", "treeAlgorithm", "leafAlgorithm", "contextHash", "treeSize",
     "rootHash", "previousTreeSize", "previousRootHash", "consistencyPath",
+}
+V3_COMMON_KEYS = {
+    "schema", "kind", "witnessID", "witnessPublicKeyDer", "sequence",
+    "previousCheckpointHash", "observedAt", "electionID", "electionContextHash",
+    "epochSeconds", "history", "signature",
+}
+V3_OBSERVATION_KEYS = V3_COMMON_KEYS | {
+    "historyArtifactHash", "bundleHash", "bulletinBoardRoot", "ballotCount", "publishedAt",
+}
+V3_HISTORY_KEYS = {
+    "schema", "treeAlgorithm", "leafAlgorithm", "treeSize", "rootHash",
+    "previousTreeSize", "previousRootHash", "consistencyPath",
 }
 HASH = re.compile(r"^[0-9a-f]{64}$")
 IDENTIFIER = re.compile(r"^[A-Za-z0-9_.-]+$")
@@ -49,11 +61,11 @@ def decode_base64(value, label):
     return decoded
 
 
-def validate(checkpoint, expected_key, expected_election, expected_context):
-    if not isinstance(checkpoint, dict) or set(checkpoint) != CHECKPOINT_KEYS:
+def validate_v2(checkpoint, expected_context):
+    if set(checkpoint) != V2_CHECKPOINT_KEYS:
         fail("checkpoint fields mismatch")
     history = checkpoint.get("history")
-    if not isinstance(history, dict) or set(history) != HISTORY_KEYS:
+    if not isinstance(history, dict) or set(history) != V2_HISTORY_KEYS:
         fail("history fields mismatch")
     if checkpoint["schema"] != "mongbas-bulletin-board-checkpoint/v2":
         fail("checkpoint schema mismatch")
@@ -62,15 +74,8 @@ def validate(checkpoint, expected_key, expected_election, expected_context):
     if history["treeAlgorithm"] != "mongbas-ballot-history-tree-sha256/v1" or \
             history["leafAlgorithm"] != "mongbas-canonical-ballot-commitment-sha256/v1":
         fail("history algorithm mismatch")
-    if checkpoint["electionID"] != expected_election:
-        fail("election mismatch")
     if history["contextHash"] != expected_context:
         fail("context mismatch")
-    if not isinstance(checkpoint["witnessID"], str) or not (1 <= len(checkpoint["witnessID"]) <= 128) or \
-            not IDENTIFIER.fullmatch(checkpoint["witnessID"]):
-        fail("witness identity mismatch")
-    if checkpoint["witnessPublicKeyDer"] != expected_key:
-        fail("witness public key mismatch")
     for field in ("bundleHash", "bulletinBoardRoot"):
         if not isinstance(checkpoint[field], str) or not HASH.fullmatch(checkpoint[field]):
             fail(f"{field}: invalid hash")
@@ -92,6 +97,70 @@ def validate(checkpoint, expected_key, expected_election, expected_context):
     if not isinstance(history["consistencyPath"], list) or any(
             not isinstance(node, str) or not HASH.fullmatch(node) for node in history["consistencyPath"]):
         fail("invalid consistency path")
+
+
+def validate_v3(checkpoint, expected_context):
+    kind = checkpoint.get("kind")
+    expected_keys = V3_COMMON_KEYS if kind == "opening" else V3_OBSERVATION_KEYS
+    if kind not in ("opening", "observation") or set(checkpoint) != expected_keys:
+        fail("checkpoint v3 fields or kind mismatch")
+    history = checkpoint.get("history")
+    if not isinstance(history, dict) or set(history) != V3_HISTORY_KEYS:
+        fail("history v3 fields mismatch")
+    if checkpoint["electionContextHash"] != expected_context or not HASH.fullmatch(expected_context):
+        fail("context mismatch")
+    if history["schema"] != "mongbas-cast-event-history/v1" or \
+            history["treeAlgorithm"] != "mongbas-cast-event-history-tree-sha256/v1" or \
+            history["leafAlgorithm"] != "mongbas-cast-event-id-sha256/v1":
+        fail("history v3 schema or algorithm mismatch")
+    if not isinstance(checkpoint["epochSeconds"], int) or isinstance(checkpoint["epochSeconds"], bool) or \
+            not (1 <= checkpoint["epochSeconds"] <= 86400):
+        fail("invalid epoch policy")
+    for field in ("rootHash", "previousRootHash"):
+        if not isinstance(history[field], str) or not HASH.fullmatch(history[field]):
+            fail(f"history.{field}: invalid hash")
+    for field in ("treeSize", "previousTreeSize"):
+        if not isinstance(history[field], int) or isinstance(history[field], bool) or history[field] < 0:
+            fail(f"invalid history.{field}")
+    if history["previousTreeSize"] > history["treeSize"] or not isinstance(history["consistencyPath"], list) or any(
+            not isinstance(node, str) or not HASH.fullmatch(node) for node in history["consistencyPath"]):
+        fail("invalid v3 history predecessor or path")
+    if kind == "opening":
+        empty_root = __import__("hashlib").sha256(b"").hexdigest()
+        if checkpoint["sequence"] != 1 or checkpoint["previousCheckpointHash"] is not None or \
+                history["treeSize"] != 0 or history["previousTreeSize"] != 0 or \
+                history["rootHash"] != empty_root or history["previousRootHash"] != empty_root or history["consistencyPath"]:
+            fail("invalid opening checkpoint")
+    else:
+        for field in ("historyArtifactHash", "bundleHash", "bulletinBoardRoot"):
+            if not isinstance(checkpoint[field], str) or not HASH.fullmatch(checkpoint[field]):
+                fail(f"{field}: invalid hash")
+        if not isinstance(checkpoint["ballotCount"], int) or isinstance(checkpoint["ballotCount"], bool) or \
+                checkpoint["ballotCount"] < 1 or history["treeSize"] < checkpoint["ballotCount"]:
+            fail("invalid observation ballot/history count")
+        if not isinstance(checkpoint["publishedAt"], int) or isinstance(checkpoint["publishedAt"], bool) or checkpoint["publishedAt"] < 0:
+            fail("invalid publication timestamp")
+
+
+def validate(checkpoint, expected_key, expected_election, expected_context):
+    if not isinstance(checkpoint, dict):
+        fail("checkpoint must be an object")
+    if checkpoint.get("electionID") != expected_election:
+        fail("election mismatch")
+    if not isinstance(checkpoint.get("witnessID"), str) or not (1 <= len(checkpoint["witnessID"]) <= 128) or \
+            not IDENTIFIER.fullmatch(checkpoint["witnessID"]):
+        fail("witness identity mismatch")
+    if checkpoint.get("witnessPublicKeyDer") != expected_key:
+        fail("witness public key mismatch")
+    if not isinstance(checkpoint.get("sequence"), int) or isinstance(checkpoint["sequence"], bool) or checkpoint["sequence"] < 1:
+        fail("invalid sequence")
+    schema = checkpoint.get("schema")
+    if schema == "mongbas-bulletin-board-checkpoint/v2":
+        validate_v2(checkpoint, expected_context)
+    elif schema == "mongbas-bulletin-board-checkpoint/v3":
+        validate_v3(checkpoint, expected_context)
+    else:
+        fail("checkpoint schema mismatch")
 
 
 def verify_signature(checkpoint, public_der, signature):
