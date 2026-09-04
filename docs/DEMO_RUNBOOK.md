@@ -17,7 +17,8 @@ cd mongbas
 
 폰 접속용 tailnet-only HTTPS(계정 Serve 활성화 후):
 ```bash
-tailscale serve --bg http://127.0.0.1:3000
+MONGBAS_RUNTIME_DIR=/home/user1/mongbas-runtime \
+  ./deploy/linux/tailnet-serve-evaluation.sh ENABLE_TAILNET_ONLY_SERVE
 ```
 > 이 명령은 tailnet 내부 Serve만 구성한다. Funnel, `demo-tunnel.sh`와 일반 인터넷 공개는 별도 승인이 없으면 사용하지 않는다.
 > private Serve에서도 rate limit을 끄지 않는다. `live-count`, `live-votes`, `demo-events`는 관제판이 전송하는 관리자 bearer token이 있어야 조회된다. 관제판도 Serve HTTPS URL로 열어야 QR에 해당 origin이 들어간다.
@@ -32,7 +33,7 @@ tailscale serve --bg http://127.0.0.1:3000
 **전시용 쇼케이스(서브 컴퓨터)**: `https://mongbas-blockchain.netlify.app/` (Netlify 배포)
 - 또는 로컬/Serve에서 `http://localhost:3000/showcase3.html` (`https://<tailnet-host>/showcase3.html`).
 - 소스: `frontend/public/showcase3.html` (구 showcase.html/showcase2.html 시안은 제거됨).
-- 일반인/부스 참여자용 전시 페이지. 인터넷 연결 필요(폰트·애니메이션 CDN, QR·Firebase 동기화).
+- 일반인/부스 참여자용 설명 페이지. 원격 CDN 폰트·애니메이션은 인터넷이 없으면 생략될 수 있지만, 투표용 QR이나 admission을 처리하지 않는다.
 - **QR 갱신**: 대시보드 [새 세션] 시 서버에서 일회용 admission을 발급해 로컬 화면의 QR을 갱신한다. 원시 토큰은 Firebase나 다른 외부 relay로 전송하지 않는다.
 
 ---
