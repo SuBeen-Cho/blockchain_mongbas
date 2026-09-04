@@ -62,6 +62,8 @@ test('public showcase and credential labels do not claim unverified equivalence'
   const voterPage = read('frontend/src/pages/VoterPage.jsx');
   const boothDesign = read('docs/DEMO_BOOTH_DESIGN.md');
   const frontendIndex = read('frontend/index.html');
+  const viteConfig = read('frontend/vite.config.js');
+  const setupGuide = read('docs/RUN_GUIDE.md');
   const caliperBenchmarks = [
     read('caliper/benchmarks/cast-vote.yaml'),
     read('caliper/benchmarks/get-election.yaml'),
@@ -90,6 +92,8 @@ test('public showcase and credential labels do not claim unverified equivalence'
   assert.doesNotMatch(voterPage, /label:\s*['"]익명 투표['"]/);
   assert.doesNotMatch(boothDesign, /운영자도 못 본다|익명성 \/ \*\*Ballot Secrecy\*\*|Ballot Secrecy \/ 익명성|변조 불가능하게 기록|조작이 불가능|100% 사실이 되고 위험 0|아무도 못 건드/);
   assert.doesNotMatch(frontendIndex, /Anonymous E-Voting/);
+  assert.doesNotMatch(setupGuide, /curl[\s\S]{0,200}\|\s*(?:bash|sh)/);
+  assert.doesNotMatch(viteConfig, /allowedHosts:\s*true|host:\s*true/);
   for (const benchmark of caliperBenchmarks) assert.doesNotMatch(benchmark, /익명 전자투표/);
   for (const benchmark of caliperBenchmarks) assert.doesNotMatch(benchmark, /익명 투표 트랜잭션/);
 });

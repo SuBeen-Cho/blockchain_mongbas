@@ -10,7 +10,7 @@
 | **Docker Desktop** | 블록체인(피어·오더러·CouchDB)이 Docker로 동작 — **반드시 실행 중** | `docker ps` |
 | **Node.js 22.12+** / npm | 백엔드·프론트엔드 (`puppeteer-core@25` 요구사항) | `node --version` |
 | **Go 1.25.7+** | 현재 `chaincode/voting/go.mod` 기준 체인코드 빌드 | `go version` |
-| **cloudflared** | 공개 터널 (`brew install cloudflared`) | `cloudflared --version` |
+| **Tailscale** (원격 QR 선택) | tailnet 내부 HTTPS Serve | `tailscale status` |
 
 ### 0-2. 클론
 ```bash
@@ -18,15 +18,21 @@ git clone https://github.com/SuBeen-Cho/blockchain_mongbas.git
 cd blockchain_mongbas/mongbas
 ```
 
-### 0-3. Fabric 바이너리 + fabric-samples 설치 (~280MB)
-> `fabric-samples/`는 용량 때문에 gitignore 됨 → **저장소에 없으니 별도 설치 필요.**
+### 0-3. 검증된 Linux 평가 환경 설치
+
+Ubuntu 평가 서버에서는 저장소가 고정한 Fabric/Go 버전과 SHA-256을 검증하는 bootstrap을 사용합니다. 기존 runtime이나 ledger가 있는 서버에서는 먼저 `deploy/linux/README.md`의 보존·preflight 절차를 확인하고 fresh bootstrap/network-up을 반복하지 마세요.
+
 ```bash
-# mongbas/ 폴더에서 실행
-curl -sSL https://raw.githubusercontent.com/hyperledger/fabric/main/scripts/install-fabric.sh \
-  | bash -s -- --fabric-version 2.5.9 binary
-ls bin/cryptogen      # 설치 확인 (cryptogen·configtxgen·peer·orderer)
+./deploy/linux/bootstrap.sh
 ```
-> 최신 설치 스크립트는 `bin/`, `config/`, `builders/`를 프로젝트 루트에 생성한다. 기존 `fabric-samples/bin` 구조도 실행 스크립트에서 하위 호환으로 지원한다.
+
+macOS/Docker 개발 환경에서 Fabric 도구를 별도로 설치할 경우에도 공식 release archive와 게시된 checksum을 검증하고, 원격 스크립트를 바로 shell로 파이프하지 않습니다.
+
+Vite 개발 서버는 기본적으로 loopback만 수신합니다. 개발 서버를 별도 사설 hostname으로 열어야 할 때만 정확한 값을 지정하세요. 실제 tailnet QR 실증은 Vite dev server가 아니라 backend가 제공하는 production build와 Tailscale Serve를 사용합니다.
+
+```bash
+VITE_DEV_HOST=0.0.0.0 VITE_ALLOWED_HOSTS=exact-hostname npm --prefix frontend run dev
+```
 
 ### 0-4. 의존성 설치 + 환경변수
 ```bash
