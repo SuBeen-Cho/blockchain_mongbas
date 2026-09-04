@@ -43,6 +43,13 @@ test('demo launchers never kill unrelated processes and public tunnels require o
   assert.doesNotMatch(processLibrary, /pkill|killall/);
 });
 
+test('recommended tailnet run guide never invokes the public-tunnel launcher', () => {
+  const guide = fs.readFileSync(path.join(__dirname, '../../docs/RUN_GUIDE.md'), 'utf8');
+  assert.match(guide, /\.\/scripts\/demo-start\.sh/);
+  assert.doesNotMatch(guide, /\.\/scripts\/demo-up\.sh/);
+  assert.doesNotMatch(guide, /`demo-up\.sh`/);
+});
+
 test('destructive demo reset requires an exact confirmation before any operation', () => {
   const reset = path.join(__dirname, '../../scripts/demo-reset.sh');
   const result = spawnSync(reset, [], { encoding: 'utf8' });

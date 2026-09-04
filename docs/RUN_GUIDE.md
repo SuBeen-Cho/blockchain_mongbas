@@ -42,7 +42,7 @@ cd ..
 ```
 
 > ⏱️ **첫 네트워크 기동 시 Docker 이미지 다운로드로 5~10분** 걸릴 수 있습니다(이후엔 빠름).
-> 이후 `demo-up.sh`가 네트워크가 안 떠 있으면 자동으로 `up + deploy`까지 수행합니다.
+> 이후 `demo-start.sh`가 네트워크가 안 떠 있으면 자동으로 `up + deploy`까지 수행합니다.
 
 Linux에서는 실제 secret과 실행 결과를 저장소 밖(예: `~/mongbas-runtime/`)에 두고 `application/.env`는 외부 secret 파일을 가리키는 심볼릭 링크로 구성하는 것을 권장한다.
 
@@ -52,13 +52,13 @@ Linux에서는 실제 secret과 실행 결과를 저장소 밖(예: `~/mongbas-r
 
 ```bash
 cd mongbas
-./scripts/demo-up.sh        # ① 네트워크 확인(없으면 up+deploy) ② 빌드 ③ loopback 백엔드
+./scripts/demo-start.sh     # ① 네트워크 확인(없으면 up+deploy) ② 빌드 ③ loopback 백엔드
 ./scripts/demo-status.sh    # 로컬 서비스 / 상태 확인 (언제든)
 ./scripts/demo-stop.sh      # 소유권이 확인된 백엔드 중지 (블록체인은 유지)
 ./scripts/demo-rebuild.sh   # 화면 코드만 바꿨을 때: build만 갱신
 ```
 
-- `demo-up.sh` 실행 후 **터미널을 닫아도 계속 동작**(nohup). 노트북만 켜져 있으면 됨.
+- `demo-start.sh`는 백엔드를 백그라운드로 기동하고, 실행 PID와 작업 경로를 저장해 소유권이 확인된 프로세스만 중지한다.
 - 원격 휴대폰 실증은 QR 보안 프로필을 적용한 Linux loopback backend를 **tailnet-only Tailscale Serve HTTPS**로 전달한다.
 - Tailscale Serve 계정 활성화와 휴대폰 tailnet 가입이 필요하다. Funnel·Quick Tunnel·일반 인터넷 공개는 별도 승인 없이 사용하지 않는다.
 
@@ -127,4 +127,4 @@ cd mongbas/network
 | tailnet HTTPS 주소 안 열림 | `tailscale status`와 `tailscale serve status`를 확인하고, Serve 계정 활성화가 안 됐으면 사용자 조작 후 재확인 |
 | 폰이 QR 못 엶 | 휴대폰이 같은 tailnet인지, 대시보드가 Serve HTTPS origin인지, QR admission이 만료되지 않았는지 확인 |
 | 개표 시 MVCC 충돌 | 자동 재시도됨. 안 되면 [개표] 다시 |
-| 전부 꼬임 | 복구 증거 보존 후 초기화를 승인했다면 `./scripts/demo-reset.sh --confirm-destroy-demo-ledger` → `./scripts/demo-up.sh` |
+| 전부 꼬임 | 복구 증거 보존 후 초기화를 승인했다면 `./scripts/demo-reset.sh --confirm-destroy-demo-ledger` → `./scripts/demo-start.sh` |

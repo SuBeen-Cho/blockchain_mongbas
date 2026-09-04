@@ -85,8 +85,8 @@ app.use(cors({
 app.use('/api', apiRequestShapeGuard(runtimeSecurity.allowedOrigins));
 app.use(express.json({ limit: '1mb' }));
 
-// ── 정적 프론트엔드 서빙 (부스 시연: 단일 오리진 + cloudflared 터널) ──
-// 빌드된 SPA(frontend/dist)를 백엔드가 직접 서빙 → 폰/API 동일 출처라 CORS 무관, 터널 1개로 충분.
+// ── 정적 프론트엔드 서빙 (부스 시연: 단일 오리진 + tailnet-only HTTPS Serve) ──
+// 빌드된 SPA(frontend/dist)를 백엔드가 직접 서빙 → 폰/API가 하나의 Serve HTTPS origin을 사용.
 // 정적 파일이 없으면 next()로 통과 → 아래 API 라우터/핸들러가 처리.
 const FRONTEND_DIST = path.join(__dirname, '../../frontend/dist');
 app.use(express.static(FRONTEND_DIST));
