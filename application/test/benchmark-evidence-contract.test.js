@@ -72,6 +72,15 @@ test('benchmark runners explicitly enable their isolated test surface and never 
   }
 });
 
+test('older E2E benchmark launchers fail closed when TCP 3000 has an unknown owner', () => {
+  for (const name of ['run-e2e-auth-vote.sh', 'run-e2e-concurrency-auth.sh']) {
+    const source = fs.readFileSync(path.join(__dirname, '..', 'benchmark', name), 'utf8');
+    assert.match(source, /lsof -ti:3000/);
+    assert.match(source, /already in use/);
+    assert.doesNotMatch(source, /xargs\s+kill|kill\s+-9/);
+  }
+});
+
 test('supported ElGamal benchmarks publish an explicit validity verdict without overwriting evidence', () => {
   for (const name of ['elgamal-e2e-bench.js', 'elgamal-concurrency-bench.js']) {
     const source = fs.readFileSync(path.join(__dirname, '..', 'benchmark', name), 'utf8');

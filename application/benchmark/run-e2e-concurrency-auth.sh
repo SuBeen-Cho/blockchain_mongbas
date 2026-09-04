@@ -72,7 +72,10 @@ run_mode() {
 
 trap stop_server EXIT
 
-lsof -ti:3000 | xargs kill -9 2>/dev/null || true
+if lsof -ti:3000 >/dev/null 2>&1; then
+  echo "TCP 3000 is already in use; refusing to terminate an unknown process" >&2
+  exit 1
+fi
 sleep 1
 
 IFS=',' read -ra MODE_LIST <<< "$MODES"
