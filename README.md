@@ -4,7 +4,7 @@
     <strong>Hyperledger Fabric 기반 다조직 합의 암호화·검증 가능 전자투표 프로토타입</strong>
   </p>
   <p align="center">
-    Anonymous E-Voting on Hyperledger Fabric 2.5:<br>
+    Encrypted and Verifiable Voting on Hyperledger Fabric 2.5:<br>
     A Research Prototype for the Verification Paradox and Coercion-Resistance Evaluation
   </p>
 </p>
@@ -138,8 +138,8 @@
 |-------|-----------|
 | Blockchain | Hyperledger Fabric 2.5 (etcdraft CFT, 4 Orderer) |
 | State DB | CouchDB 3.4 |
-| Smart Contract | Go 1.21 — `chaincode/voting/voting.go` (~4,000 lines, single file) |
-| Backend API | Node.js 18 + Express + `@hyperledger/fabric-gateway` |
+| Smart Contract | Go 1.25.7 module — `chaincode/voting/voting.go` |
+| Backend API | Node.js 22.12+ + Express + `@hyperledger/fabric-gateway` |
 | Frontend | React 18 + Vite + Tailwind CSS |
 | Cryptography | Exponential ElGamal, Chaum-Pedersen ZKP, Shamir SSS, Merkle Tree, HMAC/Ed25519 |
 | Benchmarking | Hyperledger Caliper 0.6 |
@@ -150,18 +150,18 @@
 ## 실행 방법
 
 > 📖 **상세 실행 가이드(도커 설치 → Fabric 부트스트랩 → 데모 원클릭 → 개발모드 → 쇼케이스 → 트러블슈팅)**: [docs/RUN_GUIDE.md](./docs/RUN_GUIDE.md)
-> 부스 데모는 `./scripts/demo-up.sh` 한 번이면 됩니다(네트워크·빌드·백엔드·공개터널 자동).
+> 부스 데모 실행기는 네트워크·빌드·백엔드를 구성합니다. 공개 터널은 명시적 opt-in이 필요하며, 현재 원격 실증은 tailnet 내부 Tailscale Serve를 사용합니다.
 
 ### 사전 요구사항
 
 - Docker + docker compose v2
-- Node.js 18+
-- Go 1.21+
+- Node.js 22.12+
+- Go 1.25.7+ (현재 chaincode `go.mod` 기준)
 - Hyperledger Fabric 2.5 binaries (`cryptogen`, `configtxgen`, `peer`, `orderer`)
 
-> Fabric 바이너리가 없는 경우, 아래 명령으로 설치할 수 있습니다 (~280MB):
+> 검증된 Ubuntu 평가 환경에서는 체크섬을 고정한 bootstrap을 사용합니다. 기존 runtime/ledger가 있는 호스트에서는 먼저 `deploy/linux/README.md`의 보존 절차를 확인하세요.
 > ```bash
-> curl -sSL https://bit.ly/2ysbOFE | bash -s -- 2.5.0 1.5.7
+> ./deploy/linux/bootstrap.sh
 > ```
 
 ### 1. 클론

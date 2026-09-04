@@ -44,6 +44,9 @@ test('runtime metadata and UI do not self-certify coercion resistance', () => {
     assert.doesNotMatch(source, /다조직 합의 익명 전자투표|운영자도 못 봄|누구에게 찍었는지 우리도 몰라/, label);
   }
   assert.doesNotMatch(kioskPage, /<Badge>익명<\/Badge>/);
+  assert.doesNotMatch(readme, /curl[^\n]*\|\s*(?:bash|sh)/);
+  assert.doesNotMatch(readme, /공개터널 자동/);
+  assert.doesNotMatch(readme, /Anonymous E-Voting|Node\.js 18|Go 1\.21/);
 });
 
 test('public showcase and credential labels do not claim unverified equivalence', () => {

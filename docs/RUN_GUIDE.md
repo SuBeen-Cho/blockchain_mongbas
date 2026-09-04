@@ -9,7 +9,7 @@
 |---|---|---|
 | **Docker Desktop** | 블록체인(피어·오더러·CouchDB)이 Docker로 동작 — **반드시 실행 중** | `docker ps` |
 | **Node.js 22.12+** / npm | 백엔드·프론트엔드 (`puppeteer-core@25` 요구사항) | `node --version` |
-| **Go 1.21+** | 체인코드(스마트컨트랙트) 빌드 | `go version` |
+| **Go 1.25.7+** | 현재 `chaincode/voting/go.mod` 기준 체인코드 빌드 | `go version` |
 | **cloudflared** | 공개 터널 (`brew install cloudflared`) | `cloudflared --version` |
 
 ### 0-2. 클론
