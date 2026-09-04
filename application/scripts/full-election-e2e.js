@@ -534,25 +534,25 @@ async function main() {
 
   const universalVerified = publicVerify.isValid;
 
-  // ── Phase 13: Receipt-Free Verification (PAPER-8) ─────────
-  console.log('\n── Phase 13: Receipt-Free Verification ──');
+  // ── Phase 13: Inclusion-only lookup shape (PAPER-8) ────────
+  console.log('\n── Phase 13: Inclusion-only Lookup Shape ──');
 
-  // 13a. 실제 투표의 receipt-free 확인 (증명 데이터 없이 포함 여부만)
-  const voteCounted = await assertOk('receipt-free vote check',
+  // 13a. 실제 투표의 포함 여부 응답 모양 확인. 이는 강압 저항성 증명이 아니다.
+  const voteCounted = await assertOk('inclusion-only vote check',
     requestJson(`/api/elections/${ELECTION_ID}/vote-counted/${nullifiers[0]}`)
   );
   console.log(`[INFO] Vote counted: included=${voteCounted.included}, totalVotes=${voteCounted.totalVotes}`);
-  if (!voteCounted.included) throw new Error('Receipt-free check failed: vote not included');
+  if (!voteCounted.included) throw new Error('Inclusion lookup failed: vote not included');
 
   // 13b. 존재하지 않는 nullifier 확인
   const fakeNullifier = sha256Hex('nonexistent-voter-secret' + ELECTION_ID + 'fake-blinding');
-  const fakeCheck = await assertOk('receipt-free fake nullifier',
+  const fakeCheck = await assertOk('inclusion-only fake nullifier',
     requestJson(`/api/elections/${ELECTION_ID}/vote-counted/${fakeNullifier}`)
   );
   console.log(`[INFO] Fake nullifier: included=${fakeCheck.included}`);
-  if (fakeCheck.included) throw new Error('Receipt-free check failed: fake nullifier was included');
+  if (fakeCheck.included) throw new Error('Inclusion lookup failed: fake nullifier was included');
 
-  const receiptFreeOk = voteCounted.included && !fakeCheck.included;
+  const inclusionLookupOk = voteCounted.included && !fakeCheck.included;
 
   // ── Phase 14: ElGamal Full Pipeline (PAPER-11) ─────────
   console.log('\n── Phase 14: ElGamal Full Pipeline ──');
@@ -940,7 +940,7 @@ async function main() {
   console.log(`  Blind Mode:   voter4 -> ${blindVoter.candidate} (client-side encryption)`);
   console.log(`  Benaloh:      audit verified=${benalohVerified} (cast-as-intended)`);
   console.log(`  Universal:    public verify=${universalVerified} (PAPER-6)`);
-  console.log(`  ReceiptFree:  ${receiptFreeOk} (PAPER-8)`);
+  console.log(`  InclusionLookupShape: ${inclusionLookupOk} (limited API observation)`);
   console.log('  Security:     self-declared metadata inspected (not a 7/7 verification)');
   console.log(`  ElGamal ZKP:  ${elgamalZkpOk} (Chaum-Pedersen, PAPER-11)`);
   console.log(`  Panic filter: ${panicFilterOk} (limited mechanism test; not coercion-resistance verification)`);

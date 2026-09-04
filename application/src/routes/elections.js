@@ -9,7 +9,7 @@
  * POST /api/elections/:id/publish-audit 감사 데이터 공개 게시 (PAPER-6)
  * GET  /api/elections/:id/bulletin-board 공개 감사 데이터 조회 (PAPER-6)
  * POST /api/elections/:id/verify-public  공개 독립 검증 (PAPER-6, 키 불필요)
- * GET  /api/elections/:id/vote-counted/:nullifier  Receipt-free 투표 포함 확인 (PAPER-8)
+ * GET  /api/elections/:id/vote-counted/:nullifier  제한된 투표 포함 응답 (PAPER-8)
  */
 
 'use strict';
@@ -721,7 +721,7 @@ router.get('/:id/decryption', async (req, res) => {
 });
 
 // ── GET /:id/vote-counted/:nullifier ──────────────────────────
-// [PAPER-8] Receipt-free 투표 포함 확인 (증명 데이터 없음)
+// [PAPER-8] 제한된 투표 포함 응답 (증명 데이터 없음; 강압 저항성 증거 아님)
 router.get('/:id/vote-counted/:nullifier', requireValidElectionID, async (req, res) => {
   const { id, nullifier } = req.params;
   if (!nullifier || !/^[a-f0-9]{64}$/.test(nullifier)) {

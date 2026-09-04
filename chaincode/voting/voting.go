@@ -3517,7 +3517,7 @@ func (c *VotingContract) GetMerkleProofWithLookup(
 	}, nil
 }
 
-// VerifyVoteCounted [PAPER-8] Receipt-Free 검증: 투표 포함 여부만 반환, 증명 데이터 없음.
+// VerifyVoteCounted [PAPER-8] 제한된 포함 여부 응답. 증명 데이터는 반환하지 않지만 강압 저항성을 증명하지는 않는다.
 // 유권자가 "내 투표가 집계되었는지"만 확인하고, 강압자에게 보여줄 receipt가 생성되지 않음.
 // 반환값: JSON {"included": true/false, "electionID": "...", "totalVotes": N}
 func (c *VotingContract) VerifyVoteCounted(
