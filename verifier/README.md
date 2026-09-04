@@ -31,6 +31,25 @@ npm test
 node bin/mongbas-verify.js path/to/canonical-election-bundle.json
 ```
 
+Vector v4/v5 bundles may opt into a bounded worker-thread pool for the
+per-ballot proof checks. The default command remains single-process so existing
+automation and measurements are unchanged. `N` must be a canonical decimal
+integer from 2 through the smaller of 16 and the host's available processor
+count:
+
+```bash
+node bin/mongbas-verify.js --proof-workers 4 path/to/canonical-election-bundle.json
+```
+
+Each worker receives only one ballot task at a time. Results are restored to
+ballot-index order before final bundle checks, and worker crash, malformed
+response, nonzero exit or a 300-second per-ballot timeout makes verification
+fail closed. This option changes scheduling only; it does not change bundle
+schemas, proof equations, tally meaning, canonicalization, signatures, or the
+default verifier path. Measure it on the target host before selecting a worker
+count because extra workers increase peak memory and may not improve throughput
+on CPU-constrained systems.
+
 An independently controlled observer can verify a signed bundle and append a
 signed, hash-chained checkpoint without contacting Fabric or the backend:
 

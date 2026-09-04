@@ -628,7 +628,7 @@ function verifyDKGKeyCeremony(bundle) {
   }
 }
 
-function verifyVectorBundle(bundle, canonicalBundle) {
+function prepareVectorBundle(bundle) {
   const errors = [];
   const check = (label, fn) => { try { return fn(); } catch (error) { errors.push(`${label}: ${error.message}`); return undefined; } };
   const dkgV5 = bundle?.schema === 'mongbas-election-bundle/v5';
@@ -675,8 +675,13 @@ function verifyVectorBundle(bundle, canonicalBundle) {
   if (canonicalize(bundle?.aggregateCiphertextVector) !== canonicalize(aggregateHex)) errors.push('aggregateCiphertextVector: mismatch');
   if (bundle?.tally?.totalVotes !== ballots?.length) errors.push('tally.totalVotes: ballot count mismatch');
   if (Array.isArray(candidates) && bundle?.tally?.results && candidates.reduce((sum, candidate) => sum + (bundle.tally.results[candidate] ?? -1), 0) !== bundle.tally.totalVotes) errors.push('tally.results: sum mismatch');
+  return { bundle, errors, check, y, candidates, ballots };
+}
+
+function finalizeVectorBundle(prepared, canonicalBundle, proofErrors) {
+  const { bundle, errors, check, y, candidates, ballots } = prepared;
   if (errors.length === 0 && y && Array.isArray(candidates) && Array.isArray(ballots)) {
-    ballots.forEach((ballot, index) => check(`ballots[${index}].proof`, () => verifyVectorBallotProof(y, ballot, candidates.length)));
+    for (const error of proofErrors) errors.push(error);
     check('vectorAuditTrail', () => verifyVectorAuditTrail(bundle, y));
     check('vectorPartialDecryptions', () => verifyVectorThresholdDecryptions(y, bundle.aggregateCiphertextVector, bundle.tally.results, candidates, bundle.trusteePublicShares, bundle.vectorPartialDecryptions));
     const root = check('bulletinBoard.root', () => merkleRoot(ballots));
@@ -685,6 +690,22 @@ function verifyVectorBundle(bundle, canonicalBundle) {
   const validSignatures = check('signatures', () => verifySignatures(bundle, Buffer.from(canonicalize(unsignedBundle(bundle))))) ?? 0;
   return { valid: errors.length === 0, summary: errors.length ? `${errors.length} verification check(s) failed` : 'all vector-v3 bundle checks passed', errors,
     bundleHash: sha256Hex(canonicalBundle ?? canonicalize(bundle)), electionID: bundle?.configuration?.electionID, ballots: ballots?.length ?? 0, validSignatures };
+}
+
+function verifyPreparedVectorProofs(prepared) {
+  const proofErrors = [];
+  const { ballots, candidates, y } = prepared;
+  if (prepared.errors.length !== 0 || !y || !Array.isArray(candidates) || !Array.isArray(ballots)) return proofErrors;
+  ballots.forEach((ballot, index) => {
+    try { verifyVectorBallotProof(y, ballot, candidates.length); }
+    catch (error) { proofErrors.push(`ballots[${index}].proof: ${error.message}`); }
+  });
+  return proofErrors;
+}
+
+function verifyVectorBundle(bundle, canonicalBundle) {
+  const prepared = prepareVectorBundle(bundle);
+  return finalizeVectorBundle(prepared, canonicalBundle, verifyPreparedVectorProofs(prepared));
 }
 
 function verifyBundleUnchecked(bundle, canonicalBundle) {
@@ -796,4 +817,5 @@ module.exports = {
   unsignedBundle,
   verifyBundle,
   verifyBundleBytes,
+  vectorParallelInternals: Object.freeze({ finalizeVectorBundle, prepareVectorBundle, verifyVectorBallotProof }),
 };

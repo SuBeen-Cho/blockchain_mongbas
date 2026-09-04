@@ -7,10 +7,12 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const test = require('node:test');
+const { EventEmitter } = require('node:events');
 const {
   G, HOMOMORPHIC_BASE, P, P_HEX, Q,
   canonicalize, merkleRoot, modInverse, modPow, sha256Hex, testInternals, unsignedBundle, verifyBundle, verifyBundleBytes,
 } = require('../src/verify');
+const { maximumProofWorkers, runProofPool, validateProofWorkerCount, verifyBundleBytesParallel } = require('../src/parallel');
 const { buildUnsignedBundle, signBundle } = require('../src/bundle');
 const { readBoundedRegularFile } = require('../src/input');
 const { CHECKPOINT_SCHEMA, CHECKPOINT_V2_SCHEMA, CHECKPOINT_V3_SCHEMA, TRUST_SCHEMA, TRUST_V2_SCHEMA, checkpointHash, compareCheckpointLogs,
@@ -159,6 +161,135 @@ test('canonical input bundle hashes equal direct canonical hashes across support
     assert.equal(result.valid, true, result.errors?.join('\n'));
     assert.equal(result.bundleHash, sha256Hex(canonical), bundle.schema);
   }
+});
+
+test('parallel vector verifier preserves valid v4/v5 results and canonical bundle hashes', async () => {
+  for (const bundle of [buildVectorBundle(), buildVectorBundle({ dkg: true })]) {
+    const bytes = Buffer.from(canonicalize(bundle));
+    const sync = verifyBundleBytes(bytes);
+    const parallel = await verifyBundleBytesParallel(bytes, 2);
+    assert.deepEqual(parallel, sync);
+    assert.equal(parallel.bundleHash, sha256Hex(bytes));
+  }
+});
+
+test('parallel vector verifier preserves deterministic proof mutation errors', async () => {
+  const bundle = buildVectorBundle();
+  bundle.ballots[0].validityProof.bitProofs[0].zs[0] = '0';
+  bundle.ballots[1].validityProof.bitProofs[0].zs[0] = '0';
+  const bytes = Buffer.from(canonicalize(bundle));
+  const sync = verifyBundleBytes(bytes);
+  const parallel = await verifyBundleBytesParallel(bytes, 2);
+  assert.deepEqual(parallel, sync);
+  assert.match(parallel.errors.join('\n'), /ballots\[0\].proof.*\nballots\[1\].proof/s);
+});
+
+test('parallel verifier validates worker count and does not create workers before canonical and cheap preflight gates', async () => {
+  assert.throws(() => validateProofWorkerCount(1), /integer from 2/);
+  assert.throws(() => validateProofWorkerCount(maximumProofWorkers() + 1), /integer from 2/);
+  assert.throws(() => validateProofWorkerCount(2.5), /integer from 2/);
+  let creations = 0;
+  class ForbiddenWorker { constructor() { creations += 1; throw new Error('must not construct'); } }
+  const nonCanonical = Buffer.from(JSON.stringify(buildVectorBundle(), null, 2));
+  assert.equal((await verifyBundleBytesParallel(nonCanonical, 2, { WorkerFactory: ForbiddenWorker })).valid, false);
+  const downgraded = buildVectorBundle();
+  downgraded.algorithms.tally = 'downgraded';
+  const rejected = await verifyBundleBytesParallel(Buffer.from(canonicalize(downgraded)), 2, { WorkerFactory: ForbiddenWorker });
+  assert.equal(rejected.valid, false);
+  assert.match(rejected.errors.join('\n'), /algorithm suite mismatch or downgrade/);
+  assert.equal(creations, 0);
+});
+
+test('proof pool bounds in-flight tasks and sends one indexed ballot per task', async () => {
+  const seen = [];
+  let active = 0;
+  let maximumActive = 0;
+  class SuccessfulWorker extends EventEmitter {
+    postMessage(task) {
+      assert.deepEqual(Object.keys(task).sort(), ['ballot', 'candidateCount', 'index', 'publicKeyYHex']);
+      active += 1;
+      maximumActive = Math.max(maximumActive, active);
+      seen.push(task.index);
+      setImmediate(() => { active -= 1; this.emit('message', { index: task.index, error: null }); });
+    }
+    terminate() { return Promise.resolve(0); }
+  }
+  const prepared = { errors: [], y: 2n, candidates: ['A', 'B'], ballots: Array.from({ length: 7 }, (_, id) => ({ id })) };
+  assert.deepEqual(await runProofPool(prepared, 3, { WorkerFactory: SuccessfulWorker, taskTimeoutMs: 1000 }), []);
+  assert.equal(maximumActive, 3);
+  assert.deepEqual(seen.sort((a, b) => a - b), [0, 1, 2, 3, 4, 5, 6]);
+});
+
+test('parallel verifier fails closed on crash, timeout and malformed worker protocol without fallback', async () => {
+  const bytes = Buffer.from(canonicalize(buildVectorBundle()));
+  class CrashWorker extends EventEmitter {
+    postMessage() { setImmediate(() => this.emit('error', new Error('secret volatile detail'))); }
+    terminate() { return Promise.resolve(1); }
+  }
+  class TimeoutWorker extends EventEmitter {
+    postMessage() {}
+    terminate() { return Promise.resolve(1); }
+  }
+  class MalformedWorker extends EventEmitter {
+    postMessage(task) { setImmediate(() => this.emit('message', { index: task.index + 1, error: null })); }
+    terminate() { return Promise.resolve(1); }
+  }
+  const crash = await verifyBundleBytesParallel(bytes, 2, { WorkerFactory: CrashWorker, taskTimeoutMs: 1000 });
+  assert.deepEqual(crash.errors, ['parallel proof infrastructure: worker crashed']);
+  const timeout = await verifyBundleBytesParallel(bytes, 2, { WorkerFactory: TimeoutWorker, taskTimeoutMs: 5 });
+  assert.deepEqual(timeout.errors, ['parallel proof infrastructure: proof task timed out']);
+  const malformed = await verifyBundleBytesParallel(bytes, 2, { WorkerFactory: MalformedWorker, taskTimeoutMs: 1000 });
+  assert.deepEqual(malformed.errors, ['parallel proof infrastructure: worker returned a malformed, duplicate, or out-of-order response']);
+});
+
+test('proof pool rejects nonzero exit and duplicate response protocol failures', async () => {
+  const prepared = { errors: [], y: 2n, candidates: ['A', 'B'], ballots: Array.from({ length: 5 }, (_, id) => ({ id })) };
+  class NonzeroWorker extends EventEmitter {
+    postMessage() { setImmediate(() => this.emit('exit', 7)); }
+    terminate() { return Promise.resolve(7); }
+  }
+  await assert.rejects(
+    runProofPool(prepared, 2, { WorkerFactory: NonzeroWorker, taskTimeoutMs: 1000 }),
+    /worker exited nonzero/,
+  );
+  class DuplicateWorker extends EventEmitter {
+    constructor() { super(); this.first = true; }
+    postMessage(task) {
+      setImmediate(() => {
+        this.emit('message', { index: task.index, error: null });
+        if (this.first) {
+          this.first = false;
+          process.nextTick(() => this.emit('message', { index: task.index, error: null }));
+        }
+      });
+    }
+    terminate() { return Promise.resolve(1); }
+  }
+  await assert.rejects(
+    runProofPool(prepared, 2, { WorkerFactory: DuplicateWorker, taskTimeoutMs: 1000 }),
+    /malformed, duplicate, or out-of-order response/,
+  );
+});
+
+test('proof-worker option delegates non-vector schemas to the unchanged synchronous verifier', async () => {
+  const bytes = Buffer.from(canonicalize(buildBundle()));
+  class ForbiddenWorker { constructor() { throw new Error('v1 must remain synchronous'); } }
+  assert.deepEqual(await verifyBundleBytesParallel(bytes, 2, { WorkerFactory: ForbiddenWorker }), verifyBundleBytes(bytes));
+});
+
+test('default verifier CLI remains synchronous while explicit proof workers are opt-in', () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'mongbas-parallel-cli-'));
+  const bundlePath = path.join(directory, 'bundle.json');
+  fs.writeFileSync(bundlePath, canonicalize(buildVectorBundle()));
+  const cli = path.join(__dirname, '../bin/mongbas-verify.js');
+  const normal = spawnSync(process.execPath, [cli, bundlePath], { encoding: 'utf8', timeout: 120_000 });
+  const parallel = spawnSync(process.execPath, [cli, '--proof-workers', '2', bundlePath], { encoding: 'utf8', timeout: 120_000 });
+  assert.equal(normal.status, 0, normal.stderr);
+  assert.equal(parallel.status, 0, parallel.stderr);
+  assert.equal(parallel.stdout, normal.stdout);
+  const invalid = spawnSync(process.execPath, [cli, '--proof-workers', '1', bundlePath], { encoding: 'utf8' });
+  assert.equal(invalid.status, 1);
+  assert.match(invalid.stderr, /proof worker count must be an integer/);
 });
 
 function encryptAndProve(publicKeyY, candidateIndex, candidateCount, label) {
