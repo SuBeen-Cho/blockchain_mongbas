@@ -82,6 +82,15 @@ MONGBAS_RUNTIME_DIR=/home/user1/mongbas-runtime \
 
 이 wrapper는 실행 중인 `verifier-evaluation.sh`가 있으면 실패하고, 환경파일 해시·systemd unit·listener·컨테이너·볼륨 목록을 변경 전후로 보존한다. 원본 환경파일은 runtime secret 영역의 non-overwriting 0600 backup으로 남긴다. `AUDIT_HMAC_KEY`가 없으면 credential key와 독립적인 강한 키를 생성하고 exact tailnet origin을 기존 CORS allowlist에 추가하며, 비밀값은 로그에 남기지 않는다. Tailscale Serve 자체는 구성하지 않으며 Funnel, Fabric reset, chaincode 변경 경로도 포함하지 않는다.
 
+프로필 배포가 통과한 후, 기존 Serve 설정이 없을 때만 tailnet 내부 HTTPS를 활성화한다.
+
+```bash
+MONGBAS_RUNTIME_DIR=/home/user1/mongbas-runtime \
+  ./deploy/linux/tailnet-serve-evaluation.sh ENABLE_TAILNET_ONLY_SERVE
+```
+
+스크립트는 자기 node의 `*.ts.net` DNS 이름을 Tailscale 상태에서 직접 도출하고, 3000 포트의 loopback 구속과 HTTPS health/HSTS/CSP를 검증한다. 새 Serve 설정 후 검증이 실패하면 기존 상태가 “설정 없음”이었던 경우에 한해 자동 reset하고 전후 증거를 보존한다. Funnel 명령은 포함하지 않는다.
+
 모든 `FAIL`을 해소해야 실제 휴대폰 실증을 시작한다. `Tailscale Serve is not configured` 경고는 별도 승인 전에는 자동 해소하지 않는다. 사전점검 통과는 휴대폰 HTTPS, QR 만료·재사용, 실제 Fabric commit 또는 bundle 검증의 대체 증거가 아니다.
 
 BBS+ 실험 모드는 `@mattrglobal/bbs-signatures` 2.0.0의 WASM 경로만 사용한다(`BBS_SIGNATURES_MODE=WASM`). 아카이브된 optional native addon이 취약한 `node-pre-gyp`/`tar` 설치 경로를 끌어오므로 application 런타임 의존성은 `npm ci --omit=dev --omit=optional`로 설치한다. `build.sh`는 같은 배포 집합을 `npm audit --omit=dev --omit=optional --audit-level=high`로 검사하며, high/critical 이상이면 실패한다. 해당 BBS 구현은 현재 CFRG draft-10의 완전한 표준 준거를 주장하지 않으며, 최신 구현으로의 마이그레이션은 별도 보안 게이트로 다룬다.
