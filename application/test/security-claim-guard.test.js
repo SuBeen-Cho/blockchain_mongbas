@@ -82,8 +82,9 @@ test('public showcase and credential labels do not claim unverified equivalence'
   assert.doesNotMatch(caliperManifest, /익명 전자투표/);
   assert.doesNotMatch(fullBenchmark, /익명 전자투표/);
   assert.doesNotMatch(chaincode, /익명 전자투표|익명 투표 증명|익명으로 투표|Nullifier 저장 \(익명\)|Nullifier\s+\(익명 공개\)/);
+  assert.doesNotMatch(chaincode, /평문 후보자를 절대 보지 않|강압자가 구분 불가능|서버는 어느 모드인지 알 수 없음/);
   assert.doesNotMatch(voterPage, /label:\s*['"]익명 투표['"]/);
-  assert.doesNotMatch(boothDesign, /운영자도 못 본다|익명성 \/ \*\*Ballot Secrecy\*\*|Ballot Secrecy \/ 익명성/);
+  assert.doesNotMatch(boothDesign, /운영자도 못 본다|익명성 \/ \*\*Ballot Secrecy\*\*|Ballot Secrecy \/ 익명성|변조 불가능하게 기록|조작이 불가능|100% 사실이 되고 위험 0|아무도 못 건드/);
   for (const benchmark of caliperBenchmarks) assert.doesNotMatch(benchmark, /익명 전자투표/);
   for (const benchmark of caliperBenchmarks) assert.doesNotMatch(benchmark, /익명 투표 트랜잭션/);
 });

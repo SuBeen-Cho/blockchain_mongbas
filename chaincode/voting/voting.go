@@ -2006,7 +2006,7 @@ func (c *VotingContract) castVoteInternal(
 	// [PAPER-1] 클라이언트-사이드 암호화 지원:
 	//   A) candidateID가 비어있고 encryptedCandidateID가 있으면 → 클라이언트가 암호화 (체인코드 blind)
 	//   B) candidateID가 있으면 → 체인코드가 암호화 (레거시 호환)
-	// A 방식에서 체인코드는 평문 후보자를 절대 보지 않음 → ballot secrecy 강화
+	// A 방식의 정상 호출 인자는 평문 candidateID를 생략한다. 이는 전체 운영자·단말·키 보관 경계의 ballot secrecy 증거는 아니다.
 	var encryptedCandID string
 	var encryptedCandVector []ElGamalCiphertext
 	var candidateCommitment string
@@ -3344,8 +3344,8 @@ func (c *VotingContract) GetMerkleRoot(
 //     더미도 Merkle Tree의 실제 리프이므로, 강압자가 검증해도 수학적으로 통과합니다.
 //
 // 보안 속성:
-//   - Normal Mode와 Panic Mode의 응답 구조가 동일 → 강압자가 구분 불가능
-//   - 서버는 어느 모드인지 알 수 없음 (PDC에서 조회만 함)
+//   - Normal/Panic 응답 projection은 동일한 shape를 사용한다.
+//   - 이는 API transcript의 제한된 완화이며 PDC/backend 운영자나 timing·revote 관찰자에 대한 구분 불가능성을 보장하지 않는다.
 func (c *VotingContract) GetMerkleProofWithPassword(
 	ctx contractapi.TransactionContextInterface,
 	electionID string,

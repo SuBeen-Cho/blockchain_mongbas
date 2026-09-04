@@ -234,11 +234,11 @@ cd network
 
 | 시나리오 | 결과 |
 |----------|--------|
-| A. 선관위 단독 조작 시도 | 2-of-3 보증 정책으로 차단 |
-| B. 이중투표 시도 | Nullifier Eviction으로 100% 처리 |
+| A. 단일 조직 endorsement 시도 | 지원되는 직접-Fabric corpus에서 거부됨. 모든 선관위 조작을 차단한다는 증거는 아님 |
+| B. 동일 credential 재투표 | 선언된 last-vote-wins/eviction 동작을 시험. 익명성·강압저항성 증거는 아님 |
 | C. 강압 투표 API | 수정 전 100% 분류 재현; 수정 후 target 노출 0/100, size/timing held-out 각 50%. 전체 강압 저항성은 미검증 |
-| D. 집계 키 단독 탈취 | 1-share 복원 실패 100%, 2-share 성공 100% |
-| E. 결과 조작 외부 주장 | Merkle 검증 정확도 100% |
+| D. 임계값 미만 share | 선언된 DKG 벡터에서 1-share 복원 실패, 2-share exact tally 성공. 단일-host root 공모 한계는 남음 |
+| E. 게시판·bundle 변조 | 선언된 mutation corpus를 verifier가 거부. 모든 결과 조작에 대한 보편적 정확도 주장은 아님 |
 
 > 상세 평가 원자료(성능·보안)는 로컬 `docs/performance/`·`docs/security-eval/` 에 보관됩니다. (용량 문제로 GitHub에는 미포함)
 
