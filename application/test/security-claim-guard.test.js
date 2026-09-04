@@ -139,16 +139,18 @@ test('legacy security scenario runner is quarantined before network access', () 
   assert.doesNotMatch(run.stderr, /측정 완료/);
 });
 
-test('legacy step 4-5 benchmark is quarantined before network access', () => {
-  const run = spawnSync('bash', [path.join(root, 'scripts/bench_step45.sh')], {
-    encoding: 'utf8',
-    timeout: 5000,
-  });
+test('legacy full and step 4-5 benchmarks are quarantined before network access', () => {
+  for (const relative of ['scripts/bench_full.sh', 'scripts/bench_step45.sh']) {
+    const run = spawnSync('bash', [path.join(root, relative)], {
+      encoding: 'utf8',
+      timeout: 5000,
+    });
 
-  assert.equal(run.status, 2);
-  assert.equal(run.stdout, '');
-  assert.match(run.stderr, /UNSUPPORTED/);
-  assert.doesNotMatch(run.stderr, /벤치마크 완료/);
+    assert.equal(run.status, 2, relative);
+    assert.equal(run.stdout, '', relative);
+    assert.match(run.stderr, /UNSUPPORTED/, relative);
+    assert.doesNotMatch(run.stderr, /벤치마크 완료/, relative);
+  }
 });
 
 test('legacy BatchTimeout runners are quarantined before output or channel mutation', () => {
