@@ -22,6 +22,10 @@ const P_HEX = [
 const P = BigInt(`0x${P_HEX}`);
 const G = 2n;
 const Q = (P - 1n) / 2n;
+const VECTOR_MESSAGE_INVERSES = Object.freeze([1n, (P + 1n) / G]);
+if (VECTOR_MESSAGE_INVERSES[0] !== 1n || (G * VECTOR_MESSAGE_INVERSES[1]) % P !== 1n) {
+  throw new Error('invalid fixed vector message inverses');
+}
 const HOMOMORPHIC_BASE = 10000n;
 const ALGORITHM = 'mongbas-exp-elgamal-scalar-v1';
 const THRESHOLD_ALGORITHM = 'mongbas-exp-elgamal-threshold-v2';
@@ -324,7 +328,7 @@ function verifyVectorBallotProof(publicKeyY, ballot, candidateCount) {
       const a2 = parseHex(proof.a2s[branch], `bit[${index}].a2[${branch}]`, { subgroup: true });
       const e = parseHex(proof.es[branch], `bit[${index}].e[${branch}]`, { scalar: true });
       const z = parseHex(proof.zs[branch], `bit[${index}].z[${branch}]`, { scalar: true });
-      const adjusted = (c2 * modInverse(messages[branch], P)) % P;
+      const adjusted = (c2 * VECTOR_MESSAGE_INVERSES[branch]) % P;
       if (modPow(G, z, P) !== (a1 * modPow(c1, e, P)) % P || modPow(publicKeyY, z, P) !== (a2 * modPow(adjusted, e, P)) % P) throw new Error(`bit proof ${index}/${branch} equation failed`);
       sum = (sum + e) % Q;
       transcript += `|${messages[branch].toString(16)}|${a1.toString(16)}|${a2.toString(16)}`;
@@ -332,7 +336,7 @@ function verifyVectorBallotProof(publicKeyY, ballot, candidateCount) {
     if (sum !== BigInt(`0x${sha256Hex(transcript)}`) % Q) throw new Error(`bit proof ${index} challenge mismatch`);
     productC1 = (productC1 * c1) % P; productC2 = (productC2 * c2) % P;
   });
-  const result2 = (productC2 * modInverse(G, P)) % P;
+  const result2 = (productC2 * VECTOR_MESSAGE_INVERSES[1]) % P;
   const proof = ballot.validityProof.sumProof;
   requireExactKeys(proof, ['a1', 'a2', 'e', 'z'], 'sumProof');
   const a1 = parseHex(proof?.a1, 'sumProof.a1', { subgroup: true }), a2 = parseHex(proof?.a2, 'sumProof.a2', { subgroup: true });
@@ -385,17 +389,30 @@ function ballotLeaf(ballot) {
 }
 
 function merkleRoot(ballots) {
-  let level = ballots.map(ballotLeaf);
-  if (level.length === 0) return sha256Hex('');
-  while (level.length > 1) {
-    const next = [];
-    for (let i = 0; i < level.length; i += 2) {
-      const right = level[i + 1] ?? level[i];
-      next.push(sha256Hex(level[i] + right));
+  if (ballots.length === 0) return sha256Hex('');
+  const frontier = [];
+  for (const ballot of ballots) {
+    let node = ballotLeaf(ballot);
+    let height = 0;
+    while (frontier[height] !== undefined) {
+      node = sha256Hex(frontier[height] + node);
+      frontier[height] = undefined;
+      height += 1;
     }
-    level = next;
+    frontier[height] = node;
   }
-  return level[0];
+  let height = frontier.findIndex(node => node !== undefined);
+  let root = frontier[height];
+  for (let nextHeight = height + 1; nextHeight < frontier.length; nextHeight += 1) {
+    if (frontier[nextHeight] === undefined) continue;
+    while (height < nextHeight) {
+      root = sha256Hex(root + root);
+      height += 1;
+    }
+    root = sha256Hex(frontier[nextHeight] + root);
+    height += 1;
+  }
+  return root;
 }
 
 function unsignedBundle(bundle) {
@@ -564,7 +581,7 @@ function verifyDKGKeyCeremony(bundle) {
   }
 }
 
-function verifyVectorBundle(bundle) {
+function verifyVectorBundle(bundle, canonicalBundle) {
   const errors = [];
   const check = (label, fn) => { try { return fn(); } catch (error) { errors.push(`${label}: ${error.message}`); return undefined; } };
   const dkgV5 = bundle?.schema === 'mongbas-election-bundle/v5';
@@ -620,11 +637,11 @@ function verifyVectorBundle(bundle) {
   }
   const validSignatures = check('signatures', () => verifySignatures(bundle, Buffer.from(canonicalize(unsignedBundle(bundle))))) ?? 0;
   return { valid: errors.length === 0, summary: errors.length ? `${errors.length} verification check(s) failed` : 'all vector-v3 bundle checks passed', errors,
-    bundleHash: sha256Hex(canonicalize(bundle)), electionID: bundle?.configuration?.electionID, ballots: ballots?.length ?? 0, validSignatures };
+    bundleHash: sha256Hex(canonicalBundle ?? canonicalize(bundle)), electionID: bundle?.configuration?.electionID, ballots: ballots?.length ?? 0, validSignatures };
 }
 
-function verifyBundleUnchecked(bundle) {
-	if (bundle?.schema === 'mongbas-election-bundle/v4' || bundle?.schema === 'mongbas-election-bundle/v5') return verifyVectorBundle(bundle);
+function verifyBundleUnchecked(bundle, canonicalBundle) {
+	if (bundle?.schema === 'mongbas-election-bundle/v4' || bundle?.schema === 'mongbas-election-bundle/v5') return verifyVectorBundle(bundle, canonicalBundle);
   const errors = [];
   let validSignatures = 0;
   const check = (label, fn) => {
@@ -679,7 +696,7 @@ function verifyBundleUnchecked(bundle) {
   if (root && bundle?.bulletinBoard?.root !== root) errors.push('bulletinBoard.root: Merkle root mismatch');
   const payloadBytes = Buffer.from(canonicalize(unsignedBundle(bundle)));
   validSignatures = check('signatures', () => verifySignatures(bundle, payloadBytes)) ?? 0;
-  const bundleHash = sha256Hex(canonicalize(bundle));
+  const bundleHash = sha256Hex(canonicalBundle ?? canonicalize(bundle));
   return {
     valid: errors.length === 0,
     summary: errors.length === 0 ? 'all bundle checks passed' : `${errors.length} verification check(s) failed`,
@@ -692,8 +709,12 @@ function verifyBundleUnchecked(bundle) {
 }
 
 function verifyBundle(bundle) {
+  return verifyBundleWithCanonical(bundle);
+}
+
+function verifyBundleWithCanonical(bundle, canonicalBundle) {
   try {
-    return verifyBundleUnchecked(bundle);
+    return verifyBundleUnchecked(bundle, canonicalBundle);
   } catch (error) {
     return { valid: false, summary: 'bundle structure verification failed', errors: [error.message],
       bundleHash: undefined, electionID: bundle?.configuration?.electionID, ballots: Array.isArray(bundle?.ballots) ? bundle.ballots.length : 0, validSignatures: 0 };
@@ -707,7 +728,7 @@ function verifyBundleBytes(bytes) {
   let canonical;
   try { canonical = canonicalize(bundle); } catch (error) { return { valid: false, summary: 'non-canonical data', errors: [error.message] }; }
   if (text.trim() !== canonical) return { valid: false, summary: 'bundle serialization is not canonical', errors: ['input bytes differ from Mongbas canonical JSON v1'] };
-  return verifyBundle(bundle);
+  return verifyBundleWithCanonical(bundle, canonical);
 }
 
 module.exports = {

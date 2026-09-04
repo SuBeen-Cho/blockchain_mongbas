@@ -42,6 +42,59 @@ function lengthPrefixedHash(fields) {
   return hash.digest('hex');
 }
 
+// Deliberately mirrors the original breadth-first implementation. Keep this
+// test-only reference independent from the production streaming accumulator so
+// changes to its memory behaviour cannot silently change duplicate-last roots.
+function referenceDuplicateLastMerkleRoot(ballots) {
+  const leaf = (ballot) => sha256Hex(canonicalize(ballot.ciphertextVector
+    ? { candidateCommitment: ballot.candidateCommitment, ciphertextVector: ballot.ciphertextVector,
+      nullifierHash: ballot.nullifierHash, validityProof: ballot.validityProof }
+    : { candidateCommitment: ballot.candidateCommitment, ciphertext: ballot.ciphertext,
+      nullifierHash: ballot.nullifierHash, validityProof: ballot.validityProof }));
+  let level = ballots.map(leaf);
+  if (level.length === 0) return sha256Hex('');
+  while (level.length > 1) {
+    const next = [];
+    for (let index = 0; index < level.length; index += 2) {
+      next.push(sha256Hex(level[index] + (level[index + 1] ?? level[index])));
+    }
+    level = next;
+  }
+  return level[0];
+}
+
+test('Merkle roots preserve duplicate-last semantics for sizes 0 through 257', () => {
+  const ballots = Array.from({ length: 257 }, (_, index) => ({
+    candidateCommitment: sha256Hex(`commitment:${index}`),
+    ciphertext: { c1: (index + 2).toString(16), c2: (index + 3).toString(16) },
+    nullifierHash: sha256Hex(`nullifier:${index}`),
+    validityProof: { fixture: index },
+  }));
+  for (let size = 0; size <= 257; size += 1) {
+    assert.equal(merkleRoot(ballots.slice(0, size)), referenceDuplicateLastMerkleRoot(ballots.slice(0, size)), `size ${size}`);
+  }
+});
+
+test('vector proof verification preserves inverse-of-one and inverse-of-generator parity', () => {
+  assert.equal(modInverse(1n, P), 1n);
+  assert.equal(modInverse(G, P), (P + 1n) / G);
+  for (const dkg of [false, true]) {
+    const bundle = buildVectorBundle({ dkg });
+    assert.equal(verifyBundle(bundle).valid, true, `valid vector bundle v${dkg ? 5 : 4} rejected`);
+    bundle.ballots[0].validityProof.bitProofs[0].zs[0] = '0';
+    assert.match(verifyBundle(bundle).errors.join('\n'), /bit proof 0\/0 equation failed/);
+  }
+});
+
+test('canonical input bundle hashes equal direct canonical hashes across supported schemas', () => {
+  for (const bundle of [buildBundle(), buildVectorBundle(), buildVectorBundle({ dkg: true })]) {
+    const canonical = canonicalize(bundle);
+    const result = verifyBundleBytes(Buffer.from(canonical));
+    assert.equal(result.valid, true, result.errors?.join('\n'));
+    assert.equal(result.bundleHash, sha256Hex(canonical), bundle.schema);
+  }
+});
+
 function encryptAndProve(publicKeyY, candidateIndex, candidateCount, label) {
   const randomness = scalar(`${label}:r`);
   const message = modPow(G, HOMOMORPHIC_BASE ** BigInt(candidateIndex), P);
