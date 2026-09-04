@@ -1,4 +1,6 @@
 'use strict';
+console.error('[UNSUPPORTED] p5-track-test.js uses a short nullifier prefix and legacy bulletin path that cannot prove current receipt inclusion or tally contribution. Use full-election-e2e.js and the standalone verifier.');
+process.exit(2);
 // p5-track-test.js — 내 표 추적 데이터 흐름 검증 (게시판 매칭 + Merkle 봉인 일치)
 const crypto = require('crypto');
 const { elgamalEncryptWithZKP } = require('../src/lib/elgamalVote');

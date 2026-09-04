@@ -1,4 +1,6 @@
 'use strict';
+console.error('[UNSUPPORTED] p2-threshold-test.js uses the legacy dealer-share API and cannot produce current threshold-security evidence. Use dkg-election-e2e.js or deploy/linux/dkg-live-evaluation.sh.');
+process.exit(2);
 /**
  * p2-threshold-test.js — P2 검증: ElGamal threshold 복호화
  *

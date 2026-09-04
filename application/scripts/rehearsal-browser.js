@@ -1,4 +1,6 @@
 'use strict';
+console.error('[UNSUPPORTED] rehearsal-browser.js drives a legacy local UI without current administrator or one-use QR admission boundaries. Use qr-admission-live-e2e.js and the tailnet-only actual-phone procedure.');
+process.exit(2);
 /**
  * rehearsal-browser.js — 실제 브라우저(Chrome.app)로 UI 흐름 리허설 (P7)
  * 관제판: 새 세션 → 자동주입 → 종료 → 복호화 결과

@@ -1,4 +1,6 @@
 'use strict';
+console.error('[UNSUPPORTED] scenario-suite.js mixes superseded credential, panic and dealer-share paths and cannot produce current security-property evidence. Use the versioned Linux evaluators and standalone verifier corpus.');
+process.exit(2);
 /**
  * scenario-suite.js — 다중 시나리오 검증 (P7 비판적 검증)
  * 재투표/종료후투표/빈선거/패닉제외/다중세션/추적무결성 등을 한 번에 점검.

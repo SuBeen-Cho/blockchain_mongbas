@@ -171,6 +171,11 @@ test('superseded evidence runners fail closed before network or output access', 
     'scripts/generate-bt-report.js',
     'application/scripts/benchmark-paper-features.js',
     'application/benchmark/security-overhead-bench.js',
+    'application/scripts/p2-threshold-test.js',
+    'application/scripts/p5-track-test.js',
+    'application/scripts/scenario-suite.js',
+    'application/scripts/scenario-suite2.js',
+    'application/scripts/rehearsal-browser.js',
   ];
 
   for (const relative of runners) {

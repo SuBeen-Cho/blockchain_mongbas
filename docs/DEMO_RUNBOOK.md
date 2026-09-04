@@ -86,17 +86,22 @@ cd mongbas
 
 ---
 
-## 4. 검증 스크립트 (사전 점검)
+## 4. 현재 지원 검증 경로
 
 ```bash
 cd application
-node scripts/p2-threshold-test.js   # ElGamal 2-of-3 threshold 복호화
-node scripts/p5-track-test.js       # 내 표 추적(게시판 매칭 + 봉인 일치 + 변조 탐지)
-node scripts/scenario-suite.js      # 재투표/종료후/빈선거/패닉제외/다중세션/단일표 (10검사)
-node scripts/scenario-suite2.js     # 대량집계/동시투표/보편검증/조각거부/receipt-free/AES (8검사)
-node scripts/rehearsal-browser.js   # 실 브라우저(Chrome) 관제판+키오스크 UI 드라이브스루 (6검사)
-npm run e2e:full                    # 전체 15-페이즈 통합 E2E
+npm test                            # 코드·보안 경계 전체 회귀
+npm run e2e:full                    # 현재 credential-bound 투표 통합 E2E
+npm run e2e:vector-aoc              # vector-v3 audit-or-cast 경로
+node scripts/dkg-election-e2e.js    # 현재 DKG transcript 경로
+node scripts/qr-admission-live-e2e.js # 일회용 QR admission 경로
+
+cd ../verifier
+npm test                            # bundle/history/checkpoint 독립 검증 회귀
 ```
-전부 `✅ PASS` 면 데모 흐름 정상. 리허설 스크립트는 `/tmp/rehearsal-*.png` 스크린샷도 남깁니다.
+
+실제 Fabric·QR·성능 증거는 `deploy/linux/`의 versioned evaluator가 생성한 환경 manifest, 종료 상태와 SHA-256 inventory까지 함께 통과해야 한다. 위 로컬 테스트만으로 보안 속성이나 실제 휴대폰 HTTPS 경로가 검증됐다고 판단하지 않는다.
+
+`p2-threshold-test.js`, `p5-track-test.js`, `scenario-suite*.js`, `rehearsal-browser.js`는 legacy dealer-share/AES/짧은 receipt prefix/구형 UI 경로를 혼합하므로 실행 전 fail-closed한다. 과거 스크립트의 `PASS` 문구는 현재 DKG, receipt, coercion resistance 또는 QR 보안 증거로 사용할 수 없다.
 
 > 모바일 화면 점검: `"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" --headless --screenshot=/tmp/k.png --window-size=500,900 --virtual-time-budget=9000 "http://localhost:3000/?app=kiosk&e=<선거ID>"`

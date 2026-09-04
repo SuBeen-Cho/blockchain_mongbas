@@ -1,4 +1,6 @@
 'use strict';
+console.error('[UNSUPPORTED] scenario-suite2.js mislabels limited response shape as receipt-freeness and mixes legacy AES/dealer-share paths. Use the property-specific evaluators and standalone verifier corpus.');
+process.exit(2);
 /**
  * scenario-suite2.js — 고급/경쟁 시나리오 (P7 비판적 검증 2차)
  * 동시투표 race / 대량집계 / 보편검증 ZKP / 조각 중복·위조 / receipt-free / AES 레거시
