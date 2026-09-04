@@ -11,6 +11,7 @@ const {
   withinEquivalenceMargin,
 } = require('../src/lib/coercionClassifier');
 const { deriveLookupToken } = require('../src/lib/deniableProof');
+const { JsonlCheckpoint } = require('../src/lib/jsonlCheckpoint');
 
 const BASE_URL = (process.env.E2E_BASE_URL || 'http://127.0.0.1:3005').replace(/\/$/, '');
 const ADMIN_API_TOKEN = process.env.ADMIN_API_TOKEN || '';
@@ -119,16 +120,23 @@ async function main() {
     }));
   }
   const rows = [];
-  for (const [sequence, label] of shuffledLabels(SAMPLES_PER_CLASS).entries()) {
-    const result = await requestJson(`/api/elections/${encodeURIComponent(electionID)}/proof`, {
-      method: 'POST', body: JSON.stringify({ lookupToken: lookupTokens[label] }),
-    });
-    if (!result.ok) throw new Error(`sample ${sequence} ${label}: HTTP ${result.status} ${JSON.stringify(result.body)}`);
-    const proof = result.body?.proof;
-    rows.push({ sequence, label, elapsedMs: result.elapsedMs, bodyBytes: result.bodyBytes, status: result.status,
-      topLevelKeys: Object.keys(result.body || {}).sort(), proofKeys: Object.keys(proof || {}).sort(),
-      exposesTargetNullifier: Object.hasOwn(proof || {}, 'nullifierHash') || Object.hasOwn(result.body || {}, 'nullifierHash'),
-      merklePathLength: Array.isArray(proof?.proof) ? proof.proof.length : -1 });
+  const checkpoint = new JsonlCheckpoint(path.join(OUTPUT_DIR, 'samples.jsonl'), 25);
+  try {
+    for (const [sequence, label] of shuffledLabels(SAMPLES_PER_CLASS).entries()) {
+      const result = await requestJson(`/api/elections/${encodeURIComponent(electionID)}/proof`, {
+        method: 'POST', body: JSON.stringify({ lookupToken: lookupTokens[label] }),
+      });
+      if (!result.ok) throw new Error(`sample ${sequence} ${label}: HTTP ${result.status} ${JSON.stringify(result.body)}`);
+      const proof = result.body?.proof;
+      const row = { sequence, label, elapsedMs: result.elapsedMs, bodyBytes: result.bodyBytes, status: result.status,
+        topLevelKeys: Object.keys(result.body || {}).sort(), proofKeys: Object.keys(proof || {}).sort(),
+        exposesTargetNullifier: Object.hasOwn(proof || {}, 'nullifierHash') || Object.hasOwn(result.body || {}, 'nullifierHash'),
+        merklePathLength: Array.isArray(proof?.proof) ? proof.proof.length : -1 };
+      rows.push(row);
+      checkpoint.append(row);
+    }
+  } finally {
+    checkpoint.close();
   }
   const { training, testing } = splitBalanced(rows);
   const timingModel = trainThreshold(training, 'elapsedMs');
@@ -170,7 +178,6 @@ async function main() {
       timingEquivalencePass && bodySizeEquivalencePass && classifierGatePass,
     limitation: 'Same-host API-transcript evaluation only. PDC/backend collusion, public revote patterns, compromised clients and independent network acquisition remain separate failing or untested games.',
   };
-  fs.writeFileSync(path.join(OUTPUT_DIR, 'samples.jsonl'), `${rows.map(row => JSON.stringify(row)).join('\n')}\n`, { mode: 0o600 });
   fs.writeFileSync(path.join(OUTPUT_DIR, 'summary.json'), `${JSON.stringify(summary, null, 2)}\n`, { mode: 0o600 });
   console.log(JSON.stringify(summary, null, 2));
   if (!summary.securityGatePass) process.exitCode = 1;

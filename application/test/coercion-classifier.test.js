@@ -3,7 +3,9 @@
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const os = require('node:os');
 const test = require('node:test');
+const { JsonlCheckpoint } = require('../src/lib/jsonlCheckpoint');
 const {
   evaluateThreshold,
   meanDifferenceInterval,
@@ -60,4 +62,23 @@ test('coercion transcript requests have a bounded timeout', () => {
   const evaluator = fs.readFileSync(path.join(__dirname, '../scripts/coercion-transcript-evaluation.js'), 'utf8');
   assert.match(evaluator, /COERCION_REQUEST_TIMEOUT_MS/);
   assert.match(evaluator, /AbortSignal\.timeout\(REQUEST_TIMEOUT_MS\)/);
+});
+
+test('JSONL checkpoint durably exposes completed samples during a long run', () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'mongbas-checkpoint-'));
+  const output = path.join(directory, 'samples.jsonl');
+  try {
+    const checkpoint = new JsonlCheckpoint(output, 2);
+    checkpoint.append({ sequence: 0, label: 'normal' });
+    checkpoint.append({ sequence: 1, label: 'panic' });
+    assert.deepEqual(fs.readFileSync(output, 'utf8').trim().split('\n').map(JSON.parse), [
+      { sequence: 0, label: 'normal' },
+      { sequence: 1, label: 'panic' },
+    ]);
+    assert.throws(() => new JsonlCheckpoint(output, 2), /exist/i);
+    checkpoint.close();
+    checkpoint.close();
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
 });
