@@ -9,7 +9,7 @@
 // 데이터 흐름:
 //
 //	클라이언트 → CastVote(transient: votePrivate) → [PDC] VotePrivate (비공개)
-//	                                              → [원장] Nullifier   (익명 공개)
+//	                                              → [원장] Nullifier   (선거 내 연결 가능)
 package main
 
 import (
@@ -155,7 +155,7 @@ type Election struct {
 	DKGApprovals          []string               `json:"dkgApprovals,omitempty" metadata:",optional"`
 }
 
-// Nullifier 익명 투표 증명 (공개 원장)
+// Nullifier 기반 중복 투표 방지 표식 (공개 원장, 선거 내 연결 가능)
 // 유권자가 투표했다는 사실만 증명하고 누가 투표했는지는 알 수 없음.
 // nullifierHash = SHA256(signed credential material + electionID + blindingFactor)
 type Nullifier struct {
@@ -1255,7 +1255,7 @@ func (c *VotingContract) InitLedger(ctx contractapi.TransactionContextInterface)
 			ObjectType:     "election",
 			ElectionID:     "ELECTION_2026_PRESIDENT",
 			Title:          "2026 대표 선출 선거",
-			Description:    "블록체인 기반 익명 전자투표 시스템 시연용 선거",
+			Description:    "블록체인 기반 암호화·검증형 전자투표 시스템 시연용 선거",
 			Candidates:     []string{"CANDIDATE_A", "CANDIDATE_B", "CANDIDATE_C"},
 			StartTime:      now,
 			EndTime:        now + 86400, // 24시간 후
@@ -1837,7 +1837,7 @@ func (c *VotingContract) AggregateClosedElection(ctx contractapi.TransactionCont
 // CastVote — 핵심 투표 함수
 // ============================================================
 
-// CastVote 유권자가 익명으로 투표를 제출합니다.
+// CastVote는 유권자의 암호화 투표를 제출합니다. 현재 credential/nullifier 경로의 익명성은 미검증입니다.
 //
 // 공개 파라미터 (체인에 기록됨):
 //   - electionID:    투표 대상 선거 ID
@@ -2197,7 +2197,7 @@ func (c *VotingContract) castVoteInternal(
 		}
 	}
 
-	// ── Step 6: 공개 원장에 Nullifier 저장 (익명) ────────────
+	// ── Step 6: 공개 원장에 Nullifier 저장 (선거 내 연결 가능) ──
 	// [C-4] candidateID를 AES-GCM으로 암호화하여 공개 원장에 저장
 
 	nullifier := Nullifier{

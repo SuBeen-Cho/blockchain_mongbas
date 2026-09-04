@@ -53,6 +53,10 @@ test('public showcase and credential labels do not claim unverified equivalence'
   const packageManifest = read('application/package.json');
   const environmentExample = read('application/.env.example');
   const caliperManifest = read('caliper/package.json');
+  const fullBenchmark = read('caliper/benchmarks/full-bench.yaml');
+  const chaincode = read('chaincode/voting/voting.go');
+  const voterPage = read('frontend/src/pages/VoterPage.jsx');
+  const boothDesign = read('docs/DEMO_BOOTH_DESIGN.md');
   const caliperBenchmarks = [
     read('caliper/benchmarks/cast-vote.yaml'),
     read('caliper/benchmarks/get-election.yaml'),
@@ -75,7 +79,12 @@ test('public showcase and credential labels do not claim unverified equivalence'
   assert.doesNotMatch(packageManifest, /익명 전자투표/);
   assert.doesNotMatch(environmentExample, /익명 전자투표/);
   assert.doesNotMatch(caliperManifest, /익명 전자투표/);
+  assert.doesNotMatch(fullBenchmark, /익명 전자투표/);
+  assert.doesNotMatch(chaincode, /익명 전자투표|익명 투표 증명|익명으로 투표|Nullifier 저장 \(익명\)|Nullifier\s+\(익명 공개\)/);
+  assert.doesNotMatch(voterPage, /label:\s*['"]익명 투표['"]/);
+  assert.doesNotMatch(boothDesign, /운영자도 못 본다|익명성 \/ \*\*Ballot Secrecy\*\*|Ballot Secrecy \/ 익명성/);
   for (const benchmark of caliperBenchmarks) assert.doesNotMatch(benchmark, /익명 전자투표/);
+  for (const benchmark of caliperBenchmarks) assert.doesNotMatch(benchmark, /익명 투표 트랜잭션/);
 });
 
 test('legacy security scenario does not mislabel missing-election rejection as endorsement evidence', () => {
