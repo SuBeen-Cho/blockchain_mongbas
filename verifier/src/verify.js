@@ -399,9 +399,11 @@ function merkleRoot(ballots) {
 }
 
 function unsignedBundle(bundle) {
-  const clone = structuredClone(bundle);
-  delete clone.signatures;
-  return clone;
+  // Signatures are the only omitted top-level field. A deep clone multiplied
+  // peak memory for large ballot arrays even though canonicalization is
+  // read-only and immediate at every call site.
+  const { signatures: _signatures, ...unsigned } = bundle;
+  return unsigned;
 }
 
 function verifySignatures(bundle, payloadBytes) {

@@ -601,6 +601,18 @@ test('builds and verifies vector-v3 one-hot ballots and per-candidate threshold 
   assert.equal(verifyBundle(bundle).valid, false, 'tampered vector sum proof must fail');
 });
 
+test('unsigned bundle projection preserves canonical signed bytes without deep-copying ballot evidence', () => {
+  const bundle = buildVectorBundle();
+  const projected = unsignedBundle(bundle);
+  const expected = structuredClone(bundle);
+  delete expected.signatures;
+  assert.equal(canonicalize(projected), canonicalize(expected));
+  assert.equal(projected.ballots, bundle.ballots);
+  assert.equal(projected.vectorBallotReceipts, bundle.vectorBallotReceipts);
+  assert.ok(!Object.hasOwn(projected, 'signatures'));
+  assert.ok(Object.hasOwn(bundle, 'signatures'));
+});
+
 test('vector bundle resource limits reject oversized dimensions before group arithmetic', () => {
   const original = buildVectorBundle();
   const tooManyBallots = structuredClone(original);
