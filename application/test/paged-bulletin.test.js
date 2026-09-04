@@ -187,3 +187,12 @@ test('Linux same-election wrapper has bounded scale, disk abort and isolated loo
   assert.match(benchmark, /mongbas-same-election-cast-checkpoint\/v1/);
   assert.match(benchmark, /writeJsonEvidenceExclusive\(castCheckpointPath/);
 });
+
+test('Linux verifier scaling profile is bounded and selects one early and late rejection', () => {
+  const source = fs.readFileSync(path.join(__dirname, '../../deploy/linux/verifier-evaluation.sh'), 'utf8');
+  assert.match(source, /MONGBAS_VERIFIER_TAMPER_PROFILE:-full/);
+  assert.match(source, /full\|scale/);
+  assert.match(source, /MONGBAS_VERIFIER_TIMEOUT_SECONDS:-7200/);
+  assert.match(source, /timeout --signal=TERM --kill-after=30/);
+  assert.match(source, /algorithm-downgraded\|proof-changed/);
+});

@@ -12,8 +12,15 @@ require_cmd npm
 require_cmd openssl
 require_cmd ss
 require_cmd tar
+require_cmd timeout
 [ -x /usr/bin/time ] || die "GNU /usr/bin/time is required for verifier resource measurements"
 [ "${MONGBAS_PROFILE}" = benchmark ] || die "set MONGBAS_PROFILE=benchmark for verifier evaluation"
+
+tamper_profile="${MONGBAS_VERIFIER_TAMPER_PROFILE:-full}"
+case "${tamper_profile}" in full|scale) ;; *) die "MONGBAS_VERIFIER_TAMPER_PROFILE must be full or scale" ;; esac
+verification_timeout_seconds="${MONGBAS_VERIFIER_TIMEOUT_SECONDS:-7200}"
+[[ "${verification_timeout_seconds}" =~ ^[0-9]+$ ]] && [ "${verification_timeout_seconds}" -ge 60 ] && \
+  [ "${verification_timeout_seconds}" -le 14400 ] || die "MONGBAS_VERIFIER_TIMEOUT_SECONDS must be 60..14400"
 
 port="${MONGBAS_VERIFIER_EVALUATION_PORT:-3002}"
 [[ "${port}" =~ ^[0-9]+$ ]] && [ "${port}" -ge 1024 ] && [ "${port}" -le 65535 ] || die "port must be 1024..65535"
@@ -22,6 +29,8 @@ if ss -H -ltn "sport = :${port}" | grep -q .; then die "verifier evaluation port
 run_id="$(timestamp_utc)"
 out="${MONGBAS_RESULT_DIR}/verifier-${run_id}"
 install -d -m 0700 "${out}" "${out}/tamper-corpus"
+printf '%s\n' "${tamper_profile}" >"${out}/tamper-profile.txt"
+printf '%s\n' "${verification_timeout_seconds}" >"${out}/verification-timeout-seconds.txt"
 signer_dir="$(mktemp -d "${MONGBAS_SECRET_DIR}/bundle-signers.XXXXXX")"
 chmod 0700 "${signer_dir}"
 backend_pid=""
@@ -130,6 +139,7 @@ install -d -m 0700 "${out}/clean-verifier"
 tar -xzf "${package_file}" -C "${out}/clean-verifier"
 set +e
 /usr/bin/time -f 'elapsedSeconds=%e\nmaxRssKiB=%M' -o "${out}/valid-verification.metrics.txt" \
+  timeout --signal=TERM --kill-after=30 "${verification_timeout_seconds}" \
   node "${out}/clean-verifier/package/bin/mongbas-verify.js" "${out}/bundle-signed.json" \
   >"${out}/valid-verification.stdout.log" 2>"${out}/valid-verification.stderr.log"
 valid_status=$?
@@ -143,8 +153,12 @@ printf 'case\texitStatus\tverdict\n' >"${out}/tamper-results.tsv"
 tamper_failure=0
 while IFS= read -r tampered; do
   name="$(basename "${tampered}" .json)"
+  if [ "${tamper_profile}" = scale ]; then
+    case "${name}" in algorithm-downgraded|proof-changed) ;; *) continue ;; esac
+  fi
   set +e
   /usr/bin/time -f 'elapsedSeconds=%e\nmaxRssKiB=%M' -o "${out}/tamper-corpus/${name}.metrics.txt" \
+    timeout --signal=TERM --kill-after=30 "${verification_timeout_seconds}" \
     node "${out}/clean-verifier/package/bin/mongbas-verify.js" "${tampered}" \
     >"${out}/tamper-corpus/${name}.stdout.log" 2>"${out}/tamper-corpus/${name}.stderr.log"
   status=$?
