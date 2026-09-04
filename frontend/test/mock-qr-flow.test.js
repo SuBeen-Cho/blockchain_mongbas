@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
 import net from 'node:net';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
@@ -6,6 +7,12 @@ import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 
 const frontendDirectory = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+
+test('mock server is loopback-only and has no wildcard CORS', () => {
+  const source = fs.readFileSync(path.join(frontendDirectory, 'mock-server.js'), 'utf8');
+  assert.doesNotMatch(source, /Access-Control-Allow-Origin['"]:\s*['"]\*['"]/);
+  assert.match(source, /server\.listen\(PORT, ['"]127\.0\.0\.1['"]/);
+});
 
 async function availablePort() {
   const server = net.createServer();

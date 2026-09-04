@@ -8,6 +8,7 @@ import http from 'http';
 import crypto from 'crypto';
 
 const PORT = Number(process.env.PORT || 3000);
+const MOCK_ORIGIN = 'http://localhost:5173';
 const elections = {};
 const votes = {};
 const preparedVectors = {};
@@ -17,7 +18,12 @@ let voteCounter = 0;
 let eventCounter = 0;
 
 function json(res, data, status = 200) {
-  res.writeHead(status, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': '*', 'Access-Control-Allow-Methods': '*' });
+  res.writeHead(status, {
+    'Content-Type': 'application/json',
+    'Access-Control-Allow-Origin': MOCK_ORIGIN,
+    'Access-Control-Allow-Headers': 'Content-Type',
+    'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+  });
   res.end(JSON.stringify(data));
 }
 
@@ -292,7 +298,7 @@ const server = http.createServer(async (req, res) => {
   json(res, { error: 'Not found' }, 404);
 });
 
-server.listen(PORT, () => {
+server.listen(PORT, '127.0.0.1', () => {
   console.log(`\n  Mock server running at http://localhost:${PORT}`);
   console.log(`  Frontend at http://localhost:5173\n`);
 });
