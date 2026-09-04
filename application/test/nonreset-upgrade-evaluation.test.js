@@ -29,6 +29,7 @@ test('non-reset upgrade wrapper rejects destructive network operations and valid
   assert.doesNotMatch(script, /network\.sh (?:down|clean|up)/);
   assert.doesNotMatch(script, /docker volume rm|docker compose down/);
   assert.match(script, /after_seq != before_seq \+ 1/);
+  assert.match(script, /after\["version"\] != before\["version"\]/);
   assert.match(script, /before_volumes.*!=.*after_volumes/);
   assert.match(script, /rollback_image.*!=.*old_image/);
   assert.match(script, /current_image.*!=.*candidate_image/);

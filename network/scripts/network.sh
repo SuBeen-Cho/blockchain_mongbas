@@ -293,6 +293,9 @@ cmd_deploy() {
     # A CCAAS package binds connection metadata, not the executable image.
     # Use a new package label and network address so the current definition
     # continues to execute the old container until lifecycle commit succeeds.
+    # Fabric lifecycle version is descriptive application metadata and must
+    # also change when a new executable package is committed.
+    CHAINCODE_VERSION="${CHAINCODE_VERSION}.seq${NEXT_SEQ_BEFORE_BUILD}"
     CHAINCODE_LABEL="${CHAINCODE_NAME}_${CHAINCODE_VERSION}_seq${NEXT_SEQ_BEFORE_BUILD}"
     DEPLOY_IMAGE_TAG="voting-chaincode:candidate-seq-${NEXT_SEQ_BEFORE_BUILD}"
     CHAINCODE_CONTAINER_NAME="voting-chaincode-seq-${NEXT_SEQ_BEFORE_BUILD}"

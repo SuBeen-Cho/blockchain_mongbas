@@ -120,7 +120,8 @@ python3 - "${out}/chaincode-before.json" "${out}/chaincode-after.json" <<'PY'
 import json, sys
 before, after = (json.load(open(path)) for path in sys.argv[1:])
 assert after["sequence"] == before["sequence"] + 1
-assert after["version"] == before["version"]
+assert after["version"] != before["version"]
+assert after["version"] == f'1.0.seq{after["sequence"]}'
 PY
 
 curl --silent --show-error --fail --max-time 5 http://127.0.0.1:3000/health \

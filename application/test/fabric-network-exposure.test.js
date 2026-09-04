@@ -95,3 +95,10 @@ test('CCAAS candidate is running before approval and callable before current tag
   assert.ok(script.indexOf('committed candidate chaincode is not callable') <
     script.indexOf('docker image tag "${DEPLOY_IMAGE_TAG}" voting-chaincode:1.0'));
 });
+
+test('CCAAS binary upgrade advances both lifecycle sequence and version metadata', () => {
+  const script = fs.readFileSync(path.join(__dirname, '../../network/scripts/network.sh'), 'utf8');
+  assert.match(script, /CHAINCODE_VERSION="\$\{CHAINCODE_VERSION\}\.seq\$\{NEXT_SEQ_BEFORE_BUILD\}"/);
+  assert.ok(script.indexOf('CHAINCODE_VERSION="${CHAINCODE_VERSION}.seq${NEXT_SEQ_BEFORE_BUILD}"') <
+    script.indexOf('CHAINCODE_LABEL="${CHAINCODE_NAME}_${CHAINCODE_VERSION}_seq${NEXT_SEQ_BEFORE_BUILD}"'));
+});
