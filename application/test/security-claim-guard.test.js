@@ -9,6 +9,14 @@ const { spawnSync } = require('node:child_process');
 const root = path.resolve(__dirname, '../..');
 const read = relative => fs.readFileSync(path.join(root, relative), 'utf8');
 
+function filesBelow(relativeDirectory) {
+  const absoluteDirectory = path.join(root, relativeDirectory);
+  return fs.readdirSync(absoluteDirectory, { withFileTypes: true }).flatMap(entry => {
+    const relative = path.join(relativeDirectory, entry.name);
+    return entry.isDirectory() ? filesBelow(relative) : [relative];
+  });
+}
+
 test('runtime metadata and UI do not self-certify coercion resistance', () => {
   const chaincode = read('chaincode/voting/voting.go');
   const verifyPage = read('frontend/src/pages/VerifyPage.jsx');
@@ -202,6 +210,49 @@ test('superseded evidence runners fail closed before network or output access', 
     assert.equal(run.stdout, '', relative);
     assert.match(run.stderr, /UNSUPPORTED/, relative);
     assert.doesNotMatch(run.stderr, /결과 저장|완료/, relative);
+  }
+});
+
+test('every repository-declared legacy evidence entrypoint is inventoried and fails closed', () => {
+  const declaredLegacy = [
+    ...filesBelow('application/benchmark'),
+    ...filesBelow('application/scripts'),
+    ...filesBelow('scripts'),
+  ].filter(relative => /\.(?:js|sh)$/.test(relative))
+    .filter(relative => /UNSUPPORTED|HISTORICAL ONLY|cannot produce.*evidence|legacy evaluator|legacy workload/s.test(read(relative)))
+    .sort();
+
+  const expected = [
+    'application/benchmark/http-bench.js',
+    'application/benchmark/idemix-bench.js',
+    'application/benchmark/phase-bc-bench.js',
+    'application/benchmark/security-overhead-bench.js',
+    'application/scripts/benchmark-paper-features.js',
+    'application/scripts/p2-threshold-test.js',
+    'application/scripts/p5-track-test.js',
+    'application/scripts/rehearsal-browser.js',
+    'application/scripts/scenario-suite.js',
+    'application/scripts/scenario-suite2.js',
+    'scripts/batchtimeout-bench.js',
+    'scripts/bench_full.sh',
+    'scripts/bench_step45.sh',
+    'scripts/generate-bt-report.js',
+    'scripts/measure-concurrent-vote.js',
+    'scripts/run-batchtimeout-all.sh',
+    'scripts/security-scenarios-extended.js',
+    'scripts/security-scenarios.js',
+  ].sort();
+
+  assert.deepEqual(declaredLegacy, expected);
+  for (const relative of declaredLegacy) {
+    const command = relative.endsWith('.sh') ? 'bash' : process.execPath;
+    const run = spawnSync(command, [path.join(root, relative)], {
+      encoding: 'utf8',
+      timeout: 5000,
+    });
+    assert.equal(run.status, 2, relative);
+    assert.equal(run.stdout, '', relative);
+    assert.match(run.stderr, /UNSUPPORTED/, relative);
   }
 });
 
