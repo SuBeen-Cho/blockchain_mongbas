@@ -3,6 +3,7 @@
 
 import os
 import re
+import secrets
 import stat
 import sys
 import uuid
@@ -14,7 +15,7 @@ TARGETS = {
     "ENABLE_HSTS": "true",
     "TRUST_PROXY_HOPS": "1",
 }
-REQUIRED = {"ADMIN_API_TOKEN", "CREDENTIAL_SECRET", "AUDIT_HMAC_KEY", "CORS_ORIGIN"}
+REQUIRED = {"ADMIN_API_TOKEN", "CREDENTIAL_SECRET", "CORS_ORIGIN"}
 ASSIGNMENT = re.compile(r"^[ \t]*([A-Za-z_][A-Za-z0-9_]*)=")
 
 
@@ -92,11 +93,26 @@ def main():
     missing = sorted(key for key in REQUIRED if not values.get(key))
     if missing:
         fail("required environment settings are missing or empty: " + ",".join(missing))
-    origins = [value.strip() for value in values["CORS_ORIGIN"].split(",")]
-    if expected_origin not in origins:
-        fail("CORS_ORIGIN does not contain the expected Tailscale HTTPS origin")
+    audit_key = values.get("AUDIT_HMAC_KEY", "")
+    if audit_key and len(audit_key.encode("utf-8")) < 32:
+        fail("existing AUDIT_HMAC_KEY must be at least 32 bytes")
+    if audit_key and audit_key == values["CREDENTIAL_SECRET"]:
+        fail("AUDIT_HMAC_KEY must be distinct from CREDENTIAL_SECRET")
+    if not audit_key:
+        # The approved profile requires a separately generated audit domain key.
+        # It is written only to the protected environment and never printed.
+        audit_key = secrets.token_urlsafe(48)
 
-    targets = {**TARGETS, "DEMO_ADMISSION_FILE": admission_path}
+    origins = [value.strip() for value in values["CORS_ORIGIN"].split(",") if value.strip()]
+    if expected_origin not in origins:
+        origins.append(expected_origin)
+
+    targets = {
+        **TARGETS,
+        "AUDIT_HMAC_KEY": audit_key,
+        "CORS_ORIGIN": ",".join(origins),
+        "DEMO_ADMISSION_FILE": admission_path,
+    }
     for key, value in targets.items():
         replacement = f"{key}={value}"
         if key in positions:
