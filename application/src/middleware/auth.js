@@ -14,9 +14,9 @@
  *
  *   [C단계] BBS+ on BLS12-381 (IDEMIX_IMPL=bbs)
  *     - IRTF CFRG BBS 표준 (draft-irtf-cfrg-bbs-signatures)
- *     - 선택적 공개: voterEligible만 공개
+ *     - 현재 runtime proof는 검증에 필요한 네 속성을 모두 공개
  *     - Rust WASM 구현 → 4-8x 빠름
- *     - 매 요청 새 nonce → 완전 비연결성
+ *     - 매 요청 새 nonce는 proof bytes를 바꾸지만 세션 비연결성을 입증하지 않음
  *
  * ── 환경변수 ────────────────────────────────────────────────────
  *   IDEMIX_ENABLED=true/false   인증 활성화
@@ -204,7 +204,7 @@ async function verifyVoterEligibility(req) {
     // [CRIT-01/02 FIX] credType/expUnix/credHash 포함
     return {
       eligible:   true,
-      anonymous:  true,
+      anonymous:  false,
       mspId:      'ElectionCommissionMSP',
       mode:       'idemix-ps',
       electionID: verified.electionID,
@@ -223,7 +223,7 @@ async function verifyVoterEligibility(req) {
     // [CRIT-01/02 FIX] credType/expUnix/credHash 포함
     return {
       eligible:   true,
-      anonymous:  true,
+      anonymous:  false,
       mspId:      'ElectionCommissionMSP',
       mode:       'idemix-bbs',
       electionID: verified.electionID,
@@ -258,7 +258,7 @@ async function verifyVoterEligibility(req) {
   // [CRIT-01/02 FIX] credType/expUnix/credHash 포함
   const result = {
     eligible:    true,
-    anonymous:   true,
+    anonymous:   false,
     mspId:       'ElectionCommissionMSP',
     mode:        'idemix',
     electionID:  verified.electionID,
@@ -304,13 +304,13 @@ function idemixStatus() {
   if (IDEMIX_IMPL === 'ps') {
     impl = 'PS-BN254 credential prototype';
     securityNote = process.env.PS_ISSUER_SEED
-      ? '익명 credential — PS_ISSUER_PUBLIC_KEY_B64를 체인코드에 주입하면 pairing 기반 체인코드 직접 검증'
-      : '익명 credential — PS_ISSUER_SEED/PS_ISSUER_PUBLIC_KEY_B64 미설정 시 체인코드 직접 검증 불가';
+      ? 'PS 서명 credential 프로토타입 — 전체 속성 전달 방식이며 체인코드 pairing 검증용 공개키 구성 가능; 익명성·비연결성 미검증'
+      : 'PS 서명 credential 프로토타입 — 전체 속성 전달 방식이며 issuer 키 미설정 시 체인코드 직접 검증 불가; 익명성·비연결성 미검증';
   } else if (IDEMIX_IMPL === 'bbs') {
     impl = 'BBS+-BLS12381 (C단계: 개선 Idemix)';
     securityNote = process.env.BBS_ISSUER_SEED
-      ? '익명 credential — BBS_PUBLIC_KEY_B64를 체인코드에 주입하면 BLS12-381 BBS+ proof 체인코드 직접 검증'
-      : '익명 credential (ZKP 기반 선택적 공개) — BBS_ISSUER_SEED/BBS_PUBLIC_KEY_B64 미설정 시 체인코드 직접 검증 불가';
+      ? 'BBS+ proof 프로토타입 — 현재 네 속성을 모두 공개하며 체인코드 검증용 공개키 구성 가능; 익명성·비연결성 미검증'
+      : 'BBS+ proof 프로토타입 — 현재 네 속성을 모두 공개하며 issuer 키 미설정 시 체인코드 직접 검증 불가; 익명성·비연결성 미검증';
   } else if (ASYM_CRED_ENABLED) {
     impl = 'Ed25519-asymmetric';
     securityNote = '공개키 서명 credential — 체인코드 직접 검증 완료, 익명 credential은 아님';

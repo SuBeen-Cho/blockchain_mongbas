@@ -1,7 +1,7 @@
 {
   "name": "voting-backend",
   "version": "1.0.0",
-  "description": "다조직 합의 익명 전자투표 블록체인 REST API 서버",
+  "description": "다조직 합의 기반 암호화·검증형 전자투표 블록체인 REST API 서버",
   "main": "src/app.js",
   "scripts": {
     "test": "node --test test/*.test.js",

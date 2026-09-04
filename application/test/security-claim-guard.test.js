@@ -49,6 +49,8 @@ test('public showcase and credential labels do not claim unverified equivalence'
   const showcase = read('frontend/public/showcase3.html');
   const auth = read('application/src/middleware/auth.js');
   const psPrototype = read('application/src/lib/ps-idemix.js');
+  const bbsPrototype = read('application/src/lib/bbs-idemix.js');
+  const packageManifest = read('application/package.json');
 
   assert.doesNotMatch(showcase, /7\/7 보안 속성/);
   assert.doesNotMatch(showcase, /7<b>\/7<\/b>|7\/7[^\n]{0,80}전부 충족|학술 보안속성 전부 충족/);
@@ -57,8 +59,13 @@ test('public showcase and credential labels do not claim unverified equivalence'
   assert.match(showcase, /현재 7\/7 완전 검증을 주장하지 않습니다/);
   assert.match(showcase, /강압저항성은 현재 unverified/);
   assert.doesNotMatch(auth, /진짜 Idemix|Fabric Idemix와 동일/);
+  assert.doesNotMatch(auth, /완전 비연결성|익명 credential\s*[—(]/);
+  assert.doesNotMatch(auth, /anonymous:\s+true/);
   assert.match(auth, /PS-BN254 credential prototype/);
   assert.match(psPrototype, /Fabric Idemix와의 wire-format/);
+  assert.match(bbsPrototype, /nullifierMaterial/);
+  assert.doesNotMatch(bbsPrototype, /비연결성 보장|선택적 공개: voterEligible만 공개/);
+  assert.doesNotMatch(packageManifest, /익명 전자투표/);
 });
 
 test('legacy security scenario does not mislabel missing-election rejection as endorsement evidence', () => {

@@ -4,8 +4,8 @@
  * 개선된 Idemix 구현:
  *   - BLS12-381 곡선 (BN254 대비 128-bit 보안)
  *   - BBS+ 서명 (IRTF CFRG 표준 draft-irtf-cfrg-bbs-signatures)
- *   - 선택적 공개: voterEligible만 공개, electionID/exp는 숨김
- *   - 비연결성: 매 요청마다 새로운 ZKP proof
+ *   - 현재 runtime 검증 경로는 네 속성을 모두 공개
+ *   - 매 요청마다 proof nonce는 바뀌지만 세션 비연결성을 보장하지 않음
  *
  * 성능 특성 (vs B단계 PS):
  *   - 속성 수에 무관한 상수 시간 proof 검증
@@ -91,7 +91,8 @@ async function issueCredential(attributes) {
  * 2. BBS+ Proof of Knowledge 생성
  * 3. Proof 검증
  *
- * 비연결성: 매 호출마다 새로운 nonce → 매 proof 고유
+ * 매 호출마다 새로운 nonce를 사용해 proof bytes는 달라진다.
+ * 다만 공개 속성·전송 credential까지 포함한 세션 비연결성의 증거는 아니다.
  *
  * 반환: { valid, reason?, latencyMs }
  */
@@ -120,7 +121,7 @@ async function verifyCredential(credObj) {
     const messages  = attrs.map(a => Buffer.from(String(a)));
 
     // ── Proof of Knowledge 생성 ──────────────────────────────────
-    // 비연결성 보장: 매 요청마다 새로운 nonce
+    // proof freshness용 nonce. 현재 공개 속성 구조의 비연결성을 의미하지 않는다.
     const nonce = randomBytes(32);
 
     const proof = await blsCreateProof({
