@@ -175,6 +175,21 @@ N=100 측정은 독립된 loopback 벤치마크 백엔드를 `DISABLE_RATE_LIMIT
 기존의 종료된 선거를 verifier 확장성 평가에 사용할 때는 `MONGBAS_VERIFIER_ELECTION_ID`를 지정한다. 감사 데이터가 아직 게시되지 않은 평가용 선거에 한해 `MONGBAS_VERIFIER_PUBLISH_EXISTING_AUDIT=true`를 명시해 `publish-audit`을 먼저 commit한다. 이 옵션은 원장 상태를 변경하므로 대상 election ID를 반드시 확인하고 사용한다. 관리자 token은 command argument로 전달하지 않는다.
 `verifier-evaluation.sh`는 live vector-v3 선거를 만들거나 `MONGBAS_VERIFIER_ELECTION_ID`로 기존 DKG 선거를 재사용한다. bundle source를 export·임시 2-of-3 Ed25519 서명한 후 `npm pack` clean verifier로 honest exit 0과 모든 corpus exit 1을 요구한다. v4는 22개, DKG v5는 추가 6개를 포함한 28개다. 임시 private key는 result에 저장하지 않고 서명 후 삭제하며, single-host 임시 서명은 기관 독립성 증거로 해석하지 않는다.
 
+완료된 대규모 verifier result의 정확한 번들을 재사용해 새 commit의 순차 또는 병렬 proof 경로를 측정할 때는 비교 전용 wrapper를 사용한다. 기존 inventory를 먼저 검증하고, 원본을 덮어쓰지 않으며, 기존 `verifier-evaluation.sh`가 실행 중이면 거부한다.
+
+```bash
+MONGBAS_PROFILE=benchmark \
+MONGBAS_VERIFIER_BASELINE_RESULT=/home/user1/mongbas-runtime/results/verifier-<completed-run> \
+MONGBAS_VERIFIER_COMPARISON_MODE=sync \
+  ./deploy/linux/verifier-preserved-bundle-comparison.sh
+
+MONGBAS_PROFILE=benchmark \
+MONGBAS_VERIFIER_BASELINE_RESULT=/home/user1/mongbas-runtime/results/verifier-<completed-run> \
+MONGBAS_VERIFIER_COMPARISON_MODE=parallel \
+MONGBAS_VERIFIER_COMPARISON_WORKERS=4 \
+  ./deploy/linux/verifier-preserved-bundle-comparison.sh
+```
+
 대규모 verifier 확장성 측정은 `MONGBAS_VERIFIER_TAMPER_PROFILE=scale`을 지정해 honest bundle, fail-fast `algorithm-downgraded`, cryptographic late-reject `proof-changed`만 측정한다. 기본값 `full`은 기존 전체 corpus를 유지한다. 각 verifier 프로세스는 기본 7,200초, 허용 범위 60..14,400초의 `MONGBAS_VERIFIER_TIMEOUT_SECONDS`로 제한되며 timeout은 성공으로 처리하지 않는다. Scale profile은 전체 tamper corpus 증거가 아니므로 기존 1,000표 full-corpus 결과와 함께 보고한다.
 
 `coercion-evaluation.sh`는 격리 backend에서 opaque normal/panic proof capability를 무작위 균형 순서로 조회한다. target nullifier 노출, byte size, latency를 raw JSONL로 보존하고, 훈련/평가를 분리한 threshold classifier와 Wilson 95% CI를 보고한다. 이 gate는 동일 호스트 API transcript만 평가하며 PDC/backend 공모, 공개 revote pattern, compromised client를 증명하지 않는다.

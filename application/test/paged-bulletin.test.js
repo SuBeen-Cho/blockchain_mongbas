@@ -196,3 +196,20 @@ test('Linux verifier scaling profile is bounded and selects one early and late r
   assert.match(source, /timeout --signal=TERM --kill-after=30/);
   assert.match(source, /algorithm-downgraded\|proof-changed/);
 });
+
+test('preserved-bundle verifier comparison is non-overlapping, bounded and evidence preserving', () => {
+  const source = fs.readFileSync(path.join(__dirname, '../../deploy/linux/verifier-preserved-bundle-comparison.sh'), 'utf8');
+  assert.match(source, /verifier-evaluation\.sh/);
+  assert.match(source, /sha256sum --check/);
+  assert.match(source, /bundle-signed\.json/);
+  assert.match(source, /proof-changed\.json/);
+  assert.match(source, /sync\|parallel/);
+  assert.match(source, /--proof-workers/);
+  assert.match(source, /timeout --signal=TERM --kill-after=30/);
+  assert.match(source, /MONGBAS_VERIFIER_COMPARISON_TIMEOUT_SECONDS/);
+  assert.match(source, /git-status\.txt/);
+  assert.match(source, /source-bundle-sha256\.txt/);
+  assert.match(source, /run-exit-status\.txt/);
+  assert.match(source, /sha256-inventory\.txt/);
+  assert.doesNotMatch(source, /docker compose down|docker volume rm|network\.sh (?:down|clean)|tailscale (?:serve|funnel)/);
+});
