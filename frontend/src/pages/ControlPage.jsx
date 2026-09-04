@@ -109,8 +109,13 @@ export default function ControlPage() {
   const addLog = useCallback((m) => setLog((l) => [`${new Date().toLocaleTimeString()} ${m}`, ...l].slice(0, 10)), []);
 
   useEffect(() => {
-    if (kioskUrl) QRCode.toDataURL(kioskUrl, { width: 320, margin: 1, color: { dark: '#0a0f24', light: '#ffffff' } }).then(setQr).catch(() => setQr(''));
-    else setQr('');
+    let cancelled = false;
+    if (kioskUrl) {
+      QRCode.toDataURL(kioskUrl, { width: 320, margin: 1, color: { dark: '#0a0f24', light: '#ffffff' } })
+        .then((value) => { if (!cancelled) setQr(value); })
+        .catch(() => { if (!cancelled) setQr(''); });
+    } else setQr('');
+    return () => { cancelled = true; };
   }, [kioskUrl]);
 
   useEffect(() => {

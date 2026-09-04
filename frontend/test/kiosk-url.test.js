@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
 import test from 'node:test';
 import { browserCryptoReady, buildSecureKioskUrl, consumeKioskAdmission, displayKioskUrl } from '../src/utils/kioskUrl.js';
 
@@ -50,4 +52,10 @@ test('dashboard display masks the one-time admission fragment', () => {
   const displayed = displayKioskUrl(actual);
   assert.equal(displayed, 'https://vote.example.test/?app=kiosk&e=election-1#a=<one-time-token-hidden>');
   assert.doesNotMatch(displayed, new RegExp(token));
+});
+
+test('dashboard ignores a stale asynchronous QR render after admission rotation', () => {
+  const source = fs.readFileSync(path.join(import.meta.dirname, '../src/pages/ControlPage.jsx'), 'utf8');
+  assert.match(source, /let cancelled = false;[\s\S]{0,400}if \(!cancelled\) setQr\(value\);/);
+  assert.match(source, /return \(\) => \{ cancelled = true; \};/);
 });
