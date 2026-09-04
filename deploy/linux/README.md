@@ -34,7 +34,7 @@ ${EDITOR:-vi} "${HOME}/.local/state/mongbas/secrets/application.env"
 ./deploy/linux/up.sh
 ```
 
-기본 runtime은 `${HOME}/.local/state/mongbas`이며 `MONGBAS_RUNTIME_DIR`로 바꿀 수 있다. 기존 서버처럼 `/home/user1/mongbas-runtime`을 쓰려면 해당 변수를 export한다. 기존 `secrets/backend.env`가 있으면 보존하여 자동 선택하며, 다른 파일은 `MONGBAS_ENV_FILE`로 지정할 수 있다. secret 파일은 `0600`, runtime 디렉터리는 `0700`으로 생성되고 Git 저장소에는 들어가지 않는다. 기존 `application/.env`가 일반 파일이면 자동화가 덮어쓰지 않고 중단한다.
+기본 runtime은 `${HOME}/.local/state/mongbas`이며 `MONGBAS_RUNTIME_DIR`로 바꿀 수 있다. 다른 protected runtime을 쓰려면 해당 변수를 절대 경로로 export한다. 기존 `secrets/backend.env`가 있으면 보존하여 자동 선택하며, 다른 파일은 `MONGBAS_ENV_FILE`로 지정할 수 있다. secret 파일은 `0600`, runtime 디렉터리는 `0700`으로 생성되고 Git 저장소에는 들어가지 않는다. 기존 `application/.env`가 일반 파일이면 자동화가 덮어쓰지 않고 중단한다.
 
 Backend는 직접 `npm --prefix application start`로 실행하거나 현재 계정·저장소·runtime·secret env·npm 경로로 systemd unit을 생성해 운영할 수 있다. 기본 명령은 private runtime에 unit을 render·검증만 하며 시스템을 변경하지 않는다.
 
@@ -68,13 +68,13 @@ tailscale serve status
 실제 배포나 Serve 설정 전에 읽기 전용 QR 사전점검을 실행한다. 이 명령은 secret 값을 source/출력하지 않고 설정 여부만 검사하며, systemd, Docker, Tailscale 및 Fabric 상태를 변경하지 않는다.
 
 ```bash
-MONGBAS_RUNTIME_DIR=/home/user1/mongbas-runtime ./deploy/linux/qr-preflight.sh
+MONGBAS_RUNTIME_DIR="${HOME}/.local/state/mongbas" ./deploy/linux/qr-preflight.sh
 ```
 
 장시간 verifier가 종료되고 feature checkout이 clean인 상태에서만, 승인된 tailnet QR 프로필을 증거와 복구 지점까지 함께 적용한다.
 
 ```bash
-MONGBAS_RUNTIME_DIR=/home/user1/mongbas-runtime \
+MONGBAS_RUNTIME_DIR="${HOME}/.local/state/mongbas" \
   ./deploy/linux/tailnet-qr-deployment-evaluation.sh \
   APPLY_TAILNET_QR_PROFILE_WITHOUT_RESET \
   https://your-node.your-tailnet.ts.net
@@ -85,7 +85,7 @@ MONGBAS_RUNTIME_DIR=/home/user1/mongbas-runtime \
 프로필 배포가 통과한 후, 기존 Serve 설정이 없을 때만 tailnet 내부 HTTPS를 활성화한다.
 
 ```bash
-MONGBAS_RUNTIME_DIR=/home/user1/mongbas-runtime \
+MONGBAS_RUNTIME_DIR="${HOME}/.local/state/mongbas" \
   ./deploy/linux/tailnet-serve-evaluation.sh ENABLE_TAILNET_ONLY_SERVE
 ```
 
@@ -114,10 +114,10 @@ MONGBAS_PROFILE=benchmark MONGBAS_STATE_GROWTH_BALLOTS=1000 \
   ./deploy/linux/state-growth-evaluation.sh
 MONGBAS_PROFILE=benchmark ./deploy/linux/fault-evaluation.sh
 MONGBAS_PROFILE=benchmark ./deploy/linux/critical-fault-evaluation.sh
-MONGBAS_RUNTIME_DIR=/home/user1/mongbas-runtime ./deploy/linux/pdc-custody-evaluation.sh
-MONGBAS_RUNTIME_DIR=/home/user1/mongbas-runtime ./deploy/linux/dkg-evaluation.sh
-MONGBAS_RUNTIME_DIR=/home/user1/mongbas-runtime ./deploy/linux/dkg-live-evaluation.sh
-sudo MONGBAS_RUNTIME_DIR=/home/user1/mongbas-runtime ./deploy/linux/trustee-custody-evaluation.sh
+MONGBAS_RUNTIME_DIR="${HOME}/.local/state/mongbas" ./deploy/linux/pdc-custody-evaluation.sh
+MONGBAS_RUNTIME_DIR="${HOME}/.local/state/mongbas" ./deploy/linux/dkg-evaluation.sh
+MONGBAS_RUNTIME_DIR="${HOME}/.local/state/mongbas" ./deploy/linux/dkg-live-evaluation.sh
+sudo MONGBAS_RUNTIME_DIR="${HOME}/.local/state/mongbas" ./deploy/linux/trustee-custody-evaluation.sh
 MONGBAS_PROFILE=benchmark MONGBAS_LONGEVITY_KIND=steady ./deploy/linux/longevity-evaluation.sh
 MONGBAS_PROFILE=benchmark MONGBAS_LONGEVITY_KIND=soak ./deploy/linux/longevity-evaluation.sh
 MONGBAS_PROFILE=benchmark ./deploy/linux/verifier-evaluation.sh
@@ -125,7 +125,7 @@ MONGBAS_PROFILE=benchmark ./deploy/linux/verifier-evaluation.sh
 # Explicitly approved, ledger-preserving upgrade from this checkout's chaincode source.
 # Replace the protected network path with the existing operational checkout; never use
 # this command to create or reset a network.
-MONGBAS_RUNTIME_DIR=/home/user1/mongbas-runtime \
+MONGBAS_RUNTIME_DIR="${HOME}/.local/state/mongbas" \
 MONGBAS_FABRIC_NETWORK_DIR=/absolute/path/to/protected/network \
 MONGBAS_APPROVE_NONRESET_CHAINCODE_UPGRADE=APPROVE_NONRESET_CHAINCODE_UPGRADE \
   ./deploy/linux/nonreset-chaincode-upgrade-evaluation.sh
@@ -179,12 +179,12 @@ N=100 측정은 독립된 loopback 벤치마크 백엔드를 `DISABLE_RATE_LIMIT
 
 ```bash
 MONGBAS_PROFILE=benchmark \
-MONGBAS_VERIFIER_BASELINE_RESULT=/home/user1/mongbas-runtime/results/verifier-<completed-run> \
+MONGBAS_VERIFIER_BASELINE_RESULT="${HOME}/.local/state/mongbas/results/verifier-<completed-run>" \
 MONGBAS_VERIFIER_COMPARISON_MODE=sync \
   ./deploy/linux/verifier-preserved-bundle-comparison.sh
 
 MONGBAS_PROFILE=benchmark \
-MONGBAS_VERIFIER_BASELINE_RESULT=/home/user1/mongbas-runtime/results/verifier-<completed-run> \
+MONGBAS_VERIFIER_BASELINE_RESULT="${HOME}/.local/state/mongbas/results/verifier-<completed-run>" \
 MONGBAS_VERIFIER_COMPARISON_MODE=parallel \
 MONGBAS_VERIFIER_COMPARISON_WORKERS=4 \
   ./deploy/linux/verifier-preserved-bundle-comparison.sh

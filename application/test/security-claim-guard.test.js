@@ -53,6 +53,12 @@ test('runtime metadata and UI do not self-certify coercion resistance', () => {
   assert.doesNotMatch(readme, /Anonymous E-Voting|Node\.js 18|Go 1\.21/);
 });
 
+test('public operating guides do not disclose the evaluated host account path', () => {
+  for (const relative of ['deploy/linux/README.md', 'docs/RUN_GUIDE.md', 'docs/DEMO_RUNBOOK.md']) {
+    assert.doesNotMatch(read(relative), /\/home\/user1(?:\/|\b)/, relative);
+  }
+});
+
 test('public showcase and credential labels do not claim unverified equivalence', () => {
   const showcase = read('frontend/public/showcase3.html');
   const auth = read('application/src/middleware/auth.js');

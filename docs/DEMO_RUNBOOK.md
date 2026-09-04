@@ -17,7 +17,7 @@ cd mongbas
 
 폰 접속용 tailnet-only HTTPS(계정 Serve 활성화 후):
 ```bash
-MONGBAS_RUNTIME_DIR=/home/user1/mongbas-runtime \
+MONGBAS_RUNTIME_DIR="${HOME}/.local/state/mongbas" \
   ./deploy/linux/tailnet-serve-evaluation.sh ENABLE_TAILNET_ONLY_SERVE
 ```
 > 이 명령은 tailnet 내부 Serve만 구성한다. Funnel, `demo-tunnel.sh`와 일반 인터넷 공개는 별도 승인이 없으면 사용하지 않는다.
