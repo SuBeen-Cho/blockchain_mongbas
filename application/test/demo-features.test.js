@@ -65,6 +65,8 @@ test('Fabric volume and ledger deletion requires an exact confirmation before se
   }
   const source = fs.readFileSync(network, 'utf8');
   assert.ok(source.indexOf('--confirm-destroy-ledger') < source.indexOf('docker-compose.yaml'));
+  assert.doesNotMatch(source, /\[ -d crypto-config \].*rm -rf crypto-config/);
+  assert.match(source, /REFUSED: existing crypto-config/);
 });
 
 test('Fabric BatchTimeout mutation requires an exact value and confirmation before setup', () => {

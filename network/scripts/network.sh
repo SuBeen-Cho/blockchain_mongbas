@@ -146,7 +146,9 @@ check_deps() {
 generate_crypto() {
   step "1/5 인증서 생성 (cryptogen)..."
   cd "$NETWORK_DIR"
-  [ -d crypto-config ] && { warn "crypto-config 재생성"; rm -rf crypto-config; }
+  if [ -e crypto-config ] || [ -e channel-artifacts ]; then
+    error "REFUSED: existing crypto-config or channel-artifacts must be preserved; use an explicitly approved clean/reset workflow"
+  fi
   cryptogen generate --config=./crypto-config.yaml --output=./crypto-config
   info "인증서 생성 완료 → ${NETWORK_DIR}/crypto-config/"
 }
