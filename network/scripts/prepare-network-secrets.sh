@@ -14,7 +14,11 @@ if [ -L "${output}" ]; then
 fi
 if [ -e "${output}" ]; then
   [ -f "${output}" ] || { echo "network secret path is not a regular file" >&2; exit 1; }
-  mode="$(stat -f '%Lp' "${output}" 2>/dev/null || stat -c '%a' "${output}")"
+  if stat --version >/dev/null 2>&1; then
+    mode="$(stat -c '%a' "${output}")"
+  else
+    mode="$(stat -f '%Lp' "${output}")"
+  fi
   [ "${mode}" = 600 ] || { echo "network secret file must have mode 0600" >&2; exit 1; }
   echo "network secret file already exists; preserving it" >&2
   exit 0
