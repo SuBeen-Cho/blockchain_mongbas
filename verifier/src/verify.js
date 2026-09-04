@@ -129,6 +129,27 @@ function modPow(base, exponent, modulus) {
   return result;
 }
 
+// Fixed-window exponentiation for public verifier inputs under the pinned P.
+// JavaScript BigInt and this table lookup are variable-time; never reuse this
+// helper for trustee shares, encryption randomness, signing keys or other
+// secrets. The exported binary modPow remains the independent reference path.
+function publicModPowP(base, exponent) {
+  if (exponent < 0n) throw new Error('negative exponent');
+  const x = ((base % P) + P) % P;
+  if (exponent === 0n) return 1n;
+  const powers = new Array(16);
+  powers[0] = 1n;
+  powers[1] = x;
+  for (let index = 2; index < powers.length; index += 1) powers[index] = powers[index - 1] * x % P;
+  let result = 1n;
+  for (const digit of exponent.toString(16)) {
+    for (let square = 0; square < 4; square += 1) result = result * result % P;
+    const value = Number.parseInt(digit, 16);
+    if (value !== 0) result = result * powers[value] % P;
+  }
+  return result;
+}
+
 function modInverse(value, modulus) {
   let [oldR, r] = [((value % modulus) + modulus) % modulus, modulus];
   let [oldS, s] = [1n, 0n];
@@ -179,7 +200,7 @@ function parseHex(value, label, { scalar = false, subgroup = false } = {}) {
 }
 
 function candidateMessage(index) {
-  return modPow(G, HOMOMORPHIC_BASE ** BigInt(index), P);
+  return publicModPowP(G, HOMOMORPHIC_BASE ** BigInt(index));
 }
 
 function verifyBallotProof(publicKeyY, ballot, candidates) {
@@ -203,8 +224,8 @@ function verifyBallotProof(publicKeyY, ballot, candidates) {
     const z = parseHex(proof.zs[index], `zs[${index}]`, { scalar: true });
     const messageInverse = modInverse(candidateMessage(index), P);
     const c2DivMessage = (c2 * messageInverse) % P;
-    if (modPow(G, z, P) !== (a1 * modPow(c1, e, P)) % P) throw new Error(`ballot proof equation 1 failed at candidate ${index}`);
-    if (modPow(publicKeyY, z, P) !== (a2 * modPow(c2DivMessage, e, P)) % P) throw new Error(`ballot proof equation 2 failed at candidate ${index}`);
+    if (publicModPowP(G, z) !== (a1 * publicModPowP(c1, e)) % P) throw new Error(`ballot proof equation 1 failed at candidate ${index}`);
+    if (publicModPowP(publicKeyY, z) !== (a2 * publicModPowP(c2DivMessage, e)) % P) throw new Error(`ballot proof equation 2 failed at candidate ${index}`);
     challengeSum = (challengeSum + e) % Q;
     commitments.push(a1.toString(16), a2.toString(16));
   }
@@ -235,7 +256,7 @@ function verifyDecryptionProof(publicKeyY, aggregate, results, candidates, proof
   const sum = encodedTally(results, candidates);
   const expectedHash = sha256Hex(`homomorphic_sum:${sum}`);
   if (proof.decryptedHash !== expectedHash) throw new Error('tally plaintext hash mismatch');
-  const m = modPow(G, sum, P);
+  const m = publicModPowP(G, sum);
   const c1 = parseHex(proof.c1, 'tallyProof.c1', { subgroup: true });
   const c2 = parseHex(proof.c2, 'tallyProof.c2', { subgroup: true });
   const a1 = parseHex(proof.a1, 'tallyProof.a1', { subgroup: true });
@@ -248,8 +269,8 @@ function verifyDecryptionProof(publicKeyY, aggregate, results, candidates, proof
   const challengeText = [G, publicKeyY, c1, sharedSecret, a1, a2].map((value) => value.toString(16)).join('|');
   const expectedChallenge = BigInt(`0x${sha256Hex(challengeText)}`) % Q;
   if (e !== expectedChallenge) throw new Error('tally Fiat-Shamir challenge mismatch');
-  if (modPow(G, z, P) !== (a1 * modPow(publicKeyY, e, P)) % P) throw new Error('tally proof equation 1 failed');
-  if (modPow(c1, z, P) !== (a2 * modPow(sharedSecret, e, P)) % P) throw new Error('tally proof equation 2 failed');
+  if (publicModPowP(G, z) !== (a1 * publicModPowP(publicKeyY, e)) % P) throw new Error('tally proof equation 1 failed');
+  if (publicModPowP(c1, z) !== (a2 * publicModPowP(sharedSecret, e)) % P) throw new Error('tally proof equation 2 failed');
 }
 
 function lagrangeCoefficientAtZero(index, indexes) {
@@ -271,7 +292,7 @@ function combineThresholdValues(values) {
   const indexes = [...values.keys()].sort((a, b) => a - b);
   if (indexes.length < 2 || new Set(indexes).size !== indexes.length) throw new Error('fewer than two unique trustee values');
   let combined = 1n;
-  for (const index of indexes) combined = (combined * modPow(values.get(index), lagrangeCoefficientAtZero(index, indexes), P)) % P;
+  for (const index of indexes) combined = (combined * publicModPowP(values.get(index), lagrangeCoefficientAtZero(index, indexes))) % P;
   return combined;
 }
 
@@ -317,8 +338,8 @@ function verifyThresholdDecryptions(publicKeyY, aggregate, results, candidates, 
     const c1 = parseHex(aggregate.c1, 'aggregate.c1', { subgroup: true });
     const challengeText = [G, y, c1, value, a1, a2].map((item) => item.toString(16)).join('|');
     if (e !== BigInt(`0x${sha256Hex(challengeText)}`) % Q) throw new Error(`partial ${partial.index} Fiat-Shamir challenge mismatch`);
-    if (modPow(G, z, P) !== (a1 * modPow(y, e, P)) % P) throw new Error(`partial ${partial.index} proof equation 1 failed`);
-    if (modPow(c1, z, P) !== (a2 * modPow(value, e, P)) % P) throw new Error(`partial ${partial.index} proof equation 2 failed`);
+    if (publicModPowP(G, z) !== (a1 * publicModPowP(y, e)) % P) throw new Error(`partial ${partial.index} proof equation 1 failed`);
+    if (publicModPowP(c1, z) !== (a2 * publicModPowP(value, e)) % P) throw new Error(`partial ${partial.index} proof equation 2 failed`);
     values.set(partial.index, value);
     publicValues.set(partial.index, y);
   }
@@ -328,7 +349,7 @@ function verifyThresholdDecryptions(publicKeyY, aggregate, results, candidates, 
   const inverse = modInverse(combined, P);
   if (inverse === null) throw new Error('combined partial has no inverse');
   const actualMessage = (c2 * inverse) % P;
-  const expectedMessage = modPow(G, encodedTally(results, candidates), P);
+  const expectedMessage = publicModPowP(G, encodedTally(results, candidates));
   if (actualMessage !== expectedMessage) throw new Error('threshold-decrypted tally does not match results');
 }
 
@@ -355,7 +376,7 @@ function verifyVectorBallotProof(publicKeyY, ballot, candidateCount) {
       const e = parseHex(proof.es[branch], `bit[${index}].e[${branch}]`, { scalar: true });
       const z = parseHex(proof.zs[branch], `bit[${index}].z[${branch}]`, { scalar: true });
       const adjusted = (c2 * VECTOR_MESSAGE_INVERSES[branch]) % P;
-      if (modPow(G, z, P) !== (a1 * modPow(c1, e, P)) % P || modPow(publicKeyY, z, P) !== (a2 * modPow(adjusted, e, P)) % P) throw new Error(`bit proof ${index}/${branch} equation failed`);
+      if (publicModPowP(G, z) !== (a1 * publicModPowP(c1, e)) % P || publicModPowP(publicKeyY, z) !== (a2 * publicModPowP(adjusted, e)) % P) throw new Error(`bit proof ${index}/${branch} equation failed`);
       sum = (sum + e) % Q;
       transcript += `|${messages[branch].toString(16)}|${a1.toString(16)}|${a2.toString(16)}`;
     }
@@ -368,8 +389,8 @@ function verifyVectorBallotProof(publicKeyY, ballot, candidateCount) {
   const a1 = parseHex(proof?.a1, 'sumProof.a1', { subgroup: true }), a2 = parseHex(proof?.a2, 'sumProof.a2', { subgroup: true });
   const e = parseHex(proof?.e, 'sumProof.e', { scalar: true }), z = parseHex(proof?.z, 'sumProof.z', { scalar: true });
   const transcript = `mongbas/vector-v3/sum|${G.toString(16)}|${publicKeyY.toString(16)}|${productC1.toString(16)}|${result2.toString(16)}|${a1.toString(16)}|${a2.toString(16)}`;
-  if (e !== BigInt(`0x${sha256Hex(transcript)}`) % Q || modPow(G, z, P) !== (a1 * modPow(productC1, e, P)) % P ||
-      modPow(publicKeyY, z, P) !== (a2 * modPow(result2, e, P)) % P) throw new Error('one-hot sum proof failed');
+  if (e !== BigInt(`0x${sha256Hex(transcript)}`) % Q || publicModPowP(G, z) !== (a1 * publicModPowP(productC1, e)) % P ||
+      publicModPowP(publicKeyY, z) !== (a2 * publicModPowP(result2, e)) % P) throw new Error('one-hot sum proof failed');
 }
 
 function verifyVectorThresholdDecryptions(publicKeyY, aggregates, results, candidates, publicShares, partials) {
@@ -390,7 +411,7 @@ function verifyVectorThresholdDecryptions(publicKeyY, aggregates, results, candi
       const a1 = parseHex(proof.a1, 'partial.a1', { subgroup: true }), a2 = parseHex(proof.a2, 'partial.a2', { subgroup: true });
       const e = parseHex(proof.e, 'partial.e', { scalar: true }), z = parseHex(proof.z, 'partial.z', { scalar: true });
       const transcript = [G, y, c1, value, a1, a2].map((item) => item.toString(16)).join('|');
-      if (e !== BigInt(`0x${sha256Hex(transcript)}`) % Q || modPow(G, z, P) !== (a1 * modPow(y, e, P)) % P || modPow(c1, z, P) !== (a2 * modPow(value, e, P)) % P) throw new Error(`partial ${partial.index}/${candidateIndex} proof failed`);
+      if (e !== BigInt(`0x${sha256Hex(transcript)}`) % Q || publicModPowP(G, z) !== (a1 * publicModPowP(y, e)) % P || publicModPowP(c1, z) !== (a2 * publicModPowP(value, e)) % P) throw new Error(`partial ${partial.index}/${candidateIndex} proof failed`);
       values[candidateIndex].set(partial.index, value);
     });
     publicValues.set(partial.index, y);
@@ -400,7 +421,7 @@ function verifyVectorThresholdDecryptions(publicKeyY, aggregates, results, candi
     const combined = combineThresholdValues(values[index]);
     const c2 = parseHex(aggregates[index].c2, `aggregate[${index}].c2`, { subgroup: true });
     const count = results[candidate];
-    if (!Number.isSafeInteger(count) || count < 0 || (c2 * modInverse(combined, P)) % P !== modPow(G, BigInt(count), P)) throw new Error(`candidate ${candidate} decrypted result mismatch`);
+    if (!Number.isSafeInteger(count) || count < 0 || (c2 * modInverse(combined, P)) % P !== publicModPowP(G, BigInt(count))) throw new Error(`candidate ${candidate} decrypted result mismatch`);
   });
 }
 
@@ -537,9 +558,9 @@ function verifyVectorAuditTrail(bundle, y) {
       if (typeof randomnessHex !== 'string' || !/^[0-9a-f]+$/.test(randomnessHex) || (randomnessHex.length > 1 && randomnessHex.startsWith('0'))) throw new Error(`disclosure ${index} randomness encoding`);
       const randomness = BigInt(`0x${randomnessHex}`);
       if (randomness <= 0n || randomness >= Q) throw new Error(`disclosure ${index} randomness range`);
-      const expectedC1 = modPow(G, randomness, P).toString(16);
+      const expectedC1 = publicModPowP(G, randomness).toString(16);
       const message = candidateIndex === disclosure.selectedIndex ? G : 1n;
-      const expectedC2 = (modPow(y, randomness, P) * message % P).toString(16);
+      const expectedC2 = (publicModPowP(y, randomness) * message % P).toString(16);
       if (ciphertext.c1 !== expectedC1 || ciphertext.c2 !== expectedC2) throw new Error(`disclosure ${index} witness mismatch`);
     });
   }
@@ -599,7 +620,7 @@ function verifyDKGKeyCeremony(bundle) {
     requireExactKeys(published, ['schema', 'ceremonyID', 'trusteeID', 'trusteeIndex', 'publicKeyY'], `DKG public share[${index}]`);
     if (published.schema !== 'mongbas-dkg-public-share/v1' || published.ceremonyID !== transcript.ceremonyID || published.trusteeID !== expectedMSPs[index - 1]) throw new Error(`DKG public share ${index} binding invalid`);
     let expected = 1n;
-    for (const id of expectedMSPs) expected = expected * commitments.get(id).constant % P * modPow(commitments.get(id).linear, BigInt(index), P) % P;
+    for (const id of expectedMSPs) expected = expected * commitments.get(id).constant % P * publicModPowP(commitments.get(id).linear, BigInt(index)) % P;
     const actual = parseHex(published.publicKeyY, `DKG public share ${index}`, { subgroup: true });
     if (actual !== expected) throw new Error(`DKG public share ${index} commitment equation failed`);
     const bundled = bundle.trusteePublicShares.find(entry => entry.index === index);
@@ -766,7 +787,7 @@ module.exports = {
   P,
   P_HEX,
   Q,
-  testInternals: Object.freeze({ jacobiSymbol, parseHex }),
+  testInternals: Object.freeze({ jacobiSymbol, parseHex, publicModPowP }),
   canonicalize,
   merkleRoot,
   modInverse,

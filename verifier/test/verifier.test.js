@@ -125,6 +125,33 @@ test('hex parsing bounds group elements and scalars before BigInt construction',
   );
 });
 
+test('fixed-window public exponentiation preserves binary boundary behavior under P', () => {
+  const bases = [-P - 1n, -P, -1n, 0n, 1n, 2n, P - 1n, P, P + 1n, 2n * P + 1n];
+  const exponents = [0n, 1n, 2n, 3n, 15n, 16n, 17n, 255n, 256n, 257n, Q - 1n];
+  for (const base of bases) {
+    for (const exponent of exponents) {
+      assert.equal(testInternals.publicModPowP(base, exponent), modPow(base, exponent, P), `${base}^${exponent}`);
+    }
+  }
+  assert.throws(() => testInternals.publicModPowP(2n, -1n), /negative exponent/);
+});
+
+test('fixed-window public exponentiation matches the retained binary oracle on deterministic full-width inputs', () => {
+  const specialExponents = [
+    BigInt(`0x${'1'.padEnd(P_HEX.length, '0')}`) % Q,
+    BigInt(`0x${'f'.repeat(P_HEX.length)}`) % Q,
+    BigInt(`0x${'a'.repeat(P_HEX.length)}`) % Q,
+    BigInt(`0x${'5'.repeat(P_HEX.length)}`) % Q,
+  ];
+  for (let index = 0; index < 128; index += 1) {
+    const base = BigInt(`0x${Array.from({ length: 8 }, (_, part) => sha256Hex(`window-base:${index}:${part}`)).join('')}`) % (4n * P) - 2n * P;
+    const exponent = BigInt(`0x${Array.from({ length: 8 }, (_, part) => sha256Hex(`window-exp:${index}:${part}`)).join('')}`) % Q;
+    for (const candidate of [exponent, specialExponents[index % specialExponents.length]]) {
+      assert.equal(testInternals.publicModPowP(base, candidate), modPow(base, candidate, P), `vector ${index}`);
+    }
+  }
+});
+
 test('canonical input bundle hashes equal direct canonical hashes across supported schemas', () => {
   for (const bundle of [buildBundle(), buildVectorBundle(), buildVectorBundle({ dkg: true })]) {
     const canonical = canonicalize(bundle);
