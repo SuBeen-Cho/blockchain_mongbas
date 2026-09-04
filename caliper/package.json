@@ -1,7 +1,7 @@
 {
   "name": "mongbas-caliper",
   "version": "1.0.0",
-  "description": "Hyperledger Caliper 성능 평가 — 팀 몽바스 다조직 합의 익명 전자투표",
+  "description": "Hyperledger Caliper 성능 평가 — 팀 몽바스 다조직 합의 기반 암호화·검증형 전자투표",
   "scripts": {
     "caliper": "caliper launch manager",
     "bench:vote": "caliper launch manager --caliper-workspace . --caliper-networkconfig networks/fabric-network.yaml --caliper-benchconfig benchmarks/cast-vote.yaml --caliper-flow-only-test",

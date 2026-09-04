@@ -51,6 +51,13 @@ test('public showcase and credential labels do not claim unverified equivalence'
   const psPrototype = read('application/src/lib/ps-idemix.js');
   const bbsPrototype = read('application/src/lib/bbs-idemix.js');
   const packageManifest = read('application/package.json');
+  const environmentExample = read('application/.env.example');
+  const caliperManifest = read('caliper/package.json');
+  const caliperBenchmarks = [
+    read('caliper/benchmarks/cast-vote.yaml'),
+    read('caliper/benchmarks/get-election.yaml'),
+    read('caliper/benchmarks/worker-scale.yaml'),
+  ];
 
   assert.doesNotMatch(showcase, /7\/7 보안 속성/);
   assert.doesNotMatch(showcase, /7<b>\/7<\/b>|7\/7[^\n]{0,80}전부 충족|학술 보안속성 전부 충족/);
@@ -66,6 +73,9 @@ test('public showcase and credential labels do not claim unverified equivalence'
   assert.match(bbsPrototype, /nullifierMaterial/);
   assert.doesNotMatch(bbsPrototype, /비연결성 보장|선택적 공개: voterEligible만 공개/);
   assert.doesNotMatch(packageManifest, /익명 전자투표/);
+  assert.doesNotMatch(environmentExample, /익명 전자투표/);
+  assert.doesNotMatch(caliperManifest, /익명 전자투표/);
+  for (const benchmark of caliperBenchmarks) assert.doesNotMatch(benchmark, /익명 전자투표/);
 });
 
 test('legacy security scenario does not mislabel missing-election rejection as endorsement evidence', () => {
