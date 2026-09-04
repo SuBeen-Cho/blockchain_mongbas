@@ -52,15 +52,15 @@ Linux에서는 실제 secret과 실행 결과를 저장소 밖(예: `~/mongbas-r
 
 ```bash
 cd mongbas
-./scripts/demo-up.sh        # ① 네트워크 확인(없으면 up+deploy) ② 빌드 ③ 백엔드 ④ 공개터널
-./scripts/demo-status.sh    # 현재 공개 주소 / 상태 확인 (언제든)
-./scripts/demo-stop.sh      # 백엔드·터널 중지 (블록체인은 유지)
-./scripts/demo-rebuild.sh   # 화면 코드만 바꿨을 때: 빌드만 (터널 주소 유지)
+./scripts/demo-up.sh        # ① 네트워크 확인(없으면 up+deploy) ② 빌드 ③ loopback 백엔드
+./scripts/demo-status.sh    # 로컬 서비스 / 상태 확인 (언제든)
+./scripts/demo-stop.sh      # 소유권이 확인된 백엔드 중지 (블록체인은 유지)
+./scripts/demo-rebuild.sh   # 화면 코드만 바꿨을 때: build만 갱신
 ```
 
 - `demo-up.sh` 실행 후 **터미널을 닫아도 계속 동작**(nohup). 노트북만 켜져 있으면 됨.
-- 출력된 `https://*.trycloudflare.com/` 주소 = **투표현황 대시보드**.
-- 터널은 `--protocol http2`(TCP)로 동작 → QUIC/UDP 막는 와이파이에서도 OK.
+- 원격 휴대폰 실증은 QR 보안 프로필을 적용한 Linux loopback backend를 **tailnet-only Tailscale Serve HTTPS**로 전달한다.
+- Tailscale Serve 계정 활성화와 휴대폰 tailnet 가입이 필요하다. Funnel·Quick Tunnel·일반 인터넷 공개는 별도 승인 없이 사용하지 않는다.
 
 ### 화면 진입 (URL)
 | 경로 | 화면 |
@@ -124,7 +124,7 @@ cd mongbas/network
 ## 5. 트러블슈팅
 | 증상 | 대응 |
 |---|---|
-| 공개 주소 안 열림 | 와이파이가 바뀌면 터널이 끊김 → `./scripts/demo-up.sh` 재실행(http2). `demo-status.sh`로 새 주소 확인 |
-| 폰이 QR 못 엶 | 대시보드를 **터널 주소로** 열었는지 확인(로컬호스트면 폰이 접근 불가) |
+| tailnet HTTPS 주소 안 열림 | `tailscale status`와 `tailscale serve status`를 확인하고, Serve 계정 활성화가 안 됐으면 사용자 조작 후 재확인 |
+| 폰이 QR 못 엶 | 휴대폰이 같은 tailnet인지, 대시보드가 Serve HTTPS origin인지, QR admission이 만료되지 않았는지 확인 |
 | 개표 시 MVCC 충돌 | 자동 재시도됨. 안 되면 [개표] 다시 |
 | 전부 꼬임 | 복구 증거 보존 후 초기화를 승인했다면 `./scripts/demo-reset.sh --confirm-destroy-demo-ledger` → `./scripts/demo-up.sh` |

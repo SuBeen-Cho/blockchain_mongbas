@@ -15,22 +15,22 @@ cd mongbas
 - 네트워크가 안 떠 있으면 자동으로 `up + deploy`(수 분). 이미 떠 있으면 건너뜀.
 - `./scripts/demo-reset.sh --confirm-destroy-demo-ledger`는 모든 데모 데이터와 생성 암호 자료를 삭제하므로 필요한 기록을 보존하고 명시적으로 초기화를 승인한 때만 사용한다.
 
-폰 접속용 공개 URL(다른 터미널):
+폰 접속용 tailnet-only HTTPS(계정 Serve 활성화 후):
 ```bash
-./scripts/demo-tunnel.sh       # cloudflared 무료 터널 → https://*.trycloudflare.com
+tailscale serve --bg http://127.0.0.1:3000
 ```
-> 공개 Quick Tunnel은 사용자 승인을 받은 일시 시험에만 사용한다. 발표/장기 운영은 named tunnel, vote/admin 경로 분리와 관리자 인증을 적용한다. cloudflared 미설치: `brew install cloudflared`.
-> 공개 터널에서도 rate limit을 끄지 않는다. `live-count`, `live-votes`, `demo-events`는 관제판이 전송하는 관리자 bearer token이 있어야 조회된다. 관제판도 터널 URL로 열어야 QR에 해당 HTTPS origin이 들어간다.
+> 이 명령은 tailnet 내부 Serve만 구성한다. Funnel, `demo-tunnel.sh`와 일반 인터넷 공개는 별도 승인이 없으면 사용하지 않는다.
+> private Serve에서도 rate limit을 끄지 않는다. `live-count`, `live-votes`, `demo-events`는 관제판이 전송하는 관리자 bearer token이 있어야 조회된다. 관제판도 Serve HTTPS URL로 열어야 QR에 해당 origin이 들어간다.
 >
 > QR 시연 프로필에서는 `REQUIRE_DEMO_ADMISSION=true`를 반드시 사용한다. 관제판이 관리자 인증으로 120초짜리 일회용 admission을 발급하고, 폰은 URL fragment의 토큰을 즉시 지운 뒤 한 번만 교환한다. 이 admission은 실제 유권자 자격 증명이 아니며 eligibility 또는 ballot-stuffing 저항의 증거가 아니다. 승인된 단기 시험 외에는 인터넷 공개 터널로 노출하지 않는다.
 
 화면 3개:
-- **관제판(노트북)**: `http://localhost:3000/?app=control` (또는 터널 URL + `/?app=control`)
+- **관제판(노트북)**: `http://localhost:3000/?app=control` (원격 실증 시 Serve HTTPS URL + `/?app=control`)
 - **내 표 추적(노트북)**: `http://localhost:3000/?app=track`
 - **폰 키오스크**: 관제판이 띄우는 단기 QR (`/?app=kiosk&e=<선거ID>#a=<일회용 토큰>`)
 
 **전시용 쇼케이스(서브 컴퓨터)**: `https://mongbas-blockchain.netlify.app/` (Netlify 배포)
-- 또는 로컬/터널에서 `http://localhost:3000/showcase3.html` (`https://<tunnel>/showcase3.html`).
+- 또는 로컬/Serve에서 `http://localhost:3000/showcase3.html` (`https://<tailnet-host>/showcase3.html`).
 - 소스: `frontend/public/showcase3.html` (구 showcase.html/showcase2.html 시안은 제거됨).
 - 일반인/부스 참여자용 전시 페이지. 인터넷 연결 필요(폰트·애니메이션 CDN, QR·Firebase 동기화).
 - **QR 갱신**: 대시보드 [새 세션] 시 서버에서 일회용 admission을 발급해 로컬 화면의 QR을 갱신한다. 원시 토큰은 Firebase나 다른 외부 relay로 전송하지 않는다.
@@ -78,7 +78,7 @@ cd mongbas
 
 | 증상 | 대응 |
 |---|---|
-| 폰이 페이지 못 엶 | 터널 URL 확인. 끊겼으면 `demo-tunnel.sh` 재실행(URL 바뀜 → QR 갱신). LAN 백업 전환. |
+| 폰이 페이지 못 엶 | 휴대폰 tailnet 연결, Serve HTTPS URL, 인증서와 QR 만료를 확인한다. 공개 tunnel이나 LAN HTTP로 자동 전환하지 않는다. |
 | 투표가 거부됨(자격증명) | 백엔드를 `.env` 로드해 띄웠는지 확인(`demo-start.sh` 사용). bypass 모드면 체인코드가 거부. |
 | 결과가 안 열림 | 관제판이 조각 2개를 자동 제출함. 로그 확인. 안 되면 [집계 종료] 다시. |
 | 전부 꼬임 | 복구 증거 보존·초기화 승인 후 `./scripts/demo-reset.sh --confirm-destroy-demo-ledger`, 그런 다음 `demo-start.sh`. |

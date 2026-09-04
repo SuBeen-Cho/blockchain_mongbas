@@ -91,6 +91,7 @@ test('public showcase and credential labels do not claim unverified equivalence'
   assert.doesNotMatch(chaincode, /평문 후보자를 절대 보지 않|강압자가 구분 불가능|서버는 어느 모드인지 알 수 없음/);
   assert.doesNotMatch(voterPage, /label:\s*['"]익명 투표['"]/);
   assert.doesNotMatch(boothDesign, /운영자도 못 본다|익명성 \/ \*\*Ballot Secrecy\*\*|Ballot Secrecy \/ 익명성|변조 불가능하게 기록|조작이 불가능|100% 사실이 되고 위험 0|아무도 못 건드/);
+  assert.doesNotMatch(boothDesign, /cloudflared tunnel|ngrok 터널|앞 6자리|6 hex면 충분|Receipt-free\(included만 반환\) \| ✅ 사실/);
   assert.doesNotMatch(frontendIndex, /Anonymous E-Voting/);
   assert.doesNotMatch(setupGuide, /curl[\s\S]{0,200}\|\s*(?:bash|sh)/);
   assert.doesNotMatch(viteConfig, /allowedHosts:\s*true|host:\s*true/);

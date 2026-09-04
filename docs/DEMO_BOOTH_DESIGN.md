@@ -46,7 +46,7 @@
 ```
    [관객 폰들] --QR스캔--> 폰용 /kiosk (투표만)
                                  │
-                                 ▼  (ngrok 터널 :3000)
+                                 ▼  (tailnet-only HTTPS → loopback :3000)
    [부스 노트북] ── 큰 화면 ──> /control (관제판) + 내 표 추적 검증화면
         └ 백엔드 Express(:3000) + 빌드된 프론트엔드 서빙 + Fabric 네트워크
 ```
@@ -61,11 +61,11 @@
 |---|---|---|---|
 | ① 맞이 | (발표자) 관제판 **[새 세션 시작]** → 깨끗한 선거 준비 + QR 갱신 | 관제판 | — |
 | ② 투표 | (방문자) 폰 QR 스캔 → 후보 선택 → **투표** | /kiosk | **암호화 투표** (공개 원장에는 선택 평문을 기록하지 않음; 전체 익명성은 별도 미검증) |
-| | → 폰에 **큰 영수증**: `추적번호 7F3A-90` | /kiosk 완료 | Eligibility(접속 시 자격증명 자동 발급) |
+| | → 폰에 **큰 영수증**: `추적번호 7F3A-90BC-1234` | /kiosk 완료 | 일회용 admission 경로(eligibility 증거 아님) |
 | | → 큰 화면 라이브 카운터 1,2,3… 올라감 | 관제판 | — |
 | ③ 종료 | (발표자) **[집계 종료 & 결과]** | 관제판 | **Fairness** (종료 전 중간집계 불가) |
 | | → 후보별 막대그래프 결과 표시 | 관제판 | — |
-| ④ **내 표 검증** ★ | (발표자) 방문자 영수번호 `7F3A-90` 입력 | 내 표 추적 | |
+| ④ **내 표 검증** ★ | (발표자) 방문자 영수번호 `7F3A-90BC-1234` 입력 | 내 표 추적 | |
 | | → 게시판 좌라락 흐르다 **내 줄에서 멈춰 노랗게 점등** | | **Recorded-as-Cast** |
 | | → Merkle 경로 위로 점등 → **봉인(root) 일치 ✓** | | (개별 검증성) |
 | | → "당신 표는 최종 N표 중 1표" 막대에 톡 쌓임 | | **Universal Verifiability** |
@@ -96,7 +96,7 @@
 | 프론트엔드 | 의존성 | `qrcode` (관제판 QR 생성) 추가 |
 | 백엔드 | 정적 서빙 | 빌드된 프론트엔드를 Express가 서빙 (`express.static`) |
 | 백엔드 | (선택) 엔드포인트 | 라이브 표 수 등 경량 추가 (§8) |
-| 인프라 | ngrok/cloudflared | :3000 터널 1개 → 공개 URL → QR |
+| 인프라 | Tailscale Serve | loopback :3000 → tailnet-only HTTPS → QR |
 
 ### 라우팅 방식 (react-router 미설치 → 가볍게)
 현재 `App.jsx`는 `tab` state로 페이지를 전환한다. URL 진입(QR)을 위해 **쿼리 파라미터를 감지**해
@@ -118,7 +118,7 @@ if (appMode === 'control') return <ControlPage />;
 
 ### 단일 오리진 권장
 빌드된 프론트엔드를 **백엔드(:3000)가 직접 서빙**하면 폰·API가 same-origin → CORS 불필요,
-**ngrok 터널 1개**로 끝. 개발 중에는 기존 Vite(:5173) + 프록시 그대로 사용.
+**tailnet-only HTTPS reverse proxy 1개**로 끝. 실제 원격 실증은 backend-served production build를 사용한다.
 
 ---
 
@@ -198,15 +198,15 @@ if (appMode === 'control') return <ControlPage />;
   │      ✅ 투표 완료       │
   │  내 추적번호           │
   │   ┌───────────┐       │
-  │   │  7F3A-90  │       │  ← 크게! (nullifier 앞 6자리)
+  │   │7F3A-90BC-1234│     │  ← 크게! (48-bit 표시 prefix)
   │   └───────────┘       │
   │  "이 번호를 기억하세요.  │
   │   검증할 때 씁니다"     │
   │   [QR]  (전체 nullifier)│
   └─────────────────────┘
   ```
-- **영수번호 설계**: 화면용 짧은 코드 = `nullifier` 앞 6 hex (`7F3A90` → `7F3A-90`).
-  검증 시 한 세션의 게시판에서 **이 prefix로 매칭**(세션당 표가 적어 prefix 유일).
+- **영수번호 설계**: 화면 표시 코드는 `nullifier` 앞 12 hex (`7F3A90BC1234` → `7F3A-90BC-1234`).
+  검증 시 게시판에서 prefix를 찾되, 둘 이상 일치하면 더 긴 값을 요구하고 단일 일치를 가정하지 않는다.
   전체 nullifier는 QR로도 제공(정확 매칭/스캔용).
 - **심화 토글**(작게): Benaloh 챌린지, 패닉 자격증명 → 관심자에게만.
 
@@ -267,11 +267,11 @@ if (appMode === 'control') return <ControlPage />;
 
 **기존 `VerifyPage` Merkle 모드를 "스토리텔링" 버전으로 개선** (또는 별도 컴포넌트).
 실제 검증형 투표(Selene)의 통찰 차용: *추적번호가 결과 속 내 표를 가리킨다.*
-데모는 실제 선거가 아니므로(본인이 방금 찍음) **평문 후보를 보여줘도 receipt-freeness에 모순 없음**
-— 이 경계는 §7 주석 참조.
+데모에서 평문 후보를 보여주는 화면은 학습용 UI일 뿐이며 **receipt-freeness 또는 coercion resistance와 양립한다는 증거가 아니다**.
+실제 증거 화면과 분리하고 이 경계는 §7 주석과 함께 표시한다.
 
 **4단계 애니메이션** (영수번호 하나로 전부 연결):
-1. **영수증 등장**: "당신의 추적번호 **7F3A-90**" — "이건 당신만 가진 번호입니다."
+1. **영수증 등장**: "당신의 추적번호 **7F3A-90BC-1234**" — 공개 게시판에서 포함 후보를 찾는 표시 prefix이며 비밀 자격증명이 아니다.
 2. **게시판에서 내 줄 찾기**: 전체 게시판이 흐르다 **내 줄에서 멈추고 노랗게 점등**
    + "↑ 바로 이 줄이 당신의 표". (게시판 = `GET /api/elections/:id/bulletin-board`)
 3. **Merkle 경로 점등**: 내 leaf → 형제 노드와 합쳐지며 **위로 한 칸씩 빛나 root 도달**
@@ -351,8 +351,8 @@ npm run build           # dist/ 생성
 cd ../application
 npm start    # :3000, dist/도 서빙
 
-# 4) 공개 터널 (QR용) — cloudflared 권장 (무료, 경고 페이지 없음)
-cloudflared tunnel --url http://localhost:3000
+# 4) tailnet-only HTTPS (QR용) — 계정 Serve 활성화 후에만
+tailscale serve --bg http://127.0.0.1:3000
 #   → https://xxxx.trycloudflare.com/?app=kiosk&e=... 를 QR로
 #   대안: ngrok http 3000 (무료는 첫 방문 경고 페이지 있음)
 #   백업: 같은 WiFi면 CORS_ORIGIN에 노트북 LAN IP 추가 후 http://192.168.x.x:3000
@@ -365,10 +365,10 @@ cloudflared tunnel --url http://localhost:3000
 | Fabric 네트워크 | peer/orderer/CA/CouchDB | ✅ 필요 | 부스 노트북 | 무료 |
 | 백엔드 Express(:3000) | Node.js API | ❌ | 부스 노트북 | 무료 |
 | 프론트엔드 | 정적(dist) | ❌ | 백엔드가 서빙 | 무료 |
-| 공개 노출 | cloudflared 터널 | ❌ | — | 무료 |
+| private HTTPS | Tailscale Serve | tailnet 구성 필요 | — | 계정 정책에 따름 |
 
 - **유료 클라우드 서버 불필요** — 전부 부스 노트북에서 구동. Docker는 *블록체인 네트워크에만*
-  필요(기존과 동일). 폰 접속은 cloudflared 무료 터널로 해결.
+  필요(기존과 동일). 폰은 승인된 tailnet의 Tailscale Serve 주소로만 접속한다.
 - **별도 DB 불필요**: 모든 상태(선거·표·집계·게시판·Merkle)는 **블록체인 원장(=상태 저장소)**
   에 저장된다. Fabric 내부적으로 **CouchDB 컨테이너**가 상태 DB로 이미 떠 있고(네트워크에 포함),
   이게 곧 DB 역할. 우리가 PostgreSQL/Mongo 같은 외부 DB를 따로 붙일 필요는 없다.
@@ -398,12 +398,12 @@ cloudflared tunnel --url http://localhost:3000
 
 | 리스크 | 대응 |
 |---|---|
-| 전시장 WiFi가 기기간 통신 차단 | cloudflared 터널 메인(셀룰러로도 접속). LAN은 백업. |
-| 터널 끊김/인터넷 불안정 | LAN IP QR로 즉시 전환할 수 있게 두 QR 모두 준비. |
+| 전시장 WiFi가 기기간 통신 차단 | 승인된 휴대폰을 같은 tailnet에 연결하고 Serve HTTPS를 사용한다. |
+| tailnet/인터넷 불안정 | 공개 fallback을 자동 사용하지 말고 실증을 중지한 뒤 네트워크·증거 상태를 확인한다. |
 | 폰이 한꺼번에 몰려 rate limit | limit을 끄지 말고 세션당 참여자를 분산하거나 승인된 유한 상한을 사전 설정한다. |
 | 투표가 너무 많아 한 선거가 비대 | 세션 갈아끼우기로 팀당 소규모 유지. |
 | 종료를 잘못 눌러 진행 중 선거 닫힘 | [종료] 버튼에 확인 모달 1단계. 닫혀도 [새 세션]으로 즉시 복구. |
-| 검증 prefix 충돌(드묾) | 세션당 표 적어 6 hex면 충분. 충돌 시 전체 nullifier(QR) 입력. |
+| 검증 prefix 충돌 | 12 hex 표시 prefix도 유일성을 가정하지 않으며, 둘 이상 일치하면 더 긴 값을 요구한다. |
 | 발표자 손이 부족 | 폰 투표는 방문자 셀프, 노트북만 1명이 운전. |
 
 ---
@@ -475,7 +475,7 @@ cloudflared tunnel --url http://localhost:3000
 | 재투표(last-vote-wins) 덮어쓰기 | ✅ 사실 | voting.go:1232-1246, 1404-1427 |
 | 패닉표 집계 제외 | ✅ 사실 | PDC 저장 1277-1288/1375, 필터 1652-1663 |
 | 강압: API body/timing oracle 보완 | ⚠️ 제한 범위 실측 통과 | `0e8f63c`, Linux sequence 12, 100 samples. PDC/backend/revote 공격은 미통과 |
-| Receipt-free(included만 반환) | ✅ 사실 | voting.go:2218-2223 (electionID 필드 추가될 뿐, 후보/증명 누출 없음) |
+| 응답에 후보 평문 미포함 | 제한된 API 관찰 | 이 응답 모양만으로 receipt-freeness 또는 강압 저항성을 증명하지 못함 |
 | Merkle 포함증명 + 변조탐지 | ✅ 사실 | voting.go:1923/2261/2307, crypto.js:67, VerifyPage:97-104 |
 | ZKP 집계검증(비밀키 없이) | ✅ 사실 | voting.go:2789/2827-2858, elections.js:124/573 |
 | **Shamir 2-of-3가 ElGamal 집계키 보호** | ❌ **거짓** | ElGamal 개인키 PDC 직접 보관, 임계분할 안 됨 voting.go:959-963/3809-3819/1620 |
@@ -503,7 +503,7 @@ cloudflared tunnel --url http://localhost:3000
   `App.jsx`에 `?app=kiosk|control` 쿼리 감지, `qrcode` 의존성 추가.
 - **기본 ElGamal**: `/control`의 [새 세션]이 항상 `encryptionMode:'elgamal'` 전송.
 - **"내 줄 하이라이트" UI**: 게시판 데이터에 `nullifierHash` 이미 존재 → VerifyPage에
-  목록 렌더 + 영수번호(6 hex prefix) 매칭 하이라이트 추가.
+  목록 렌더 + 영수번호(기본 12 hex prefix, 충돌 시 연장) 매칭 하이라이트 추가.
 - **seed-votes**: 신규 엔드포인트가 데모 자격증명 발급→ElGamal 암호화+ZKP→CastVote
   (e2e 로직 재사용). 공개 터널에서는 rate limit을 유지하므로 대량 주입은 별도 loopback 평가 profile에서만 수행한다.
 - **불투명 API 데모 전제**: 현재 브라우저는 256-bit verification receipt에서 `normalLookupToken`/`panicLookupToken`을 파생한다. 과거 `normalPWHash`/`panicPWHash` 경로는 사용하지 않는다.
