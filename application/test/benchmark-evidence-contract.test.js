@@ -99,6 +99,16 @@ test('Linux evidence summarizers refuse to overwrite an existing result', () => 
   }
 });
 
+test('application regression wrapper pins a clean commit and inventories terminal evidence', () => {
+  const source = fs.readFileSync(path.join(__dirname, '../../deploy/linux/application-regression-evidence.sh'), 'utf8');
+  assert.match(source, /status --porcelain=v1/);
+  assert.match(source, /\/usr\/bin\/time/);
+  assert.match(source, /npm test/);
+  assert.match(source, /test\.exit-status\.txt/);
+  assert.match(source, /sha256-inventory\.txt/);
+  assert.match(source, /mv "\$\{stage_dir\}" "\$\{final_dir\}"/);
+});
+
 test('benchmark exact-success gate rejects empty, partial and failed evidence', () => {
   assert.doesNotThrow(() => requireExactSuccess('issuance', 50, 50, 0));
   assert.throws(() => requireExactSuccess('issuance', 50, 49, 1), /incomplete evidence/);
