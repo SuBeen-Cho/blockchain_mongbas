@@ -55,3 +55,9 @@ test('Linux coercion runner disables inherited admission enforcement for its non
   const runner = fs.readFileSync(path.join(__dirname, '../../deploy/linux/coercion-evaluation.sh'), 'utf8');
   assert.match(runner, /REQUIRE_DEMO_ADMISSION=false/);
 });
+
+test('coercion transcript requests have a bounded timeout', () => {
+  const evaluator = fs.readFileSync(path.join(__dirname, '../scripts/coercion-transcript-evaluation.js'), 'utf8');
+  assert.match(evaluator, /COERCION_REQUEST_TIMEOUT_MS/);
+  assert.match(evaluator, /AbortSignal\.timeout\(REQUEST_TIMEOUT_MS\)/);
+});

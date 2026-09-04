@@ -18,16 +18,22 @@ const OUTPUT_DIR = process.env.COERCION_OUTPUT_DIR || '';
 const SAMPLES_PER_CLASS = Number(process.env.COERCION_SAMPLES_PER_CLASS || 500);
 const TIMING_EQUIVALENCE_MARGIN_MS = Number(process.env.COERCION_TIMING_EQUIVALENCE_MARGIN_MS || 10);
 const CLASSIFIER_ACCURACY_UPPER_LIMIT = Number(process.env.COERCION_CLASSIFIER_ACCURACY_UPPER_LIMIT || 0.60);
+const REQUEST_TIMEOUT_MS = Number(process.env.COERCION_REQUEST_TIMEOUT_MS || 60000);
 const CANDIDATES = ['ALPHA', 'BETA'];
 
 function sha256Hex(value) { return crypto.createHash('sha256').update(value).digest('hex'); }
 
 async function requestJson(route, options = {}) {
   const started = process.hrtime.bigint();
-  const response = await fetch(`${BASE_URL}${route}`, { ...options, headers: {
-    'content-type': 'application/json', ...(ADMIN_API_TOKEN ? { authorization: `Bearer ${ADMIN_API_TOKEN}` } : {}),
-    ...(options.headers || {}),
-  } });
+  let response;
+  try {
+    response = await fetch(`${BASE_URL}${route}`, { ...options, signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS), headers: {
+      'content-type': 'application/json', ...(ADMIN_API_TOKEN ? { authorization: `Bearer ${ADMIN_API_TOKEN}` } : {}),
+      ...(options.headers || {}),
+    } });
+  } catch (error) {
+    throw new Error(`request ${route} did not complete within ${REQUEST_TIMEOUT_MS}ms`, { cause: error });
+  }
   const bytes = Buffer.from(await response.arrayBuffer());
   const elapsedMs = Number(process.hrtime.bigint() - started) / 1e6;
   let body;
@@ -71,6 +77,9 @@ async function main() {
   }
   if (!Number.isFinite(CLASSIFIER_ACCURACY_UPPER_LIMIT) || CLASSIFIER_ACCURACY_UPPER_LIMIT < 0.50 || CLASSIFIER_ACCURACY_UPPER_LIMIT > 0.60) {
     throw new Error('COERCION_CLASSIFIER_ACCURACY_UPPER_LIMIT must be from 0.50 to 0.60');
+  }
+  if (!Number.isInteger(REQUEST_TIMEOUT_MS) || REQUEST_TIMEOUT_MS < 5000 || REQUEST_TIMEOUT_MS > 120000) {
+    throw new Error('COERCION_REQUEST_TIMEOUT_MS must be an integer from 5000 to 120000');
   }
   fs.mkdirSync(OUTPUT_DIR, { recursive: true, mode: 0o700 });
   const electionID = `coercion-eval-${Date.now()}`;
