@@ -16,7 +16,7 @@ log() { echo "[$(date +%H:%M:%S)] $*"; }
 
 start_server() {
   local mode="$1"; shift
-  local env_vars="$*"
+  local -a env_vars=("$@")
   local expected_health_mode expected_health_impl
   case "${mode}" in
     HMAC) expected_health_mode=idemix-hmac; expected_health_impl=HMAC-SHA256 ;;
@@ -25,7 +25,8 @@ start_server() {
     *) echo "unknown mode: ${mode}" >&2; exit 1 ;;
   esac
   log "server start: ${mode}"
-  eval "env DISABLE_RATE_LIMITS=true SESSION_SECRET=bench-session-secret CREDENTIAL_SECRET=bench-credential-secret $env_vars node src/app.js > /tmp/mongbas-saturation-server.log 2>&1 &"
+  env DISABLE_RATE_LIMITS=true SESSION_SECRET=bench-session-secret CREDENTIAL_SECRET=bench-credential-secret \
+    "${env_vars[@]}" node src/app.js > /tmp/mongbas-saturation-server.log 2>&1 &
   SERVER_PID=$!
   for _ in $(seq 1 60); do
     if curl --fail --silent --show-error http://localhost:3000/health | \
@@ -54,14 +55,14 @@ stop_server() {
 
 run_mode() {
   local label="$1"
-  local env_vars=""
+  local -a env_vars=()
   case "$label" in
-    HMAC) env_vars="IDEMIX_ENABLED=true ASYM_CRED_ENABLED=false IDEMIX_CACHE_ENABLED=false" ;;
-    B-PS-BN254) env_vars="IDEMIX_ENABLED=true IDEMIX_IMPL=ps IDEMIX_CACHE_ENABLED=false" ;;
-    C-BBS) env_vars="IDEMIX_ENABLED=true IDEMIX_IMPL=bbs IDEMIX_CACHE_ENABLED=false" ;;
+    HMAC) env_vars=(IDEMIX_ENABLED=true ASYM_CRED_ENABLED=false IDEMIX_CACHE_ENABLED=false) ;;
+    B-PS-BN254) env_vars=(IDEMIX_ENABLED=true IDEMIX_IMPL=ps IDEMIX_CACHE_ENABLED=false) ;;
+    C-BBS) env_vars=(IDEMIX_ENABLED=true IDEMIX_IMPL=bbs IDEMIX_CACHE_ENABLED=false) ;;
     *) echo "unknown mode: $label"; exit 1 ;;
   esac
-  start_server "$label" "$env_vars"
+  start_server "$label" "${env_vars[@]}"
   node benchmark/e2e-concurrency-auth-bench.js \
     --conc "$CONCURRENCIES" \
     --stopFailRate "$STOP_FAIL_RATE" \

@@ -77,6 +77,7 @@ test('older E2E benchmark launchers fail closed when TCP 3000 has an unknown own
     const source = fs.readFileSync(path.join(__dirname, '..', 'benchmark', name), 'utf8');
     assert.match(source, /lsof -ti:3000/);
     assert.match(source, /already in use/);
+    assert.doesNotMatch(source, /\beval\b/);
     assert.doesNotMatch(source, /xargs\s+kill|kill\s+-9/);
   }
 });

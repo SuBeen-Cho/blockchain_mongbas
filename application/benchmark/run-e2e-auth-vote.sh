@@ -15,7 +15,7 @@ log() { echo "[$(date +%H:%M:%S)] $*"; }
 
 start_server() {
   local mode="$1"; shift
-  local env_vars="$*"
+  local -a env_vars=("$@")
   local expected_health_mode expected_health_impl
   case "${mode}" in
     A-bypass) expected_health_mode=bypass; expected_health_impl=HMAC-SHA256 ;;
@@ -26,7 +26,8 @@ start_server() {
     *) echo "unknown mode: ${mode}" >&2; exit 1 ;;
   esac
   log "server start: ${mode}"
-  eval "env DISABLE_RATE_LIMITS=true SESSION_SECRET=bench-session-secret CREDENTIAL_SECRET=bench-credential-secret $env_vars node src/app.js > /tmp/mongbas-e2e-server.log 2>&1 &"
+  env DISABLE_RATE_LIMITS=true SESSION_SECRET=bench-session-secret CREDENTIAL_SECRET=bench-credential-secret \
+    "${env_vars[@]}" node src/app.js > /tmp/mongbas-e2e-server.log 2>&1 &
   SERVER_PID=$!
   for _ in $(seq 1 50); do
     if curl --fail --silent --show-error http://localhost:3000/health | \
@@ -55,8 +56,8 @@ stop_server() {
 
 run_mode() {
   local label="$1"; shift
-  local env_vars="$*"
-  start_server "$label" "$env_vars"
+  local -a env_vars=("$@")
+  start_server "$label" "${env_vars[@]}"
   node benchmark/e2e-vote-auth-bench.js \
     --tps "$TPS_LEVELS" \
     --tx "$TX_PER_ROUND" \
@@ -73,11 +74,11 @@ if lsof -ti:3000 >/dev/null 2>&1; then
 fi
 sleep 1
 
-run_mode "A-bypass" "IDEMIX_ENABLED=false"
-run_mode "HMAC" "IDEMIX_ENABLED=true ASYM_CRED_ENABLED=false IDEMIX_CACHE_ENABLED=false"
-run_mode "Ed25519" "IDEMIX_ENABLED=true ASYM_CRED_ENABLED=true IDEMIX_CACHE_ENABLED=false"
-run_mode "B-PS-BN254" "IDEMIX_ENABLED=true IDEMIX_IMPL=ps IDEMIX_CACHE_ENABLED=false"
-run_mode "C-BBS" "IDEMIX_ENABLED=true IDEMIX_IMPL=bbs IDEMIX_CACHE_ENABLED=false"
+run_mode "A-bypass" IDEMIX_ENABLED=false
+run_mode "HMAC" IDEMIX_ENABLED=true ASYM_CRED_ENABLED=false IDEMIX_CACHE_ENABLED=false
+run_mode "Ed25519" IDEMIX_ENABLED=true ASYM_CRED_ENABLED=true IDEMIX_CACHE_ENABLED=false
+run_mode "B-PS-BN254" IDEMIX_ENABLED=true IDEMIX_IMPL=ps IDEMIX_CACHE_ENABLED=false
+run_mode "C-BBS" IDEMIX_ENABLED=true IDEMIX_IMPL=bbs IDEMIX_CACHE_ENABLED=false
 
 log "done"
 ls -lh "${REPORTS_DIR}/e2e-"*"${TIMESTAMP}"*
