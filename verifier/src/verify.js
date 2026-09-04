@@ -22,7 +22,10 @@ const P_HEX = [
 const P = BigInt(`0x${P_HEX}`);
 const G = 2n;
 const Q = (P - 1n) / 2n;
-const VECTOR_MESSAGE_INVERSES = Object.freeze([1n, (P + 1n) / G]);
+const Q_HEX_LENGTH = Q.toString(16).length;
+if (G !== 2n) throw new Error('fixed vector message inverse requires generator 2');
+const G_INVERSE = (P + 1n) / 2n;
+const VECTOR_MESSAGE_INVERSES = Object.freeze([1n, G_INVERSE]);
 if (VECTOR_MESSAGE_INVERSES[0] !== 1n || (G * VECTOR_MESSAGE_INVERSES[1]) % P !== 1n) {
   throw new Error('invalid fixed vector message inverses');
 }
@@ -138,17 +141,40 @@ function modInverse(value, modulus) {
   return ((oldS % modulus) + modulus) % modulus;
 }
 
+// Binary Jacobi is variable-time. That is safe here because every value passed
+// to it is a public bundle group element, never a secret scalar.
+function jacobiSymbol(value, oddModulus) {
+  if (oddModulus <= 0n || (oddModulus & 1n) === 0n) throw new Error('Jacobi modulus must be positive and odd');
+  let a = ((value % oddModulus) + oddModulus) % oddModulus;
+  let n = oddModulus;
+  let result = 1;
+  while (a !== 0n) {
+    while ((a & 1n) === 0n) {
+      a >>= 1n;
+      const residue = n & 7n;
+      if (residue === 3n || residue === 5n) result = -result;
+    }
+    [a, n] = [n, a];
+    if ((a & 3n) === 3n && (n & 3n) === 3n) result = -result;
+    a %= n;
+  }
+  return n === 1n ? result : 0;
+}
+
 function parseHex(value, label, { scalar = false, subgroup = false } = {}) {
-  if (typeof value !== 'string' || !/^(0|[1-9a-f][0-9a-f]*)$/.test(value)) {
+  if (typeof value !== 'string') {
     throw new Error(`${label}: non-canonical lowercase hex`);
   }
+  const maximumLength = scalar ? Q_HEX_LENGTH : P_HEX.length;
+  if (value.length > maximumLength) throw new Error(`${label}: hexadecimal value too long`);
+  if (!/^(0|[1-9a-f][0-9a-f]*)$/.test(value)) throw new Error(`${label}: non-canonical lowercase hex`);
   const parsed = BigInt(`0x${value}`);
   if (scalar) {
     if (parsed < 0n || parsed >= Q) throw new Error(`${label}: scalar out of range`);
     return parsed;
   }
   if (parsed <= 1n || parsed >= P) throw new Error(`${label}: group element out of range`);
-  if (subgroup && modPow(parsed, Q, P) !== 1n) throw new Error(`${label}: element not in subgroup`);
+  if (subgroup && jacobiSymbol(parsed, P) !== 1) throw new Error(`${label}: element not in subgroup`);
   return parsed;
 }
 
@@ -740,6 +766,7 @@ module.exports = {
   P,
   P_HEX,
   Q,
+  testInternals: Object.freeze({ jacobiSymbol, parseHex }),
   canonicalize,
   merkleRoot,
   modInverse,

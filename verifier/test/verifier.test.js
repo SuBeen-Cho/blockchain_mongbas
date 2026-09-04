@@ -9,7 +9,7 @@ const path = require('node:path');
 const test = require('node:test');
 const {
   G, HOMOMORPHIC_BASE, P, P_HEX, Q,
-  canonicalize, merkleRoot, modInverse, modPow, sha256Hex, unsignedBundle, verifyBundle, verifyBundleBytes,
+  canonicalize, merkleRoot, modInverse, modPow, sha256Hex, testInternals, unsignedBundle, verifyBundle, verifyBundleBytes,
 } = require('../src/verify');
 const { buildUnsignedBundle, signBundle } = require('../src/bundle');
 const { readBoundedRegularFile } = require('../src/input');
@@ -84,6 +84,45 @@ test('vector proof verification preserves inverse-of-one and inverse-of-generato
     bundle.ballots[0].validityProof.bitProofs[0].zs[0] = '0';
     assert.match(verifyBundle(bundle).errors.join('\n'), /bit proof 0\/0 equation failed/);
   }
+});
+
+test('Jacobi subgroup parsing preserves range and RFC 3526 group-14 boundary expectations', () => {
+  const cases = [
+    [0n, false], [1n, false], [2n, true], [4n, true], [9n, true],
+    [(P + 1n) / 2n, true], [11n, false], [22n, false],
+    [P - 2n, false], [P - 1n, false],
+  ];
+  for (const [value, accepted] of cases) {
+    const parse = () => testInternals.parseHex(value.toString(16), `boundary ${value}`, { subgroup: true });
+    if (accepted) assert.equal(parse(), value);
+    else assert.throws(parse, /group element out of range|element not in subgroup/);
+  }
+});
+
+test('Jacobi subgroup parsing matches the previous Euler oracle on deterministic arbitrary, squared, and negated values', () => {
+  const values = [];
+  for (let index = 0; index < 256; index += 1) {
+    const arbitrary = 2n + BigInt(`0x${sha256Hex(`jacobi-parity:${index}`)}`) % (P - 3n);
+    values.push(arbitrary, arbitrary * arbitrary % P, P - arbitrary);
+  }
+  for (const value of values) {
+    const expected = value > 1n && value < P && modPow(value, Q, P) === 1n;
+    let accepted = true;
+    try { testInternals.parseHex(value.toString(16), 'parity value', { subgroup: true }); }
+    catch { accepted = false; }
+    assert.equal(accepted, expected, `value ${value.toString(16)}`);
+  }
+});
+
+test('hex parsing bounds group elements and scalars before BigInt construction', () => {
+  assert.throws(
+    () => testInternals.parseHex(`${P_HEX}0`, 'oversized group', { subgroup: true }),
+    /oversized group: hexadecimal value too long/,
+  );
+  assert.throws(
+    () => testInternals.parseHex(`${Q.toString(16)}0`, 'oversized scalar', { scalar: true }),
+    /oversized scalar: hexadecimal value too long/,
+  );
 });
 
 test('canonical input bundle hashes equal direct canonical hashes across supported schemas', () => {
