@@ -1,7 +1,7 @@
 <p align="center">
   <h1 align="center">Mongbas</h1>
   <p align="center">
-    <strong>Hyperledger Fabric 기반 다조직 합의 익명 전자투표 시스템</strong>
+    <strong>Hyperledger Fabric 기반 다조직 합의 암호화·검증 가능 전자투표 프로토타입</strong>
   </p>
   <p align="center">
     Anonymous E-Voting on Hyperledger Fabric 2.5:<br>

@@ -19,6 +19,10 @@ test('runtime metadata and UI do not self-certify coercion resistance', () => {
   const receiptFree = read('frontend/src/components/verify-animations/ReceiptFreeDiagram.jsx');
   const diagram = read('frontend/src/components/verify-animations/DeniableDiagram.jsx');
   const e2e = read('application/scripts/full-election-e2e.js');
+  const app = read('application/src/app.js');
+  const readme = read('README.md');
+  const runGuide = read('docs/RUN_GUIDE.md');
+  const runbook = read('docs/DEMO_RUNBOOK.md');
 
   assert.doesNotMatch(chaincode, /Status:\s+"achieved"/);
   assert.doesNotMatch(chaincode, /Cleansing-Hiding coercion resistance/);
@@ -35,6 +39,10 @@ test('runtime metadata and UI do not self-certify coercion resistance', () => {
   assert.doesNotMatch(diagram, /Coercion Resistance —/);
   assert.doesNotMatch(diagram, /강압자가 구분 불가/);
   assert.doesNotMatch(e2e, /Coercion Resistance E2E Test/);
+  for (const [label, source] of [['app', app], ['README', readme], ['run guide', runGuide], ['runbook', runbook]]) {
+    assert.doesNotMatch(source, /다조직 합의 익명 전자투표|운영자도 못 봄|누구에게 찍었는지 우리도 몰라/, label);
+  }
+  assert.doesNotMatch(kioskPage, /<Badge>익명<\/Badge>/);
 });
 
 test('public showcase and credential labels do not claim unverified equivalence', () => {

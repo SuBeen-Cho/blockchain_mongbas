@@ -1,5 +1,5 @@
 /**
- * app.js — 다조직 합의 익명 전자투표 REST API 서버
+ * app.js — 다조직 합의 암호화·검증 가능 전자투표 REST API 서버
  *
  * 실행: node src/app.js
  * 개발: nodemon src/app.js
@@ -164,7 +164,7 @@ app.get('/health', (_req, res) => {
 // ── API 목록 (개발 편의) ────────────────────────────────────────
 app.get('/', (req, res) => {
   res.json({
-    name: '팀 몽바스 — 다조직 합의 익명 전자투표 API',
+    name: '팀 몽바스 — 다조직 합의 암호화·검증 가능 전자투표 API',
     version: '1.0.0',
     endpoints: {
       'GET  /health'                         : '서버 상태 확인',
@@ -217,7 +217,7 @@ app.use((err, req, res, _next) => {
 app.listen(PORT, runtimeSecurity.listenHost, HTTP_LISTEN_BACKLOG, () => {
   console.log(`
 ╔══════════════════════════════════════════════════════╗
-║  팀 몽바스 — 다조직 합의 익명 전자투표 API 서버 기동  ║
+║  팀 몽바스 — 다조직 합의 암호화·검증 가능 투표 API 서버 기동  ║
 ║  http://localhost:${PORT}                              ║
 ╚══════════════════════════════════════════════════════╝
 

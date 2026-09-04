@@ -320,7 +320,7 @@ export default function ControlPage() {
             <h1 style={{ margin: 0, fontSize: 'clamp(26px,3vw,36px)', fontWeight: 900, letterSpacing: '-0.04em' }}>
               {view === 'tally' ? '개표 결과' : view === 'verify' ? '내 표 검증' : '투표현황 대시보드'}
             </h1>
-            <p style={{ margin: '4px 0 0', fontSize: 13, color: T.sub, fontWeight: 600, fontFamily: 'monospace' }}>{eid || 'Mongbas 부스 시연 · 익명 전자투표'}</p>
+            <p style={{ margin: '4px 0 0', fontSize: 13, color: T.sub, fontWeight: 600, fontFamily: 'monospace' }}>{eid || 'Mongbas 부스 시연 · 암호화·검증 투표'}</p>
           </div>
           <Status status={status} />
         </header>

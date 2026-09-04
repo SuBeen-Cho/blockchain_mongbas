@@ -178,7 +178,7 @@ export default function KioskPage({ electionId }) {
       <div style={{ marginBottom: 18 }}>
         <h1 style={{ fontSize: 26, fontWeight: 900, margin: '2px 0 8px', letterSpacing: '-0.04em' }}>{election.title}</h1>
         <div style={{ display: 'flex', gap: 7, flexWrap: 'wrap' }}>
-          <Badge>익명</Badge><Badge>암호화</Badge><Badge>검증가능</Badge>
+          <Badge>개별 선택 미공개</Badge><Badge>암호화</Badge><Badge>검증가능</Badge>
         </div>
       </div>
 
