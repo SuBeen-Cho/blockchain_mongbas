@@ -45,7 +45,10 @@ baseline_container_count="$(docker ps -q | wc -l)"
 
 (
   cd "${MONGBAS_REPO_DIR}/application"
-  exec env PORT="${port}" DISABLE_RATE_LIMITS=true node src/app.js
+  # The isolated benchmark uses its bounded synthetic voters directly. Do not
+  # inherit the QR demonstration's one-use admission gate from the shared
+  # runtime env; the normal backend keeps that policy unchanged on port 3000.
+  exec env PORT="${port}" DISABLE_RATE_LIMITS=true REQUIRE_DEMO_ADMISSION=false node src/app.js
 ) >"${out}/benchmark-backend.log" 2>&1 &
 backend_pid=$!
 

@@ -22,6 +22,7 @@ test('state growth summary fails closed on malformed, changed or non-growing sna
 
 test('100k state-growth wrapper monitors disk, memory, OOM and Fabric health without reset', () => {
   const source = fs.readFileSync(path.join(__dirname, '../../deploy/linux/state-growth-evaluation.sh'), 'utf8');
+  const rateSource = fs.readFileSync(path.join(__dirname, '../../deploy/linux/rate-evaluation.sh'), 'utf8');
   assert.match(source, /MONGBAS_STATE_GROWTH_MIN_FREE_BYTES/);
   assert.match(source, /MONGBAS_STATE_GROWTH_MIN_MEM_AVAILABLE_BYTES/);
   assert.match(source, /oom_kill/);
@@ -29,4 +30,5 @@ test('100k state-growth wrapper monitors disk, memory, OOM and Fabric health wit
   assert.match(source, /container-not-running/);
   assert.match(source, /abort-reason\.txt/);
   assert.doesNotMatch(source, /docker compose down|docker volume rm|network\.sh (?:down|clean)/);
+  assert.match(rateSource, /REQUIRE_DEMO_ADMISSION=false/);
 });
