@@ -36,7 +36,8 @@ if [ -z "${E2E_BASE_URL:-}" ]; then
   ss -H -ltn "sport = :${port}" | grep -q . && die "coercion evaluation port ${port} is already in use"
   (
     cd "${MONGBAS_REPO_DIR}/application"
-    exec env PORT="${port}" DISABLE_RATE_LIMITS=true ENABLE_DEMO_ENDPOINTS=false node src/app.js
+    exec env PORT="${port}" DISABLE_RATE_LIMITS=true ENABLE_DEMO_ENDPOINTS=false \
+      REQUIRE_DEMO_ADMISSION=false node src/app.js
   ) >"${out}/evaluation-backend.log" 2>&1 &
   backend_pid=$!
 fi

@@ -1,6 +1,8 @@
 'use strict';
 
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
 const test = require('node:test');
 const {
   evaluateThreshold,
@@ -47,4 +49,9 @@ test('classifier advantage gate uses its confidence upper bound, not point accur
   ]);
   assert.equal(small.accuracy, 0.5);
   assert.ok(small.confidence95.upper > 0.6);
+});
+
+test('Linux coercion runner disables inherited admission enforcement for its non-demo backend', () => {
+  const runner = fs.readFileSync(path.join(__dirname, '../../deploy/linux/coercion-evaluation.sh'), 'utf8');
+  assert.match(runner, /REQUIRE_DEMO_ADMISSION=false/);
 });
