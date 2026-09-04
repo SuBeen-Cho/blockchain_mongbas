@@ -146,10 +146,10 @@ export default function TrackPage({ electionId }) {
             {/* 4. 집계 기여 */}
             <div style={card}>
               <Step n="4" t="집계 기여" />
-              <p style={{ fontSize: 16 }}>당신의 표는 최종 <b style={{ fontSize: 22, color: '#2563eb' }}>{res.tallyTotal}</b>표 중 <b>1표</b>로 집계에 포함되었습니다.</p>
+              <p style={{ fontSize: 16 }}>제공된 증명으로 이 표의 게시판 포함 경로가 확인되었습니다. 공개된 최종 전체 표수는 <b style={{ fontSize: 22, color: '#2563eb' }}>{res.tallyTotal}</b>표입니다. 실제 tally 기여 관계는 전체 bundle 검증 결과와 함께 판단해야 합니다.</p>
             </div>
 
-            {/* 5. 운영자도 못 본다 */}
+            {/* 5. 공개 화면에서 확인 가능한 암호화 경로 */}
             <div style={card}>
               <Step n="5" t="개별 선택 평문을 기록하지 않는 정상 흐름" />
               <Row label="추적번호(단방향 해시)" val={res.full} />

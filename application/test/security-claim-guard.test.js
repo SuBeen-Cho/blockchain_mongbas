@@ -33,6 +33,7 @@ test('runtime metadata and UI do not self-certify coercion resistance', () => {
   assert.doesNotMatch(controlPage, /100% 동일|강압자 구별 불가/);
   assert.doesNotMatch(trackPage, /시스템이 절대 복호화하지 않/);
   assert.doesNotMatch(trackPage, /아무도 못 건드림|변조 없이 집계에 들어갔/);
+  assert.doesNotMatch(trackPage, /집계에 포함되었습니다|운영자도 못 본다/);
   assert.doesNotMatch(kioskPage, /변조 없이 집계에 들어갔/);
   assert.doesNotMatch(controlPage, /변조 없이 집계에 포함됨/);
   assert.doesNotMatch(receiptFree, /receipt 생성이 원천 불가|강압자에게 누구를 찍었는지 증명할 수 없/);
