@@ -28,7 +28,8 @@
   section{padding:clamp(80px,12vh,150px) 0}
   .kick{font-size:13px;font-weight:800;letter-spacing:.14em;color:var(--blue);text-transform:uppercase}
   .ink-i{color:var(--blue)}
-  .reveal{opacity:0;transform:translateY(36px)}
+  /* Strict-CSP/self-hosted fallback is fully visible without optional JS. */
+  .reveal{opacity:1;transform:none}
 
   /* 네비 */
   nav{position:fixed;top:0;left:0;right:0;z-index:40;transition:background .3s,border-color .3s;border-bottom:1px solid transparent}
@@ -180,6 +181,7 @@
   .phone .notch{position:absolute;top:14px;left:50%;transform:translateX(-50%);width:120px;height:26px;background:#000;border-radius:14px;z-index:5}
   .pscreen{position:absolute;inset:0;background:#f4f8ff}
   .pslide{position:absolute;inset:0;display:flex;flex-direction:column;padding:46px 22px 22px;opacity:0}
+  #s1{opacity:1}
   .pslide .pt{font-size:19px;font-weight:800;color:var(--ink);text-align:center;margin-bottom:14px}
   .opt{display:flex;align-items:center;gap:10px;padding:15px;border-radius:14px;background:#fff;border:2px solid var(--line);margin-bottom:10px;color:var(--ink);font-weight:700;font-size:15px}
   .opt.sel{border-color:var(--blue);background:var(--blueSoft)}
@@ -287,7 +289,16 @@
   <section id="props"><div class="wrap">
     <div class="kick reveal">7 Security Properties</div>
     <h2 class="stmt reveal" style="margin-top:14px">7가지 보안 속성, <span class="mark">속성별로 검증.</span></h2>
-    <div class="propband reveal" style="margin-top:40px"><div class="pgrid" id="pgrid"></div></div>
+    <div class="propband reveal" style="margin-top:40px"><div class="pgrid" id="pgrid">
+      <div class="pitem b"><div class="pn">01 / 07</div><div class="pi"><img src="/icons/free-icon-vote-8597002.png" alt="" /></div><h3>비밀투표</h3><div class="pen">Ballot Secrecy</div><p>2-of-3 DKG·부분복호화를 구현했지만, 단일 host root 신뢰 한계가 남아 있습니다.</p></div>
+      <div class="pitem w"><div class="pn">02 / 07</div><div class="pi"><img src="/icons/free-icon-vote-8597093.png" alt="" /></div><h3>의도대로 투표</h3><div class="pen">Cast-as-Intended</div><p>내가 고른 후보가 그대로 암호화됐는지 제출 전 확인.</p></div>
+      <div class="pitem b"><div class="pn">03 / 07</div><div class="pi"><img src="/icons/free-icon-absentee-ballot-16977065.png" alt="" /></div><h3>기록대로 투표</h3><div class="pen">Recorded-as-Cast</div><p>내 표가 변조 없이 블록체인에 기록됐는지 영수증으로 추적.</p></div>
+      <div class="pitem w"><div class="pn">04 / 07</div><div class="pi"><img src="/icons/free-icon-conclusion-18648709.png" alt="" /></div><h3>기록대로 집계</h3><div class="pen">Tallied-as-Recorded</div><p>기록된 표가 결과에 정확히 반영됐음을 수학적으로 증명.</p></div>
+      <div class="pitem w"><div class="pn">05 / 07</div><div class="pi"><img src="/icons/free-icon-coordinate-8965026.png" alt="" /></div><h3>누구나 검증</h3><div class="pen">Universal Verifiability</div><p>독립 번들 verifier를 구현했으며 외부 관찰자·제2 구현 검증이 남아 있습니다.</p></div>
+      <div class="pitem b"><div class="pn">06 / 07</div><div class="pi"><img src="/icons/free-icon-validity-18648598.png" alt="" /></div><h3>자격 확인</h3><div class="pen">Eligibility</div><p>선거별 credential·nullifier·폐기 경로를 시험했으며 현재 기본은 완전 익명 credential이 아닙니다.</p></div>
+      <div class="pitem w"><div class="pn">07 / 07</div><div class="pi"><img src="/icons/free-icon-workflow-18648702.png" alt="" /></div><h3>강압 저항</h3><div class="pen">Coercion Resistance</div><p>제한된 API transcript 누출을 보완했지만 전체 속성은 현재 unverified입니다.</p></div>
+      <div class="pitem sum"><div class="big">7<b>개</b></div><div class="st">속성별 검증 프레임워크</div><div class="sd">구현·공격 시험·독립 증거를<br />계속 보완 중입니다.</div></div>
+    </div></div>
   </div></section>
 
   <!-- CastVote 파이프라인 -->
@@ -331,15 +342,15 @@
     <h2 class="stmt reveal" style="margin-top:14px">기능 소개가 아닌,<br><span class="mark">재현 가능한 실측.</span></h2>
     <p class="lede reveal">Ubuntu 단일 호스트의 Fabric 복제 토폴로지에서 exact tally·장시간·고정 rate·상태 증가를 따로 측정했습니다. 물리적 다기관 분리나 임의 환경의 용량을 증명하는 결과는 아닙니다.</p>
     <div class="nums">
-      <div class="num reveal"><div class="v"><span data-c="7">0</span><span class="u">개</span></div><div class="l">학술 보안 속성 — 속성별 검증 중</div>
+      <div class="num reveal"><div class="v"><span data-c="7">7</span><span class="u">개</span></div><div class="l">학술 보안 속성 — 속성별 검증 중</div>
         <div class="tip"><div class="tt">🛡️ <b>7대 보안 속성 검증 목표</b></div>비밀투표·의도대로·기록대로·집계대로·보편검증·자격검증·강압저항을 속성별로 구현·공격 시험·독립 증거로 검증 중입니다. 현재 7/7 완전 검증을 주장하지 않습니다.</div></div>
-      <div class="num reveal"><div class="v"><span data-c="10000">0</span><span class="u">표</span></div><div class="l">상태 증가 실험 — 투표 실패 0건</div>
+      <div class="num reveal"><div class="v"><span data-c="10000">10000</span><span class="u">표</span></div><div class="l">상태 증가 실험 — 투표 실패 0건</div>
         <div class="tip"><div class="tt">👥 <b>10,000표 Linux 실험</b></div>1,000표 선거 10개에서 voter operation 10,000/10,000과 Fabric transaction 20,000/20,000을 커밋하고 exact tally를 확인했습니다.</div></div>
-      <div class="num reveal"><div class="v"><span data-c="7208">0</span><span class="u">초</span></div><div class="l">장시간 실험 — 285개 선거 실패 0</div>
+      <div class="num reveal"><div class="v"><span data-c="7208">7208</span><span class="u">초</span></div><div class="l">장시간 실험 — 285개 선거 실패 0</div>
         <div class="tip"><div class="tt">⏱️ <b>2시간 soak</b></div>7,208초 동안 285개 선거와 2,850표를 처리하고 투표·집계 실패 0건을 기록했습니다.</div></div>
-      <div class="num reveal"><div class="v"><span data-c="8.9" data-dec="1">0</span><span class="u">ops/s</span></div><div class="l">10,000표 실험 지속 voter operation 처리량</div>
+      <div class="num reveal"><div class="v"><span data-c="8.9" data-dec="1">8.9</span><span class="u">ops/s</span></div><div class="l">10,000표 실험 지속 voter operation 처리량</div>
         <div class="tip"><div class="tt">📊 <b>8.918 voter operations/s</b></div>제공 rate 25가 지속 가능량을 넘어 queueing이 발생한 단일-host 실험입니다. 보편적 용량값으로 해석하지 않습니다.</div></div>
-      <div class="num reveal pop big"><div class="v"><span data-c="17.8" data-dec="1">0</span><span class="u">tx/s</span></div><div class="l">10,000표 실험 Fabric transaction 처리량</div>
+      <div class="num reveal pop big"><div class="v"><span data-c="17.8" data-dec="1">17.8</span><span class="u">tx/s</span></div><div class="l">10,000표 실험 Fabric transaction 처리량</div>
         <div class="tip"><div class="tt">⚡ <b>17.835 Fabric transactions/s</b></div>한 voter operation이 prepare와 cast 두 Fabric transaction을 커밋한 측정값입니다.</div></div>
       <div class="num reveal pop big"><div class="v"><span data-c="0">0</span><span class="u">건</span></div><div class="l">현재 10,000표 workload 투표 실패</div>
         <div class="tip"><div class="tt">✅ <b>평가 범위 내 실패 0건</b></div>해당 Linux commit·토폴로지·workload에 한정된 결과이며, 무결함이나 임의 부하의 성공을 뜻하지 않습니다.</div></div>
@@ -459,6 +470,9 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/gsap.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/ScrollTrigger.min.js"></script>
 <script>
+// Optional animation enhancement. Strict CSP blocks this script, so the HTML
+// above is deliberately complete and visible without it.
+if (window.gsap) gsap.set('.reveal',{opacity:0,y:36});
 // UnicornStudio 히어로
 (function(){var u=window.UnicornStudio;if(!u){window.UnicornStudio={isInitialized:!1};var i=document.createElement("script");
 i.src="https://cdn.jsdelivr.net/gh/hiunicornstudio/unicornstudio.js@v2.2.1/dist/unicornStudio.umd.js";
@@ -497,7 +511,7 @@ document.getElementById('pgrid').innerHTML=pgridHTML;
 
 gsap.registerPlugin(ScrollTrigger);
 gsap.utils.toArray('.reveal').forEach(el=>gsap.to(el,{opacity:1,y:0,duration:.9,ease:'power3.out',scrollTrigger:{trigger:el,start:'top 86%'}}));
-gsap.utils.toArray('.num .v span[data-c]').forEach(el=>{const end=parseFloat(el.dataset.c),dec=+(el.dataset.dec||0),o={v:0};
+gsap.utils.toArray('.num .v span[data-c]').forEach(el=>{const end=parseFloat(el.dataset.c),dec=+(el.dataset.dec||0),o={v:0};el.textContent='0';
   ScrollTrigger.create({trigger:el,start:'top 88%',once:true,onEnter:()=>gsap.to(o,{v:end,duration:1.5,ease:'power2.out',onUpdate:()=>el.textContent=o.v.toFixed(dec)})})});
 // nav 솔리드 전환
 ScrollTrigger.create({start:'top -80',onToggle:s=>document.getElementById('nav').classList.toggle('solid',s.isActive)});

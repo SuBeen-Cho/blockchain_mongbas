@@ -30,6 +30,14 @@ async function waitForHealth(baseURL, child) {
   throw new Error('test backend readiness timeout');
 }
 
+test('showcase remains complete when strict CSP blocks optional animation scripts', () => {
+  const showcase = fs.readFileSync(path.resolve(__dirname, '../../frontend/public/showcase3.html'), 'utf8');
+  assert.match(showcase, /\.reveal\{opacity:1;transform:none\}/);
+  assert.match(showcase, /<div class="pitem b">/);
+  assert.match(showcase, /data-c="10000">10000</);
+  assert.match(showcase, /#s1\{opacity:1\}/);
+});
+
 test('static voter UI and assets receive the complete security-header policy', async t => {
   const dist = path.resolve(__dirname, '../../frontend/dist');
   assert.equal(fs.existsSync(path.join(dist, 'index.html')), true, 'frontend/dist must be built');
