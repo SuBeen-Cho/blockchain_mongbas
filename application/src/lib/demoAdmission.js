@@ -71,10 +71,52 @@ class DemoAdmissionStore {
     return fs.existsSync(this.filePath) ? this._load() : { schema: STATE_SCHEMA, records: {} };
   }
 
+  _recoverDeadLock() {
+    let before;
+    try { before = fs.lstatSync(this.lockPath); } catch (error) {
+      if (error.code === 'ENOENT') return true;
+      throw error;
+    }
+    if (!before.isFile() || before.isSymbolicLink() || before.size > 32) return false;
+    const descriptor = fs.openSync(this.lockPath, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0));
+    let owner;
+    try {
+      const opened = fs.fstatSync(descriptor);
+      if (!opened.isFile() || opened.dev !== before.dev || opened.ino !== before.ino) return false;
+      const raw = fs.readFileSync(descriptor, 'utf8');
+      if (!/^[1-9][0-9]*\n$/.test(raw)) return false;
+      owner = Number(raw.trim());
+      if (!Number.isSafeInteger(owner)) return false;
+    } finally {
+      fs.closeSync(descriptor);
+    }
+    try {
+      process.kill(owner, 0);
+      return false;
+    } catch (error) {
+      if (error.code !== 'ESRCH') return false;
+    }
+    const current = fs.lstatSync(this.lockPath);
+    if (!current.isFile() || current.isSymbolicLink() || current.dev !== before.dev || current.ino !== before.ino) return false;
+    fs.unlinkSync(this.lockPath);
+    return true;
+  }
+
   _withLock(operation) {
     let lock;
+    let lockIdentity;
     try {
-      lock = fs.openSync(this.lockPath, fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_WRONLY | (fs.constants.O_NOFOLLOW ?? 0), 0o600);
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        try {
+          lock = fs.openSync(this.lockPath, fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_WRONLY | (fs.constants.O_NOFOLLOW ?? 0), 0o600);
+          lockIdentity = fs.fstatSync(lock);
+          fs.writeFileSync(lock, `${process.pid}\n`);
+          fs.fsyncSync(lock);
+          break;
+        } catch (error) {
+          if (error.code !== 'EEXIST' || attempt !== 0 || !this._recoverDeadLock()) throw error;
+        }
+      }
       return operation();
     } catch (error) {
       if (error.code === 'EEXIST') throw new Error('demo admission store is busy');
@@ -82,7 +124,14 @@ class DemoAdmissionStore {
     } finally {
       if (lock !== undefined) {
         fs.closeSync(lock);
-        fs.unlinkSync(this.lockPath);
+        try {
+          const current = fs.lstatSync(this.lockPath);
+          if (current.isFile() && !current.isSymbolicLink() && current.dev === lockIdentity.dev && current.ino === lockIdentity.ino) {
+            fs.unlinkSync(this.lockPath);
+          }
+        } catch (error) {
+          if (error.code !== 'ENOENT') throw error;
+        }
       }
     }
   }

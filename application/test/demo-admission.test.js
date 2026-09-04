@@ -70,6 +70,27 @@ test('demo admission rejects symlink state and malformed token/election/TTL', ()
   }
 });
 
+test('demo admission recovers only a well-formed lock owned by a dead process', () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'mongbas-admission-stale-lock-'));
+  try {
+    const file = path.join(directory, 'state.json');
+    const lock = `${file}.lock`;
+    fs.writeFileSync(lock, '2147483647\n', { mode: 0o600 });
+    assert.doesNotThrow(() => new DemoAdmissionStore(file).issue('election-a', { now: 1_000, ttlMs: 5_000 }));
+    assert.equal(fs.existsSync(lock), false);
+
+    fs.writeFileSync(lock, 'not-a-pid\n', { mode: 0o600 });
+    assert.throws(() => new DemoAdmissionStore(file).issue('election-a', { now: 2_000, ttlMs: 5_000 }), /busy/);
+    assert.equal(fs.readFileSync(lock, 'utf8'), 'not-a-pid\n');
+
+    fs.writeFileSync(lock, `${process.pid}\n`, { mode: 0o600 });
+    assert.throws(() => new DemoAdmissionStore(file).issue('election-a', { now: 3_000, ttlMs: 5_000 }), /busy/);
+    assert.equal(fs.readFileSync(lock, 'utf8'), `${process.pid}\n`);
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
 test('concurrent processes cannot redeem one admission more than once', async () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'mongbas-admission-race-'));
   try {
