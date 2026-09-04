@@ -23,6 +23,7 @@ const demoLive  = require('../lib/demoLive');   // [부스 시연] 라이브 암
 const { demoEndpointsEnabled, requireDemoEndpoint } = require('../lib/demoFeatures');
 const { requireAdmin } = require('../middleware/admin');
 const { isCanonicalToken, serializeFixedProof } = require('../lib/deniableProof');
+const { collectPagedBulletin } = require('../lib/pagedBulletin');
 
 const router = express.Router();
 
@@ -799,12 +800,22 @@ router.get('/:id/election-bundle-source', requireValidElectionID, async (req, re
   const { id } = req.params;
   const { gateway, contract } = await connectGateway();
   try {
-    const [electionRaw, boardRaw] = await Promise.all([
-      contract.evaluateTransaction('GetElection', id),
-      contract.evaluateTransaction('GetBulletinBoard', id),
-    ]);
+    const electionRaw = await contract.evaluateTransaction('GetElection', id);
     const election = JSON.parse(Buffer.from(electionRaw).toString('utf8'));
-    const board = JSON.parse(Buffer.from(boardRaw).toString('utf8'));
+    let board;
+    try {
+      ({ manifest: board } = await collectPagedBulletin(contract, id));
+    } catch (pagedError) {
+      // Preserve legacy elections and rolling deployments only when the new
+      // additive API/index is genuinely absent. Any malformed or inconsistent
+      // paged publication must fail closed instead of being hidden by fallback.
+      const message = `${pagedError.message || ''} ${pagedError.details || ''}`;
+      const additiveAPIAbsent = message.includes('paged BulletinBoard index가 없습니다') ||
+        (message.includes('GetBulletinBoardManifest') && message.includes('does not exist'));
+      if (!additiveAPIAbsent) throw pagedError;
+      const boardRaw = await contract.evaluateTransaction('GetBulletinBoard', id);
+      board = JSON.parse(Buffer.from(boardRaw).toString('utf8'));
+    }
     if (!['elgamal', 'elgamal-vector-v3'].includes(board.encryptionMode) || !board.elgamalPubKey) {
 	  return res.status(409).json({ error: 'bundle은 검증 가능한 ElGamal 선거만 지원합니다.' });
     }

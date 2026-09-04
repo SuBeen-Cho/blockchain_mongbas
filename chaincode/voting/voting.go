@@ -4917,6 +4917,227 @@ type BulletinBoard struct {
 	VectorAuditDisclosures   []VectorAuditDisclosure   `json:"vectorAuditDisclosures,omitempty" metadata:",optional"`
 }
 
+const (
+	BulletinPageMaxItems        = 100
+	BulletinIndexMaxBallots     = 10000
+	BulletinIndexMaxReceipts    = 20000
+	BulletinIndexMaxDisclosures = 10000
+)
+
+// BulletinBoardIndex fixes the exact public artifact order at publication
+// without copying every large proof into one world-state value. It is additive:
+// legacy BulletinBoard records and the existing GetBulletinBoard response stay
+// unchanged. The hash lets a paged collector reject mixed publication epochs.
+type BulletinBoardIndex struct {
+	Schema               string   `json:"schema"`
+	ElectionID           string   `json:"electionID"`
+	PublishedAt          int64    `json:"publishedAt"`
+	PageSize             int      `json:"pageSize"`
+	BallotCount          int      `json:"ballotCount"`
+	ReceiptCount         int      `json:"receiptCount"`
+	DisclosureCount      int      `json:"disclosureCount"`
+	BallotPageHashes     []string `json:"ballotPageHashes"`
+	ReceiptPageHashes    []string `json:"receiptPageHashes"`
+	DisclosurePageHashes []string `json:"disclosurePageHashes"`
+	IndexHash            string   `json:"indexHash,omitempty" metadata:",optional"`
+}
+
+// BulletinBoardIndexPage keeps at most BulletinPageMaxItems identifiers in
+// one world-state value. The top-level index commits only these page hashes,
+// preventing every artifact request from re-reading the full election index.
+type BulletinBoardIndexPage struct {
+	Schema         string   `json:"schema"`
+	ElectionID     string   `json:"electionID"`
+	PublishedAt    int64    `json:"publishedAt"`
+	Section        string   `json:"section"`
+	PageNumber     int      `json:"pageNumber"`
+	Offset         int      `json:"offset"`
+	NextOffset     int      `json:"nextOffset"`
+	Total          int      `json:"total"`
+	Identifiers    []string `json:"identifiers"`
+	IdentifierHash string   `json:"identifierHash,omitempty" metadata:",optional"`
+}
+
+// BulletinBoardPage returns one bounded section. Only the array selected by
+// Section is populated. IndexHash binds every page to one immutable index.
+type BulletinBoardPage struct {
+	Schema      string                  `json:"schema"`
+	ElectionID  string                  `json:"electionID"`
+	PublishedAt int64                   `json:"publishedAt"`
+	IndexHash   string                  `json:"indexHash"`
+	Section     string                  `json:"section"`
+	Offset      int                     `json:"offset"`
+	NextOffset  int                     `json:"nextOffset"`
+	Total       int                     `json:"total"`
+	Ballots     []EncryptedBallot       `json:"ballots,omitempty" metadata:",optional"`
+	Receipts    []VectorBallotReceipt   `json:"receipts,omitempty" metadata:",optional"`
+	Disclosures []VectorAuditDisclosure `json:"disclosures,omitempty" metadata:",optional"`
+	PageHash    string                  `json:"pageHash,omitempty" metadata:",optional"`
+}
+
+func bulletinBoardIndexHash(index BulletinBoardIndex) (string, error) {
+	// Use the repository's length-prefixed transcript instead of Go's JSON
+	// field order so independent Node/Python collectors can reproduce the
+	// exact commitment without relying on one runtime's object serialization.
+	fields := []string{
+		"mongbas/bulletin-board-index/v1",
+		index.Schema,
+		index.ElectionID,
+		strconv.FormatInt(index.PublishedAt, 10),
+		strconv.Itoa(index.PageSize),
+		"ballots", strconv.Itoa(index.BallotCount), strconv.Itoa(len(index.BallotPageHashes)),
+	}
+	fields = append(fields, index.BallotPageHashes...)
+	fields = append(fields, "receipts", strconv.Itoa(index.ReceiptCount), strconv.Itoa(len(index.ReceiptPageHashes)))
+	fields = append(fields, index.ReceiptPageHashes...)
+	fields = append(fields, "disclosures", strconv.Itoa(index.DisclosureCount), strconv.Itoa(len(index.DisclosurePageHashes)))
+	fields = append(fields, index.DisclosurePageHashes...)
+	return hashWithLengthPrefix(fields...), nil
+}
+
+func bulletinBoardIndexPageHash(page BulletinBoardIndexPage) string {
+	fields := []string{
+		"mongbas/bulletin-board-index-page/v1", page.Schema, page.ElectionID,
+		strconv.FormatInt(page.PublishedAt, 10), page.Section, strconv.Itoa(page.PageNumber),
+		strconv.Itoa(page.Offset), strconv.Itoa(page.NextOffset), strconv.Itoa(page.Total),
+		strconv.Itoa(len(page.Identifiers)),
+	}
+	fields = append(fields, page.Identifiers...)
+	return hashWithLengthPrefix(fields...)
+}
+
+func bulletinIndexPageCount(total int) int {
+	if total == 0 {
+		return 0
+	}
+	return (total + BulletinPageMaxItems - 1) / BulletinPageMaxItems
+}
+
+func bulletinIndexPageKey(electionID, section string, pageNumber int) string {
+	return fmt.Sprintf("BULLETIN_INDEX_PAGE_%s_%s_%06d", electionID, section, pageNumber)
+}
+
+func buildBulletinBoardIndexPages(electionID string, publishedAt int64, section string, identifiers []string) ([]BulletinBoardIndexPage, error) {
+	pages := make([]BulletinBoardIndexPage, 0, bulletinIndexPageCount(len(identifiers)))
+	for offset := 0; offset < len(identifiers); offset += BulletinPageMaxItems {
+		end := offset + BulletinPageMaxItems
+		if end > len(identifiers) {
+			end = len(identifiers)
+		}
+		page := BulletinBoardIndexPage{
+			Schema: "mongbas-bulletin-board-index-page/v1", ElectionID: electionID, PublishedAt: publishedAt,
+			Section: section, PageNumber: offset / BulletinPageMaxItems, Offset: offset,
+			NextOffset: end, Total: len(identifiers), Identifiers: append([]string(nil), identifiers[offset:end]...),
+		}
+		page.IdentifierHash = bulletinBoardIndexPageHash(page)
+		if err := validateBulletinBoardIndexPage(&page); err != nil {
+			return nil, err
+		}
+		pages = append(pages, page)
+	}
+	return pages, nil
+}
+
+func validateBulletinBoardIndexPage(page *BulletinBoardIndexPage) error {
+	if page == nil || page.Schema != "mongbas-bulletin-board-index-page/v1" ||
+		page.PublishedAt < 0 || page.PageNumber < 0 || page.Offset != page.PageNumber*BulletinPageMaxItems ||
+		page.Total < 0 || page.NextOffset < page.Offset || page.NextOffset > page.Total ||
+		page.NextOffset-page.Offset != len(page.Identifiers) || len(page.Identifiers) < 1 ||
+		len(page.Identifiers) > BulletinPageMaxItems {
+		return fmt.Errorf("BulletinBoard index page 구조가 잘못되었습니다")
+	}
+	if err := validateElectionID(page.ElectionID); err != nil {
+		return err
+	}
+	if page.Section != "ballots" && page.Section != "receipts" && page.Section != "disclosures" {
+		return fmt.Errorf("BulletinBoard index page section이 잘못되었습니다")
+	}
+	seen := make(map[string]struct{}, len(page.Identifiers))
+	for _, identifier := range page.Identifiers {
+		if !isCanonicalSHA256Hex(identifier) {
+			return fmt.Errorf("BulletinBoard index page ID가 잘못되었습니다")
+		}
+		if _, exists := seen[identifier]; exists {
+			return fmt.Errorf("BulletinBoard index page ID가 중복되었습니다")
+		}
+		seen[identifier] = struct{}{}
+	}
+	expected := bulletinBoardIndexPageHash(*page)
+	if !isCanonicalSHA256Hex(page.IdentifierHash) || subtle.ConstantTimeCompare([]byte(page.IdentifierHash), []byte(expected)) != 1 {
+		return fmt.Errorf("BulletinBoard index page hash가 일치하지 않습니다")
+	}
+	return nil
+}
+
+func bulletinBoardPageHash(page BulletinBoardPage) (string, error) {
+	page.PageHash = ""
+	encoded, err := json.Marshal(page)
+	if err != nil {
+		return "", fmt.Errorf("BulletinBoard page 직렬화 실패: %w", err)
+	}
+	digest := sha256.Sum256(encoded)
+	return hex.EncodeToString(digest[:]), nil
+}
+
+func validateBulletinBoardIndex(index *BulletinBoardIndex) error {
+	if index == nil || index.Schema != "mongbas-bulletin-board-index/v1" {
+		return fmt.Errorf("BulletinBoard index schema가 잘못되었습니다")
+	}
+	if err := validateElectionID(index.ElectionID); err != nil {
+		return err
+	}
+	if index.PublishedAt < 0 || index.PageSize != BulletinPageMaxItems ||
+		index.BallotCount < 0 || index.BallotCount > BulletinIndexMaxBallots ||
+		index.ReceiptCount < 0 || index.ReceiptCount > BulletinIndexMaxReceipts ||
+		index.DisclosureCount < 0 || index.DisclosureCount > BulletinIndexMaxDisclosures ||
+		len(index.BallotPageHashes) != bulletinIndexPageCount(index.BallotCount) ||
+		len(index.ReceiptPageHashes) != bulletinIndexPageCount(index.ReceiptCount) ||
+		len(index.DisclosurePageHashes) != bulletinIndexPageCount(index.DisclosureCount) {
+		return fmt.Errorf("BulletinBoard index 크기 또는 시간이 잘못되었습니다")
+	}
+	for label, values := range map[string][]string{
+		"ballot-page": index.BallotPageHashes, "receipt-page": index.ReceiptPageHashes, "disclosure-page": index.DisclosurePageHashes,
+	} {
+		seen := make(map[string]struct{}, len(values))
+		for _, value := range values {
+			if !isCanonicalSHA256Hex(value) {
+				return fmt.Errorf("BulletinBoard %s index ID가 잘못되었습니다", label)
+			}
+			if _, exists := seen[value]; exists {
+				return fmt.Errorf("BulletinBoard %s index ID가 중복되었습니다", label)
+			}
+			seen[value] = struct{}{}
+		}
+	}
+	expected, err := bulletinBoardIndexHash(*index)
+	if err != nil {
+		return err
+	}
+	if !isCanonicalSHA256Hex(index.IndexHash) || subtle.ConstantTimeCompare([]byte(index.IndexHash), []byte(expected)) != 1 {
+		return fmt.Errorf("BulletinBoard index hash가 일치하지 않습니다")
+	}
+	return nil
+}
+
+func validateBulletinBoardIndexAgainstManifest(index *BulletinBoardIndex, board *BulletinBoard) error {
+	if err := validateBulletinBoardIndex(index); err != nil {
+		return err
+	}
+	if board == nil || board.ObjectType != "bulletinBoard" || board.ElectionID != index.ElectionID ||
+		board.PublishedAt != index.PublishedAt || board.TotalVotes < 0 ||
+		index.BallotCount != board.TotalVotes {
+		return fmt.Errorf("BulletinBoard index와 published manifest가 일치하지 않습니다")
+	}
+	if board.EncryptionMode == "elgamal-vector-v3" {
+		if index.ReceiptCount != board.TotalVotes+index.DisclosureCount {
+			return fmt.Errorf("BulletinBoard vector index 수가 published manifest와 일치하지 않습니다")
+		}
+	} else if index.ReceiptCount != 0 || index.DisclosureCount != 0 {
+		return fmt.Errorf("non-vector BulletinBoard에 vector index가 포함되었습니다")
+	}
+	return nil
+}
+
 // EncryptedBallot 공개 원장의 개별 암호화 투표
 type EncryptedBallot struct {
 	NullifierHash             string                     `json:"nullifierHash"`
@@ -5184,6 +5405,70 @@ func (c *VotingContract) PublishAuditData(
 		return nil, fmt.Errorf("BulletinBoard 저장 실패: %w", err)
 	}
 
+	ballotIdentifiers := make([]string, len(shuffledBallots))
+	receiptIdentifiers := make([]string, len(vectorReceipts))
+	disclosureIdentifiers := make([]string, len(vectorDisclosures))
+	if len(ballotIdentifiers) > BulletinIndexMaxBallots || len(receiptIdentifiers) > BulletinIndexMaxReceipts ||
+		len(disclosureIdentifiers) > BulletinIndexMaxDisclosures {
+		return nil, fmt.Errorf("BulletinBoard paged index 한도를 초과했습니다")
+	}
+	for position := range shuffledBallots {
+		ballotIdentifiers[position] = shuffledBallots[position].NullifierHash
+	}
+	for position := range vectorReceipts {
+		receiptIdentifiers[position] = vectorReceipts[position].BallotID
+	}
+	for position := range vectorDisclosures {
+		disclosureIdentifiers[position] = vectorDisclosures[position].BallotID
+	}
+	sectionIdentifiers := map[string][]string{
+		"ballots": ballotIdentifiers, "receipts": receiptIdentifiers, "disclosures": disclosureIdentifiers,
+	}
+	sectionPages := make(map[string][]BulletinBoardIndexPage, len(sectionIdentifiers))
+	for _, section := range []string{"ballots", "receipts", "disclosures"} {
+		pages, pageErr := buildBulletinBoardIndexPages(electionID, now, section, sectionIdentifiers[section])
+		if pageErr != nil {
+			return nil, pageErr
+		}
+		sectionPages[section] = pages
+		for _, page := range pages {
+			pageBytes, marshalErr := json.Marshal(page)
+			if marshalErr != nil {
+				return nil, fmt.Errorf("BulletinBoard index page 직렬화 실패: %w", marshalErr)
+			}
+			if putErr := ctx.GetStub().PutState(bulletinIndexPageKey(electionID, section, page.PageNumber), pageBytes); putErr != nil {
+				return nil, fmt.Errorf("BulletinBoard index page 저장 실패: %w", putErr)
+			}
+		}
+	}
+	pageHashes := func(pages []BulletinBoardIndexPage) []string {
+		hashes := make([]string, len(pages))
+		for position := range pages {
+			hashes[position] = pages[position].IdentifierHash
+		}
+		return hashes
+	}
+	index := BulletinBoardIndex{
+		Schema: "mongbas-bulletin-board-index/v1", ElectionID: electionID, PublishedAt: now, PageSize: BulletinPageMaxItems,
+		BallotCount: len(ballotIdentifiers), ReceiptCount: len(receiptIdentifiers), DisclosureCount: len(disclosureIdentifiers),
+		BallotPageHashes: pageHashes(sectionPages["ballots"]), ReceiptPageHashes: pageHashes(sectionPages["receipts"]),
+		DisclosurePageHashes: pageHashes(sectionPages["disclosures"]),
+	}
+	index.IndexHash, err = bulletinBoardIndexHash(index)
+	if err != nil {
+		return nil, err
+	}
+	if err := validateBulletinBoardIndex(&index); err != nil {
+		return nil, err
+	}
+	indexBytes, err := json.Marshal(index)
+	if err != nil {
+		return nil, fmt.Errorf("BulletinBoard index 직렬화 실패: %w", err)
+	}
+	if err := ctx.GetStub().PutState("BULLETIN_INDEX_"+electionID, indexBytes); err != nil {
+		return nil, fmt.Errorf("BulletinBoard index 저장 실패: %w", err)
+	}
+
 	if isElGamal {
 		log.Printf("[PublishAuditData] 게시 완료 — election: %s, ballots: %d, mode: elgamal (ZKP, 키 비공개)", electionID, len(ballots))
 	} else {
@@ -5329,6 +5614,190 @@ func (c *VotingContract) GetBulletinBoard(
 		}
 	}
 	return &bb, nil
+}
+
+// GetBulletinBoardManifest returns the published small manifest without
+// hydrating proof-bearing arrays. It is the bounded starting point for paged
+// export and does not replace the legacy GetBulletinBoard API.
+func (c *VotingContract) GetBulletinBoardManifest(
+	ctx contractapi.TransactionContextInterface,
+	electionID string,
+) (*BulletinBoard, error) {
+	if err := validateElectionID(electionID); err != nil {
+		return nil, err
+	}
+	encoded, err := ctx.GetStub().GetState("BULLETIN_" + electionID)
+	if err != nil {
+		return nil, fmt.Errorf("BulletinBoard manifest 조회 실패: %w", err)
+	}
+	if encoded == nil {
+		return nil, fmt.Errorf("감사 데이터가 아직 게시되지 않았습니다: %s", electionID)
+	}
+	var board BulletinBoard
+	if err := json.Unmarshal(encoded, &board); err != nil {
+		return nil, fmt.Errorf("BulletinBoard manifest 역직렬화 실패: %w", err)
+	}
+	if board.ElectionID != electionID {
+		return nil, fmt.Errorf("BulletinBoard manifest election binding이 잘못되었습니다")
+	}
+	board.EncryptedBallots = make([]EncryptedBallot, 0)
+	board.DecryptionProofs = make([]DecryptionProof, 0)
+	board.VectorBallotReceipts = make([]VectorBallotReceipt, 0)
+	board.VectorAuditDisclosures = make([]VectorAuditDisclosure, 0)
+	return &board, nil
+}
+
+// GetBulletinBoardIndex returns the immutable order committed by
+// PublishAuditData. Older publications must be republished under the additive
+// index implementation before paged export; silently reconstructing a new
+// order would allow two roots for the same published election.
+func (c *VotingContract) GetBulletinBoardIndex(
+	ctx contractapi.TransactionContextInterface,
+	electionID string,
+) (*BulletinBoardIndex, error) {
+	if err := validateElectionID(electionID); err != nil {
+		return nil, err
+	}
+	encoded, err := ctx.GetStub().GetState("BULLETIN_INDEX_" + electionID)
+	if err != nil {
+		return nil, fmt.Errorf("BulletinBoard index 조회 실패: %w", err)
+	}
+	if encoded == nil {
+		return nil, fmt.Errorf("paged BulletinBoard index가 없습니다; 업그레이드 후 audit publication이 필요합니다")
+	}
+	var index BulletinBoardIndex
+	if err := json.Unmarshal(encoded, &index); err != nil {
+		return nil, fmt.Errorf("BulletinBoard index 역직렬화 실패: %w", err)
+	}
+	if index.ElectionID != electionID {
+		return nil, fmt.Errorf("BulletinBoard index election binding이 잘못되었습니다")
+	}
+	manifest, err := c.GetBulletinBoardManifest(ctx, electionID)
+	if err != nil {
+		return nil, err
+	}
+	if err := validateBulletinBoardIndexAgainstManifest(&index, manifest); err != nil {
+		return nil, err
+	}
+	return &index, nil
+}
+
+func (c *VotingContract) GetBulletinBoardPage(
+	ctx contractapi.TransactionContextInterface,
+	electionID string,
+	section string,
+	offset int,
+	limit int,
+) (*BulletinBoardPage, error) {
+	if offset < 0 || limit < 1 || limit > BulletinPageMaxItems {
+		return nil, fmt.Errorf("BulletinBoard page offset/limit이 잘못되었습니다")
+	}
+	index, err := c.GetBulletinBoardIndex(ctx, electionID)
+	if err != nil {
+		return nil, err
+	}
+	page := BulletinBoardPage{
+		Schema: "mongbas-bulletin-board-page/v1", ElectionID: electionID, PublishedAt: index.PublishedAt,
+		IndexHash: index.IndexHash, Section: section, Offset: offset,
+	}
+	var total int
+	var expectedPageHashes []string
+	switch section {
+	case "ballots":
+		total, expectedPageHashes = index.BallotCount, index.BallotPageHashes
+		page.Ballots = make([]EncryptedBallot, 0, limit)
+	case "receipts":
+		total, expectedPageHashes = index.ReceiptCount, index.ReceiptPageHashes
+		page.Receipts = make([]VectorBallotReceipt, 0, limit)
+	case "disclosures":
+		total, expectedPageHashes = index.DisclosureCount, index.DisclosurePageHashes
+		page.Disclosures = make([]VectorAuditDisclosure, 0, limit)
+	default:
+		return nil, fmt.Errorf("BulletinBoard page section이 잘못되었습니다")
+	}
+	page.Total = total
+	if offset > page.Total {
+		return nil, fmt.Errorf("BulletinBoard page offset이 전체 항목 수를 초과합니다")
+	}
+	if offset == page.Total {
+		page.NextOffset = offset
+		page.PageHash, err = bulletinBoardPageHash(page)
+		if err != nil {
+			return nil, err
+		}
+		return &page, nil
+	}
+	pageNumber := offset / BulletinPageMaxItems
+	if pageNumber >= len(expectedPageHashes) {
+		return nil, fmt.Errorf("BulletinBoard index page 범위가 잘못되었습니다")
+	}
+	encodedIndexPage, err := ctx.GetStub().GetState(bulletinIndexPageKey(electionID, section, pageNumber))
+	if err != nil || encodedIndexPage == nil {
+		return nil, fmt.Errorf("BulletinBoard index page 조회 실패")
+	}
+	var indexPage BulletinBoardIndexPage
+	if err := json.Unmarshal(encodedIndexPage, &indexPage); err != nil {
+		return nil, fmt.Errorf("BulletinBoard index page 역직렬화 실패: %w", err)
+	}
+	if err := validateBulletinBoardIndexPage(&indexPage); err != nil || indexPage.ElectionID != electionID ||
+		indexPage.PublishedAt != index.PublishedAt || indexPage.Section != section || indexPage.PageNumber != pageNumber ||
+		indexPage.Total != total || subtle.ConstantTimeCompare([]byte(indexPage.IdentifierHash), []byte(expectedPageHashes[pageNumber])) != 1 {
+		return nil, fmt.Errorf("BulletinBoard index page binding이 잘못되었습니다")
+	}
+	withinPage := offset - indexPage.Offset
+	if withinPage < 0 || withinPage >= len(indexPage.Identifiers) {
+		return nil, fmt.Errorf("BulletinBoard index page offset이 잘못되었습니다")
+	}
+	endWithinPage := withinPage + limit
+	if endWithinPage > len(indexPage.Identifiers) {
+		endWithinPage = len(indexPage.Identifiers)
+	}
+	identifiers := indexPage.Identifiers[withinPage:endWithinPage]
+	for _, identifier := range identifiers {
+		switch section {
+		case "ballots":
+			encoded, stateErr := ctx.GetStub().GetState(identifier)
+			if stateErr != nil || encoded == nil {
+				return nil, fmt.Errorf("BulletinBoard indexed ballot 조회 실패: %s", identifier)
+			}
+			var nul Nullifier
+			if json.Unmarshal(encoded, &nul) != nil || nul.ElectionID != electionID || nul.NullifierHash != identifier || nul.IsPadding {
+				return nil, fmt.Errorf("BulletinBoard indexed ballot binding이 잘못되었습니다: %s", identifier)
+			}
+			page.Ballots = append(page.Ballots, EncryptedBallot{
+				NullifierHash: nul.NullifierHash, EncryptedCandidateID: nul.EncryptedCandidateID,
+				CandidateCommitment: nul.CandidateCommitment, BallotValidityProof: nul.BallotValidityProof,
+				EncryptedCandidateVector:  nul.EncryptedCandidateVector,
+				VectorBallotValidityProof: nul.VectorBallotValidityProof, PreparedBallotID: nul.PreparedBallotID,
+			})
+		case "receipts":
+			encoded, stateErr := ctx.GetStub().GetState("VECTOR_PREP_" + identifier)
+			if stateErr != nil || encoded == nil {
+				return nil, fmt.Errorf("BulletinBoard indexed receipt 조회 실패: %s", identifier)
+			}
+			var receipt VectorBallotReceipt
+			if json.Unmarshal(encoded, &receipt) != nil || receipt.ElectionID != electionID || receipt.BallotID != identifier {
+				return nil, fmt.Errorf("BulletinBoard indexed receipt binding이 잘못되었습니다: %s", identifier)
+			}
+			page.Receipts = append(page.Receipts, receipt)
+		case "disclosures":
+			encoded, stateErr := ctx.GetStub().GetState("VECTOR_AUDIT_" + identifier)
+			if stateErr != nil || encoded == nil {
+				return nil, fmt.Errorf("BulletinBoard indexed disclosure 조회 실패: %s", identifier)
+			}
+			var disclosure VectorAuditDisclosure
+			if json.Unmarshal(encoded, &disclosure) != nil || disclosure.ElectionID != electionID || disclosure.BallotID != identifier || disclosure.Status != "audited" {
+				return nil, fmt.Errorf("BulletinBoard indexed disclosure binding이 잘못되었습니다: %s", identifier)
+			}
+			page.Disclosures = append(page.Disclosures, disclosure)
+		}
+	}
+	page.NextOffset = offset + len(identifiers)
+	page.PageHash, err = bulletinBoardPageHash(page)
+	if err != nil {
+		return nil, err
+	}
+	return &page, nil
 }
 
 // VerifyTallyPublic [PAPER-6] 공개 감사 데이터로 집계를 독립 검증합니다.

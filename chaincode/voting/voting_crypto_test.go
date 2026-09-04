@@ -32,6 +32,160 @@ func TestSingleVectorBallotBulletinProofsSerializeAsArray(t *testing.T) {
 	}
 }
 
+func TestBulletinBoardPagedIndexHashAndBounds(t *testing.T) {
+	index := BulletinBoardIndex{
+		Schema: "mongbas-bulletin-board-index/v1", ElectionID: "paged-election", PublishedAt: 123,
+		PageSize: BulletinPageMaxItems, BallotCount: 2, ReceiptCount: 1, DisclosureCount: 0,
+		BallotPageHashes: []string{strings.Repeat("a", 64)}, ReceiptPageHashes: []string{strings.Repeat("c", 64)},
+		DisclosurePageHashes: []string{},
+	}
+	var err error
+	index.IndexHash, err = bulletinBoardIndexHash(index)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := validateBulletinBoardIndex(&index); err != nil {
+		t.Fatalf("valid paged index rejected: %v", err)
+	}
+
+	mutated := index
+	mutated.BallotPageHashes = append([]string(nil), index.BallotPageHashes...)
+	mutated.BallotPageHashes[0] = strings.Repeat("d", 64)
+	if err := validateBulletinBoardIndex(&mutated); err == nil {
+		t.Fatal("mutated paged index unexpectedly accepted")
+	}
+
+	duplicate := index
+	duplicate.ReceiptCount = BulletinPageMaxItems + 1
+	duplicate.ReceiptPageHashes = []string{strings.Repeat("c", 64), strings.Repeat("c", 64)}
+	duplicate.IndexHash, err = bulletinBoardIndexHash(duplicate)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := validateBulletinBoardIndex(&duplicate); err == nil {
+		t.Fatal("duplicate paged index ID unexpectedly accepted")
+	}
+}
+
+func TestBulletinBoardIndexMustMatchPublishedManifest(t *testing.T) {
+	index := BulletinBoardIndex{
+		Schema: "mongbas-bulletin-board-index/v1", ElectionID: "paged-election", PublishedAt: 123,
+		PageSize: BulletinPageMaxItems, BallotCount: 2, ReceiptCount: 3, DisclosureCount: 1,
+		BallotPageHashes: []string{strings.Repeat("a", 64)}, ReceiptPageHashes: []string{strings.Repeat("c", 64)},
+		DisclosurePageHashes: []string{strings.Repeat("e", 64)},
+	}
+	var err error
+	index.IndexHash, err = bulletinBoardIndexHash(index)
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifest := BulletinBoard{ObjectType: "bulletinBoard", ElectionID: "paged-election", PublishedAt: 123,
+		TotalVotes: 2, EncryptionMode: "elgamal-vector-v3"}
+	if err := validateBulletinBoardIndexAgainstManifest(&index, &manifest); err != nil {
+		t.Fatalf("matching index and manifest rejected: %v", err)
+	}
+
+	for name, mutate := range map[string]func(*BulletinBoard){
+		"election":     func(board *BulletinBoard) { board.ElectionID = "other-election" },
+		"publication":  func(board *BulletinBoard) { board.PublishedAt++ },
+		"ballot-count": func(board *BulletinBoard) { board.TotalVotes++ },
+		"document-type": func(board *BulletinBoard) {
+			board.ObjectType = "other"
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			changed := manifest
+			mutate(&changed)
+			if err := validateBulletinBoardIndexAgainstManifest(&index, &changed); err == nil {
+				t.Fatal("index disconnected from published manifest was accepted")
+			}
+		})
+	}
+}
+
+func TestBulletinBoardIndexPagesAreBoundedAndPositionBound(t *testing.T) {
+	identifiers := make([]string, BulletinPageMaxItems+1)
+	for i := range identifiers {
+		identifiers[i] = fmt.Sprintf("%064x", i+1)
+	}
+	pages, err := buildBulletinBoardIndexPages("paged-election", 123, "ballots", identifiers)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pages) != 2 || len(pages[0].Identifiers) != BulletinPageMaxItems || len(pages[1].Identifiers) != 1 ||
+		pages[0].Offset != 0 || pages[0].NextOffset != BulletinPageMaxItems ||
+		pages[1].Offset != BulletinPageMaxItems || pages[1].NextOffset != len(identifiers) {
+		t.Fatalf("unexpected bounded page split: %+v", pages)
+	}
+	mutated := pages[1]
+	mutated.PageNumber = 0
+	if err := validateBulletinBoardIndexPage(&mutated); err == nil {
+		t.Fatal("position-mutated index page unexpectedly accepted")
+	}
+	mutated = pages[1]
+	mutated.Identifiers = append([]string(nil), mutated.Identifiers...)
+	mutated.Identifiers[0] = strings.Repeat("f", 64)
+	if err := validateBulletinBoardIndexPage(&mutated); err == nil {
+		t.Fatal("identifier-mutated index page unexpectedly accepted")
+	}
+}
+
+func TestBulletinBoardPagedHashesMatchIndependentNodeVectors(t *testing.T) {
+	index := BulletinBoardIndex{
+		Schema: "mongbas-bulletin-board-index/v1", ElectionID: "cross-language", PublishedAt: 1700000000,
+		PageSize: 100, BallotCount: 2, BallotPageHashes: []string{strings.Repeat("a", 64)},
+		ReceiptPageHashes: []string{}, DisclosurePageHashes: []string{},
+	}
+	indexHash, err := bulletinBoardIndexHash(index)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if indexHash != "20d6df9c3e9f7a8f310b47ccb953699114be845d21d63834f569880419a40531" {
+		t.Fatalf("Go/Node index hash vector changed: %s", indexHash)
+	}
+	page := BulletinBoardIndexPage{
+		Schema: "mongbas-bulletin-board-index-page/v1", ElectionID: "cross-language", PublishedAt: 1700000000,
+		Section: "ballots", PageNumber: 0, Offset: 0, NextOffset: 2, Total: 2,
+		Identifiers: []string{strings.Repeat("b", 64), strings.Repeat("c", 64)},
+	}
+	if got := bulletinBoardIndexPageHash(page); got != "0f9185fd036beea2f3bac69bfa39279ca607efa1c62fc89b32d7fb203523a862" {
+		t.Fatalf("Go/Node identifier-page hash vector changed: %s", got)
+	}
+	artifactPage := BulletinBoardPage{
+		Schema: "mongbas-bulletin-board-page/v1", ElectionID: "cross-language", PublishedAt: 1700000000,
+		IndexHash: strings.Repeat("a", 64), Section: "ballots", Offset: 0, NextOffset: 1, Total: 1,
+		Ballots: []EncryptedBallot{{NullifierHash: strings.Repeat("b", 64), CandidateCommitment: strings.Repeat("c", 64), PreparedBallotID: strings.Repeat("d", 64)}},
+	}
+	artifactHash, err := bulletinBoardPageHash(artifactPage)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if artifactHash != "926fbbff1f03403399624f568722b2ab20d349c968beb8ede749d1c130b2b6b6" {
+		t.Fatalf("Go/Node artifact-page hash vector changed: %s", artifactHash)
+	}
+}
+
+func TestBulletinBoardPageHashBindsSectionAndRange(t *testing.T) {
+	page := BulletinBoardPage{Schema: "mongbas-bulletin-board-page/v1", ElectionID: "paged-election", PublishedAt: 123,
+		IndexHash: strings.Repeat("a", 64), Section: "ballots", Offset: 0, NextOffset: 1, Total: 1,
+		Ballots: []EncryptedBallot{{NullifierHash: strings.Repeat("b", 64)}}}
+	first, err := bulletinBoardPageHash(page)
+	if err != nil {
+		t.Fatal(err)
+	}
+	page.Offset = 1
+	second, err := bulletinBoardPageHash(page)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first == second {
+		t.Fatal("page hash did not bind the requested range")
+	}
+	if BulletinPageMaxItems > 100 || BulletinIndexMaxBallots != 10000 {
+		t.Fatal("paged export resource limits changed unexpectedly")
+	}
+}
+
 type castHistoryStub struct {
 	private      map[string][]byte
 	eventName    string
