@@ -18,10 +18,21 @@ opens every commitment and selects the highest event index for each private
 selection class. That manifest is authority/auditor evidence and must never be
 published with the public history.
 
-This module is not yet a live Fabric exporter or checkpoint-v3 implementation.
-It does not change existing bundle roots, schemas, ElGamal/ZKP/threshold tally or
-prove coercion resistance. Fabric peers can still observe the current ledger's
-nullifier writes and transaction-level correlations.
+The current feature branch also includes the corresponding Fabric producer
+path: voting chaincode emits an opaque accepted-cast notice and stores its
+immutable opening in the authorized private collection;
+`application/scripts/export-cast-history-records.js` consumes committed filtered
+blocks in exact block/transaction order, fetches and binds those openings, and
+emits the private producer input. `bin/mongbas-cast-history.js` converts that
+input into separate public history and private selection-manifest artifacts,
+which checkpoint-v3 can bind. This path requires the feature chaincode to be
+deployed and the exporter identity to have collection access; source presence
+alone is not live-deployment evidence.
+
+The producer does not change existing bundle roots, schemas,
+ElGamal/ZKP/threshold tally or prove coercion resistance. Fabric peers and an
+authorized private-data host can still observe transaction-level correlations,
+and current ledger nullifier writes remain election-linkable.
 
 This package verifies a canonical election bundle without connecting to the Mongbas backend, a Fabric peer, chaincode, or a state database. It uses only Node.js built-ins and has no runtime npm dependencies.
 
