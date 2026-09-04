@@ -2,7 +2,10 @@
 
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
+const crypto = require('node:crypto');
+const os = require('node:os');
 const path = require('node:path');
+const { spawnSync } = require('node:child_process');
 const test = require('node:test');
 
 test('Fabric CouchDB development ports are loopback-only because they contain PDC plaintext', () => {
@@ -18,6 +21,48 @@ test('single-host Fabric profile does not publish CA, node, admin or operations 
   const published = [...compose.matchAll(/^\s+-\s+"([^"\n]+:[0-9]+)"\s*(?:#.*)?$/gm)].map(match => match[1]);
   assert.ok(published.length >= 20, 'expected the complete single-host published-port inventory');
   for (const mapping of published) assert.match(mapping, /^127\.0\.0\.1:[0-9]+:[0-9]+$/);
+});
+
+test('Fabric compose has no public fixed service credentials and requires a protected secret file', () => {
+  const compose = fs.readFileSync(path.join(__dirname, '../../network/docker-compose.yaml'), 'utf8');
+  const network = fs.readFileSync(path.join(__dirname, '../../network/scripts/network.sh'), 'utf8');
+  const prepare = fs.readFileSync(path.join(__dirname, '../../network/scripts/prepare-network-secrets.sh'), 'utf8');
+  assert.doesNotMatch(compose, /adminpw|voter1pw|start -b admin:/);
+  for (const name of ['MONGBAS_COUCHDB_USER', 'MONGBAS_COUCHDB_PASSWORD',
+    'MONGBAS_CA_EC_BOOTSTRAP_USER', 'MONGBAS_CA_EC_BOOTSTRAP_PASSWORD',
+    'MONGBAS_CA_PARTY_BOOTSTRAP_USER', 'MONGBAS_CA_PARTY_BOOTSTRAP_PASSWORD',
+    'MONGBAS_CA_CIVIL_BOOTSTRAP_USER', 'MONGBAS_CA_CIVIL_BOOTSTRAP_PASSWORD']) {
+    assert.match(compose, new RegExp(`\\$\\{${name}:\\?`));
+  }
+  assert.match(network, /prepare-network-secrets\.sh/);
+  assert.match(prepare, /umask 077/);
+  assert.match(prepare, /openssl rand -hex 32/);
+  assert.match(prepare, /chmod 0600/);
+  assert.doesNotMatch(prepare, /set\s+-x|echo\s+.*(?:password|_password)/i);
+});
+
+test('network secret preparation is private, complete and non-overwriting', t => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'mongbas-network-secrets-'));
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+  const script = path.join(__dirname, '../../network/scripts/prepare-network-secrets.sh');
+  const first = spawnSync(script, [directory], { encoding: 'utf8' });
+  assert.equal(first.status, 0, first.stderr);
+  assert.equal(first.stdout, '');
+  const secretFile = path.join(directory, '.env');
+  assert.equal(fs.lstatSync(secretFile).isFile(), true);
+  assert.equal(fs.lstatSync(secretFile).isSymbolicLink(), false);
+  assert.equal(fs.statSync(secretFile).mode & 0o777, 0o600);
+  const before = fs.readFileSync(secretFile);
+  const names = before.toString('utf8').trim().split('\n').map(line => line.split('=', 1)[0]);
+  assert.deepEqual(names, ['MONGBAS_COUCHDB_USER', 'MONGBAS_COUCHDB_PASSWORD',
+    'MONGBAS_CA_EC_BOOTSTRAP_USER', 'MONGBAS_CA_EC_BOOTSTRAP_PASSWORD',
+    'MONGBAS_CA_PARTY_BOOTSTRAP_USER', 'MONGBAS_CA_PARTY_BOOTSTRAP_PASSWORD',
+    'MONGBAS_CA_CIVIL_BOOTSTRAP_USER', 'MONGBAS_CA_CIVIL_BOOTSTRAP_PASSWORD']);
+  const digest = crypto.createHash('sha256').update(before).digest('hex');
+  const second = spawnSync(script, [directory], { encoding: 'utf8' });
+  assert.equal(second.status, 0, second.stderr);
+  assert.equal(second.stdout, '');
+  assert.equal(crypto.createHash('sha256').update(fs.readFileSync(secretFile)).digest('hex'), digest);
 });
 
 test('Linux runtime containment is persistent and applies before Tailscale forwarding', () => {

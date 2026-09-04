@@ -175,6 +175,7 @@ generate_genesis() {
 start_network() {
   step "3/5 Docker 컨테이너 실행..."
   cd "$NETWORK_DIR"
+  "${NETWORK_DIR}/scripts/prepare-network-secrets.sh" "${NETWORK_DIR}"
   docker compose up -d
   info "컨테이너 기동 대기 (35초)..."
   sleep 35

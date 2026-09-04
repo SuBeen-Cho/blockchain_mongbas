@@ -44,6 +44,8 @@ cd ..
 > ⏱️ **첫 네트워크 기동 시 Docker 이미지 다운로드로 5~10분** 걸릴 수 있습니다(이후엔 빠름).
 > 이후 `demo-start.sh`가 네트워크가 안 떠 있으면 자동으로 `up + deploy`까지 수행합니다.
 
+첫 `network.sh up`은 `network/.env`에 CouchDB와 세 조직 CA bootstrap 인증값을 난수로 만들고 mode `0600`으로 저장합니다. Git에서 제외되며 재실행 시 덮어쓰지 않습니다. 기존 ledger/CouchDB가 있는 서버에서 이 파일을 삭제하거나 다른 값으로 교체하면 peer의 state DB 연결이 끊길 수 있으므로, 인증 회전은 snapshot·복구 지점과 유지보수 창을 갖춘 별도 운영 절차로 수행합니다.
+
 Linux에서는 실제 secret과 실행 결과를 저장소 밖(예: `~/mongbas-runtime/`)에 두고 `application/.env`는 외부 secret 파일을 가리키는 심볼릭 링크로 구성하는 것을 권장한다.
 
 ---
