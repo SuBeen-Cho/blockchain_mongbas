@@ -440,14 +440,17 @@ EOF
   # ── 커밋 준비 확인 (3/3 모두 true 확인) ─────────────────────
   step "[배포 5/7] 커밋 준비 상태 확인..."
   use_ec0
-  peer lifecycle chaincode checkcommitreadiness \
+  READINESS_JSON=$(peer lifecycle chaincode checkcommitreadiness \
     --channelID "${CHANNEL_NAME}" \
     --name "${CHAINCODE_NAME}" \
     --version "${CHAINCODE_VERSION}" \
     --sequence "${NEXT_SEQ}" \
     --collections-config "${CHAINCODE_PATH}/collection_config.json" \
-    --output json
-  # 기대값: {"approvals":{"ElectionCommissionMSP":true,"PartyObserverMSP":true,"CivilSocietyMSP":true}}
+    --output json)
+  printf '%s\n' "${READINESS_JSON}"
+  printf '%s' "${READINESS_JSON}" | python3 -c \
+    'import json,sys; a=json.load(sys.stdin).get("approvals",{}); required=["ElectionCommissionMSP","PartyObserverMSP","CivilSocietyMSP"]; sys.exit(0 if all(a.get(m) is True for m in required) else 1)' \
+    || error "all required MSP approvals are not ready; refusing chaincode commit"
 
   # ── 커밋 (2-of-3 충족: 선관위 + 참관 정당 피어를 endorser로 지정) ──
   step "[배포 6/7] 체인코드 커밋 (선관위 + 참관 정당 피어로 2-of-3 충족)..."

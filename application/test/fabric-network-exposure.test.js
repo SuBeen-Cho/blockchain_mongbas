@@ -49,3 +49,12 @@ test('chaincode upgrade preserves the running image and rejects a definition rac
   assert.ok(script.indexOf('CURRENT_SEQ_BEFORE_BUILD=') < script.indexOf('docker compose -f'),
     'committed definition and rollback image must be captured before rebuilding the mutable tag');
 });
+
+test('chaincode deployment requires all three named MSP approvals before commit', () => {
+  const script = fs.readFileSync(path.join(__dirname, '../../network/scripts/network.sh'), 'utf8');
+  assert.match(script, /READINESS_JSON=\$\(peer lifecycle chaincode checkcommitreadiness/);
+  assert.match(script, /ElectionCommissionMSP.*PartyObserverMSP.*CivilSocietyMSP/);
+  assert.match(script, /all required MSP approvals are not ready/);
+  assert.ok(script.indexOf('all required MSP approvals are not ready') < script.indexOf('peer lifecycle chaincode commit'),
+    'exact three-MSP readiness gate must execute before lifecycle commit');
+});
