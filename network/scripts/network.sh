@@ -468,6 +468,14 @@ EOF
     --peerAddresses "${PARTY_ADDR}"  --tlsRootCertFiles "${PARTY_TLS}" \
     --peerAddresses "${CIVIL_ADDR}"  --tlsRootCertFiles "${CIVIL_TLS}"
 
+  COMMITTED_JSON=$(peer lifecycle chaincode querycommitted \
+    --channelID "${CHANNEL_NAME}" --name "${CHAINCODE_NAME}" --output json)
+  printf '%s\n' "${COMMITTED_JSON}"
+  printf '%s' "${COMMITTED_JSON}" | python3 -c \
+    'import json,sys; d=json.load(sys.stdin); expected_seq=int(sys.argv[1]); expected_version=sys.argv[2]; sys.exit(0 if d.get("sequence")==expected_seq and d.get("version")==expected_version else 1)' \
+    "${NEXT_SEQ}" "${CHAINCODE_VERSION}" \
+    || error "committed chaincode definition does not match requested sequence/version"
+
   # InitLedger is a first-deployment operation. Re-invoking it during an
   # upgrade adds an unrelated ledger mutation and makes preservation evidence
   # ambiguous even if the implementation happens to be idempotent.

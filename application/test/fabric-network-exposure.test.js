@@ -58,3 +58,11 @@ test('chaincode deployment requires all three named MSP approvals before commit'
   assert.ok(script.indexOf('all required MSP approvals are not ready') < script.indexOf('peer lifecycle chaincode commit'),
     'exact three-MSP readiness gate must execute before lifecycle commit');
 });
+
+test('chaincode deployment verifies the committed sequence and version after commit', () => {
+  const script = fs.readFileSync(path.join(__dirname, '../../network/scripts/network.sh'), 'utf8');
+  assert.match(script, /COMMITTED_JSON=\$\(peer lifecycle chaincode querycommitted/);
+  assert.match(script, /committed chaincode definition does not match requested sequence\/version/);
+  assert.ok(script.indexOf('peer lifecycle chaincode commit') < script.indexOf('COMMITTED_JSON='));
+  assert.ok(script.indexOf('COMMITTED_JSON=') < script.indexOf('if [ "${CURRENT_SEQ}" -eq 0 ]'));
+});
