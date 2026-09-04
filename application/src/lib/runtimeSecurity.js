@@ -1,7 +1,7 @@
 'use strict';
 
-function parseListenHost(value = '0.0.0.0') {
-  const host = String(value || '0.0.0.0').trim();
+function parseListenHost(value = '127.0.0.1') {
+  const host = String(value || '127.0.0.1').trim();
   if (!['0.0.0.0', '127.0.0.1', '::', '::1'].includes(host)) {
     throw new Error('LISTEN_HOST must be 0.0.0.0, 127.0.0.1, ::, or ::1');
   }

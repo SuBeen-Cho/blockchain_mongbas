@@ -24,8 +24,9 @@ test('trust proxy is explicit and bounded', () => {
 });
 
 test('listen host is explicit and restricted to local or all-interface addresses', () => {
-  assert.equal(parseListenHost(undefined), '0.0.0.0');
+  assert.equal(parseListenHost(undefined), '127.0.0.1');
   assert.equal(parseListenHost('127.0.0.1'), '127.0.0.1');
+  assert.equal(parseListenHost('0.0.0.0'), '0.0.0.0');
   assert.equal(parseListenHost('::1'), '::1');
   assert.throws(() => parseListenHost('localhost'), /LISTEN_HOST/);
   assert.throws(() => parseListenHost('192.0.2.1'), /LISTEN_HOST/);
