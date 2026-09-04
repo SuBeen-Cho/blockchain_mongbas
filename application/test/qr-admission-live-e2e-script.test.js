@@ -23,3 +23,11 @@ test('live QR E2E script keeps admission, credential and nullifier material out 
   assert.match(source, /vote\.revoted === true/);
   assert.match(source, /initialCount \+ 1/);
 });
+
+test('DKG live evaluation uses the bounded one-use admission path', () => {
+  const source = fs.readFileSync(path.join(__dirname, '../scripts/dkg-election-e2e.js'), 'utf8');
+  assert.match(source, /\/api\/credential\/demo-admission'/);
+  assert.match(source, /\/api\/credential\/demo-admission\/redeem'/);
+  assert.doesNotMatch(source, /post\('\/api\/credential\/idemix'/);
+  assert.match(source, /credentialIssuance: 'one-use-demo-admission'/);
+});

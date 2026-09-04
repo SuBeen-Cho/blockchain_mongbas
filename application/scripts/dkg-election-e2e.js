@@ -59,6 +59,18 @@ function requireFailure(result, label) {
   if (result.status >= 200 && result.status < 300) throw new Error(`${label}: unexpectedly succeeded`);
 }
 
+async function issueCredential(electionID, enrollmentID) {
+  const admission = requireSuccess(await post('/api/credential/demo-admission', {
+    electionID, ttlSeconds: 120,
+  }), `admission ${enrollmentID}`);
+  if (!/^[A-Za-z0-9_-]{43}$/.test(admission?.token || '')) throw new Error(`admission token shape: ${enrollmentID}`);
+  const issued = requireSuccess(await post('/api/credential/demo-admission/redeem', {
+    electionID, token: admission.token,
+  }), `redeem ${enrollmentID}`);
+  if (!issued?.credential || !issued?.nullifierMaterial) throw new Error(`credential binding material: ${enrollmentID}`);
+  return issued;
+}
+
 function readPrivateShare(trusteeID) {
   const file = path.join(SECRET_ROOT, trusteeID, 'trustee-share.json');
   if (process.platform !== 'win32' && (fs.statSync(file).mode & 0o777) !== 0o600) throw new Error(`loose trustee share permissions: ${trusteeID}`);
@@ -126,9 +138,7 @@ async function main() {
   // Preserve a public audit-or-cast disclosure in the same DKG election so
   // bundle v5 proves both the key ceremony and cast-as-intended audit path.
   const auditEnrollmentID = 'demo004';
-  const auditCredential = requireSuccess(await post('/api/credential/idemix', {
-    enrollmentID: auditEnrollmentID, enrollmentSecret: `${auditEnrollmentID}pw`, electionID,
-  }), 'audit credential');
+  const auditCredential = await issueCredential(electionID, auditEnrollmentID);
   const auditNullifierHash = crypto.createHash('sha256').update(auditCredential.nullifierMaterial + electionID + blinding).digest('hex');
   const auditBallot = generateVectorBallot(pubKey, 0, CANDIDATES.length);
   const auditNonce = crypto.randomBytes(32).toString('hex');
@@ -147,9 +157,7 @@ async function main() {
 
   for (let index = 0; index < CANDIDATES.length; index += 1) {
     const enrollmentID = `demo${String(index + 1).padStart(3, '0')}`;
-    const issued = requireSuccess(await post('/api/credential/idemix', {
-      enrollmentID, enrollmentSecret: `${enrollmentID}pw`, electionID,
-    }), `credential ${index + 1}`);
+    const issued = await issueCredential(electionID, enrollmentID);
     const nullifierHash = crypto.createHash('sha256').update(issued.nullifierMaterial + electionID + blinding).digest('hex');
     const ballot = generateVectorBallot(pubKey, index, CANDIDATES.length);
     const clientNonce = crypto.randomBytes(32).toString('hex');
@@ -207,6 +215,7 @@ async function main() {
     approvals: 3, rejected: ['pre-approval-activation', 'wrong-transcript-hash', 'shared-pdc-partial', 'tampered-partial', 'threshold-minus-one', 'duplicate-partial'],
     totalVotes: tally.totalVotes, results: tally.results,
     externalPartialDecryptions: tally.vectorPartialDecryptions.length, auditedBallots: 1, auditPublished: true,
+    credentialIssuance: 'one-use-demo-admission',
     partialGenerationMode: PARTIAL_HELPER ? 'external-helper' : 'in-process-secret-file',
   })}\n`);
 }
