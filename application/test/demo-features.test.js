@@ -66,3 +66,16 @@ test('Fabric volume and ledger deletion requires an exact confirmation before se
   const source = fs.readFileSync(network, 'utf8');
   assert.ok(source.indexOf('--confirm-destroy-ledger') < source.indexOf('docker-compose.yaml'));
 });
+
+test('Fabric BatchTimeout mutation requires an exact value and confirmation before setup', () => {
+  const update = path.join(__dirname, '../../scripts/update-batchtimeout.sh');
+  for (const args of [[], ['2s'], ['invalid', '--confirm-channel-config-update']]) {
+    const result = spawnSync(update, args, { encoding: 'utf8' });
+    assert.equal(result.status, 2, args.join(' '));
+    assert.equal(result.stdout, '', args.join(' '));
+  }
+  const source = fs.readFileSync(update, 'utf8');
+  assert.match(source, /--confirm-channel-config-update/);
+  assert.ok(source.indexOf('--confirm-channel-config-update') < source.indexOf('PROJECT_DIR='));
+  assert.doesNotMatch(source, /trap\s+"rm -rf/);
+});

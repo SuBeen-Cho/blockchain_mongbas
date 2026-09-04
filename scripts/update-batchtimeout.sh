@@ -2,18 +2,24 @@
 # ============================================================
 # scripts/update-batchtimeout.sh — Fabric 채널 BatchTimeout 변경
 #
-# 사용법: ./scripts/update-batchtimeout.sh <NEW_TIMEOUT>
-#   예시: ./scripts/update-batchtimeout.sh 500ms
-#         ./scripts/update-batchtimeout.sh 1s
-#         ./scripts/update-batchtimeout.sh 2s
-#         ./scripts/update-batchtimeout.sh 5s
+# 사용법: ./scripts/update-batchtimeout.sh <NEW_TIMEOUT> --confirm-channel-config-update
+#   예시: ./scripts/update-batchtimeout.sh 2s --confirm-channel-config-update
 #
 # 전제조건: 네트워크 실행 중 (network.sh up + deploy)
 # ============================================================
 
 set -euo pipefail
 
-NEW_TIMEOUT="${1:-2s}"
+if [ "$#" -ne 2 ] || [ "$2" != "--confirm-channel-config-update" ]; then
+  echo "REFUSED: this command signs and submits a Fabric channel configuration update" >&2
+  echo "usage: $0 <positive integer ms|s> --confirm-channel-config-update" >&2
+  exit 2
+fi
+NEW_TIMEOUT="$1"
+if ! [[ "${NEW_TIMEOUT}" =~ ^[1-9][0-9]*(ms|s)$ ]]; then
+  echo "invalid BatchTimeout: expected a positive integer followed by ms or s" >&2
+  exit 2
+fi
 
 PROJECT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 NETWORK_DIR="${PROJECT_DIR}/network"
@@ -35,8 +41,15 @@ ORDERER_ADMIN_MSP="${CRYPTO}/ordererOrganizations/orderer.voting.example.com/use
 
 EC_TLS="${CRYPTO}/peerOrganizations/ec.voting.example.com/peers/peer0.ec.voting.example.com/tls/ca.crt"
 
-TMPDIR=$(mktemp -d)
-trap "rm -rf ${TMPDIR}" EXIT
+batchtimeout_tmpdir=$(mktemp -d)
+cleanup() {
+  case "${batchtimeout_tmpdir:-}" in
+    /tmp/*|/var/folders/*) [ ! -d "${batchtimeout_tmpdir}" ] || rm -rf -- "${batchtimeout_tmpdir}" ;;
+    *) echo "refusing unsafe temporary cleanup: ${batchtimeout_tmpdir:-unset}" >&2 ;;
+  esac
+}
+trap cleanup EXIT
+TMPDIR="${batchtimeout_tmpdir}"
 
 echo "============================================================"
 echo " BatchTimeout 변경: ${NEW_TIMEOUT}"
