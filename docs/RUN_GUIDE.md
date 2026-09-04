@@ -110,7 +110,7 @@ cd mongbas/network
 ## 3. 전시 쇼케이스 (Netlify)
 - 배포 주소: `https://mongbas-blockchain.netlify.app/`
 - 소스: `frontend/public/showcase3.html`
-- 하단 QR은 **Firebase 릴레이**를 폴링해 현재 세션 키오스크 URL로 자동 갱신 → 서브 컴퓨터(다른 PC)에 띄워도 동작.
+- 일회용 admission token이 포함된 실시간 QR은 공개 쇼케이스와 외부 릴레이에 보내지 않는다. 투표 QR은 tailnet HTTPS 관제판에서만 생성한다.
 - 화면 갱신 시: 빌드 후 `dist/showcase3.html`(+ logo/icons/shots)을 Netlify에 재배포.
 
 ---

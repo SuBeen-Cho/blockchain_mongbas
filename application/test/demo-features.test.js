@@ -50,6 +50,16 @@ test('recommended tailnet run guide never invokes the public-tunnel launcher', (
   assert.doesNotMatch(guide, /`demo-up\.sh`/);
 });
 
+test('public showcase never relays an admission URL through third parties', () => {
+  const showcase = fs.readFileSync(path.join(__dirname, '../../frontend/public/showcase3.html'), 'utf8');
+  const guide = fs.readFileSync(path.join(__dirname, '../../docs/RUN_GUIDE.md'), 'utf8');
+  for (const source of [showcase, guide]) {
+    assert.doesNotMatch(source, /firebaseio\.com\/kioskUrl/i);
+    assert.doesNotMatch(source, /api\.qrserver\.com/i);
+    assert.doesNotMatch(source, /Firebase 릴레이/);
+  }
+});
+
 test('destructive demo reset requires an exact confirmation before any operation', () => {
   const reset = path.join(__dirname, '../../scripts/demo-reset.sh');
   const result = spawnSync(reset, [], { encoding: 'utf8' });

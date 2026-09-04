@@ -446,7 +446,7 @@
       <div class="kick" style="color:#bcd4ff">Try it now</div>
       <h2 style="margin-top:14px">직접 투표해보세요.</h2>
       <p style="margin:20px auto 0;max-width:560px;color:rgba(255,255,255,.9);font-weight:500;font-size:clamp(16px,1.6vw,19px)">QR을 찍고 한 표를 던진 뒤, 당신의 추적번호로 내 표를 직접 검증해보세요.</p>
-      <div class="qr" id="liveqr"><span id="qrwait" style="font-size:13px;line-height:1.4">QR 대기 중<br><span style="font-weight:600;opacity:.7">새 세션을 시작하세요</span></span></div>
+      <div class="qr" id="liveqr"><span id="qrwait" style="font-size:13px;line-height:1.4">Tailnet 관제판<br><span style="font-weight:600;opacity:.7">일회용 QR을 사용하세요</span></span></div>
     </div>
   </div></section>
 
@@ -511,24 +511,6 @@ const navlinks=[...document.querySelectorAll('.nav-links a')];
 ['#paradox','#props','#perf','#exp'].forEach((id,i)=>ScrollTrigger.create({trigger:id,start:'top 50%',end:'bottom 50%',
   onToggle:s=>{if(s.isActive){navlinks.forEach(a=>a.classList.remove('on'));navlinks[i]&&navlinks[i].classList.add('on')}}}));
 </script>
-<!-- 라이브 QR: Firebase 릴레이를 폴링해 현재 세션 키오스크 QR을 자동 표시 -->
-<script>
-(function(){
-  var FB='https://mongbas-blockchain-vote-default-rtdb.firebaseio.com/kioskUrl.json';
-  var box=document.getElementById('liveqr'); if(!box) return; var cur='';
-  function render(url){
-    if(!url||url===cur) return; cur=url;
-    box.innerHTML='<img alt="투표 QR" style="width:150px;height:150px;display:block" '
-      +'src="https://api.qrserver.com/v1/create-qr-code/?size=300x300&margin=0&data='+encodeURIComponent(url)+'">';
-  }
-  function poll(){
-    fetch(FB+'?t='+Date.now(),{cache:'no-store'}).then(function(r){return r.json();}).then(function(d){
-      var url=d&&(typeof d==='string'?d:d.url);
-      if(typeof url==='string'&&url.indexOf('http')===0) render(url);
-    }).catch(function(){});
-  }
-  poll(); setInterval(poll,4000);
-})();
-</script>
+<!-- 일회용 admission token이 든 URL은 외부 릴레이나 QR 생성 서비스로 전송하지 않는다. -->
 </body>
 </html>
