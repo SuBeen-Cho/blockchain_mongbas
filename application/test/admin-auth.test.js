@@ -2,6 +2,8 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
 
 const MODULE = require.resolve('../src/middleware/admin');
 
@@ -74,4 +76,27 @@ test('route classifier protects state changes and share retrieval only', () => {
   }
   assert.equal(ADMIN_GET_PATH.test('/e/shares/1'), true);
   assert.equal(ADMIN_GET_PATH.test('/e/tally'), false);
+});
+
+test('every public mutation router has an explicit authentication boundary', () => {
+  const { PUBLIC_POST_PATH } = loadAdmin({ ADMIN_API_TOKEN: 'd'.repeat(48) });
+  const elections = fs.readFileSync(path.join(__dirname, '../src/routes/elections.js'), 'utf8');
+  const electionPosts = [...elections.matchAll(/router\.post\('([^']+)'/g)].map(match => match[1]);
+  assert.deepEqual(electionPosts.sort(), [
+    '/', '/:id/activate', '/:id/close', '/:id/dkg-approvals', '/:id/external-partial-decryptions',
+    '/:id/keysharing', '/:id/legacy-demo-event-disabled', '/:id/merkle', '/:id/partial-decryptions',
+    '/:id/proof', '/:id/publish-audit', '/:id/revoke-credential', '/:id/seed-votes', '/:id/shares',
+    '/:id/verify-elgamal', '/:id/verify-public', '/:id/verify-tally',
+  ].sort());
+  const publicPosts = electionPosts.filter(route => PUBLIC_POST_PATH.test(route.replace(':id', 'e')));
+  assert.deepEqual(publicPosts.sort(), ['/:id/proof', '/:id/verify-elgamal', '/:id/verify-public'].sort());
+
+  const app = fs.readFileSync(path.join(__dirname, '../src/app.js'), 'utf8');
+  assert.match(app, /app\.use\('\/api\/elections', guardElectionAdminRoutes, electionsRouter\)/);
+  assert.match(app, /app\.use\('\/api\/vote',[\s\S]{0,100}requireVoterAuth, voteRouter\)/);
+
+  const credentials = fs.readFileSync(path.join(__dirname, '../src/routes/credential.js'), 'utf8');
+  assert.match(credentials, /router\.post\('\/demo-admission', requireDemoEndpoint, requireAdmin,/);
+  assert.match(credentials, /router\.post\('\/demo-admission\/redeem', requireDemoEndpoint,/);
+  assert.match(credentials, /router\.post\('\/idemix',/);
 });
