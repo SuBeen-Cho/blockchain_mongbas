@@ -252,7 +252,7 @@ cmd_up() {
 #   1. CCAAS 패키지 생성 (connection.json + metadata.json)
 #   2. 4개 피어에 설치
 #   3. 패키지 ID 조회 → voting-chaincode 컨테이너에 주입
-#   4. 3개 기관 승인 → 커밋 → InitLedger
+#   4. 3개 기관 승인 → 커밋 → 최초 정의에서만 InitLedger
 # ──────────────────────────────────────────────────────────────
 cmd_deploy() {
   cd "$NETWORK_DIR"
@@ -430,19 +430,25 @@ EOF
     --peerAddresses "${PARTY_ADDR}"  --tlsRootCertFiles "${PARTY_TLS}" \
     --peerAddresses "${CIVIL_ADDR}"  --tlsRootCertFiles "${CIVIL_TLS}"
 
-  # ── InitLedger (선관위 + 참관 정당 동시 서명으로 2-of-3 충족) ─
-  step "[배포 7/7] InitLedger 호출..."
-  use_ec0
-  peer chaincode invoke \
-    --channelID "${CHANNEL_NAME}" \
-    --name "${CHAINCODE_NAME}" \
-    --ctor '{"function":"InitLedger","Args":[]}' \
-    --tls \
-    --cafile "${ORDERER_CA}" \
-    --orderer localhost:7050 \
-    --peerAddresses "${EC0_ADDR}"   --tlsRootCertFiles "${EC0_TLS}" \
-    --peerAddresses "${PARTY_ADDR}" --tlsRootCertFiles "${PARTY_TLS}" \
-    --waitForEvent
+  # InitLedger is a first-deployment operation. Re-invoking it during an
+  # upgrade adds an unrelated ledger mutation and makes preservation evidence
+  # ambiguous even if the implementation happens to be idempotent.
+  if [ "${CURRENT_SEQ}" -eq 0 ]; then
+    step "[배포 7/7] 최초 InitLedger 호출..."
+    use_ec0
+    peer chaincode invoke \
+      --channelID "${CHANNEL_NAME}" \
+      --name "${CHAINCODE_NAME}" \
+      --ctor '{"function":"InitLedger","Args":[]}' \
+      --tls \
+      --cafile "${ORDERER_CA}" \
+      --orderer localhost:7050 \
+      --peerAddresses "${EC0_ADDR}"   --tlsRootCertFiles "${EC0_TLS}" \
+      --peerAddresses "${PARTY_ADDR}" --tlsRootCertFiles "${PARTY_TLS}" \
+      --waitForEvent
+  else
+    info "[배포 7/7] 기존 sequence ${CURRENT_SEQ} upgrade: InitLedger를 호출하지 않습니다."
+  fi
 
   echo ""
   info "체인코드 배포 완료! (3개 기관 승인 / 2-of-3 커밋)"
@@ -594,7 +600,7 @@ case "${1:-help}" in
     echo ""
     echo "  up     — 인증서 생성 + 제네시스 블록 + Docker 네트워크 실행"
     echo "  down   — 컨테이너 종료 및 볼륨 삭제"
-    echo "  deploy — 체인코드 3개 기관 설치·승인·2-of-3 커밋·InitLedger"
+    echo "  deploy — 체인코드 3개 기관 설치·승인·2-of-3 커밋·최초 InitLedger"
     echo "  test   — 투표 → Nullifier 확인 → 이중투표 차단 smoke test"
     echo "  clean  — 완전 초기화 (인증서·아티팩트·볼륨 포함)"
     ;;
