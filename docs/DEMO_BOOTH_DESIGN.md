@@ -353,9 +353,9 @@ npm start    # :3000, dist/도 서빙
 
 # 4) tailnet-only HTTPS (QR용) — 계정 Serve 활성화 후에만
 tailscale serve --bg http://127.0.0.1:3000
-#   → https://xxxx.trycloudflare.com/?app=kiosk&e=... 를 QR로
-#   대안: ngrok http 3000 (무료는 첫 방문 경고 페이지 있음)
-#   백업: 같은 WiFi면 CORS_ORIGIN에 노트북 LAN IP 추가 후 http://192.168.x.x:3000
+#   → tailscale serve status에 표시된 https://<tailnet-host>/ 주소를 사용
+#   휴대폰도 같은 tailnet에 가입되어야 하며 Funnel은 사용하지 않음
+#   공개 tunnel 또는 평문 LAN HTTP로 자동 fallback하지 않음
 ```
 - **시연 중 하는 일**: 관제판 [새 세션] / [종료 & 결과] / 내 표 검증. 끝.
 
