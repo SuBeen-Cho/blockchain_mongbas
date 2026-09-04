@@ -85,3 +85,13 @@ test('CCAAS packaging uses a private temporary directory instead of deleting a f
   assert.match(script, /chmod 0700 "\$\{CCAAS_PKG\}"/);
   assert.match(script, /rm -rf -- "\$\{CCAAS_PKG\}"/);
 });
+
+test('CCAAS candidate is running before approval and callable before current tag advances', () => {
+  const script = fs.readFileSync(path.join(__dirname, '../../network/scripts/network.sh'), 'utf8');
+  assert.match(script, /candidate failed to remain running before lifecycle approval/);
+  assert.match(script, /GetSecurityProperties/);
+  assert.match(script, /committed candidate chaincode is not callable/);
+  assert.ok(script.indexOf('candidate failed to remain running') < script.indexOf('peer lifecycle chaincode approveformyorg'));
+  assert.ok(script.indexOf('committed candidate chaincode is not callable') <
+    script.indexOf('docker image tag "${DEPLOY_IMAGE_TAG}" voting-chaincode:1.0'));
+});

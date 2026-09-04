@@ -426,6 +426,9 @@ EOF
     "${DEPLOY_IMAGE_TAG}"
   info "  CCAAS candidate 기동 완료: ${CHAINCODE_CONTAINER_NAME} (PackageID: ${PACKAGE_ID:0:40}...)"
   sleep 3
+  CANDIDATE_RUNNING=$(docker inspect -f '{{.State.Running}}' "${CHAINCODE_CONTAINER_NAME}" 2>/dev/null || true)
+  [ "${CANDIDATE_RUNNING}" = "true" ] \
+    || error "candidate failed to remain running before lifecycle approval"
 
   # ── 현재 커밋된 시퀀스 조회 → 다음 시퀀스 계산 ─────────────
   use_ec0
@@ -503,6 +506,20 @@ EOF
     'import json,sys; d=json.load(sys.stdin); expected_seq=int(sys.argv[1]); expected_version=sys.argv[2]; sys.exit(0 if d.get("sequence")==expected_seq and d.get("version")==expected_version else 1)' \
     "${NEXT_SEQ}" "${CHAINCODE_VERSION}" \
     || error "committed chaincode definition does not match requested sequence/version"
+  use_ec0
+  CANDIDATE_CALLABLE=false
+  for _attempt in 1 2 3 4 5 6 7 8 9 10; do
+    if peer chaincode query \
+      --channelID "${CHANNEL_NAME}" \
+      --name "${CHAINCODE_NAME}" \
+      --ctor '{"function":"GetSecurityProperties","Args":[]}' >/dev/null 2>&1; then
+      CANDIDATE_CALLABLE=true
+      break
+    fi
+    sleep 3
+  done
+  [ "${CANDIDATE_CALLABLE}" = "true" ] \
+    || error "committed candidate chaincode is not callable"
   if [ "${CURRENT_SEQ_BEFORE_BUILD}" -gt 0 ]; then
     docker image tag "${DEPLOY_IMAGE_TAG}" voting-chaincode:1.0
     info "mutable current image tag advanced after verified commit: ${DEPLOY_IMAGE_TAG}"
