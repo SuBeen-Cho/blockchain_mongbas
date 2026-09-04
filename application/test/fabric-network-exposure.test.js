@@ -66,3 +66,14 @@ test('chaincode deployment verifies the committed sequence and version after com
   assert.ok(script.indexOf('peer lifecycle chaincode commit') < script.indexOf('COMMITTED_JSON='));
   assert.ok(script.indexOf('COMMITTED_JSON=') < script.indexOf('if [ "${CURRENT_SEQ}" -eq 0 ]'));
 });
+
+test('CCAAS upgrade uses a sequence-bound candidate without replacing live code before commit', () => {
+  const script = fs.readFileSync(path.join(__dirname, '../../network/scripts/network.sh'), 'utf8');
+  assert.match(script, /CHAINCODE_LABEL=.*seq\$\{NEXT_SEQ_BEFORE_BUILD\}/);
+  assert.match(script, /CHAINCODE_CONTAINER_NAME=.*seq-\$\{NEXT_SEQ_BEFORE_BUILD\}/);
+  assert.match(script, /"address": "\$\{CHAINCODE_CONTAINER_NAME\}:7052"/);
+  assert.match(script, /if \[ "\$\{CURRENT_SEQ_BEFORE_BUILD\}" -eq 0 \]; then[\s\S]*docker rm -f voting-chaincode/);
+  assert.match(script, /else[\s\S]*candidate container already exists; refusing to replace it/);
+  assert.ok(script.indexOf('docker run -d') < script.indexOf('peer lifecycle chaincode commit'));
+  assert.ok(script.indexOf('peer lifecycle chaincode commit') < script.indexOf('docker image tag "${DEPLOY_IMAGE_TAG}" voting-chaincode:1.0'));
+});

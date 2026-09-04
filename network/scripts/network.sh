@@ -286,6 +286,17 @@ cmd_deploy() {
     --channelID "${CHANNEL_NAME}" --name "${CHAINCODE_NAME}" \
     --output json 2>/dev/null \
     | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('sequence',0))" 2>/dev/null || echo "0")
+  NEXT_SEQ_BEFORE_BUILD=$((CURRENT_SEQ_BEFORE_BUILD + 1))
+  DEPLOY_IMAGE_TAG="voting-chaincode:1.0"
+  CHAINCODE_CONTAINER_NAME="voting-chaincode"
+  if [ "${CURRENT_SEQ_BEFORE_BUILD}" -gt 0 ]; then
+    # A CCAAS package binds connection metadata, not the executable image.
+    # Use a new package label and network address so the current definition
+    # continues to execute the old container until lifecycle commit succeeds.
+    CHAINCODE_LABEL="${CHAINCODE_NAME}_${CHAINCODE_VERSION}_seq${NEXT_SEQ_BEFORE_BUILD}"
+    DEPLOY_IMAGE_TAG="voting-chaincode:candidate-seq-${NEXT_SEQ_BEFORE_BUILD}"
+    CHAINCODE_CONTAINER_NAME="voting-chaincode-seq-${NEXT_SEQ_BEFORE_BUILD}"
+  fi
   if [ "${CURRENT_SEQ_BEFORE_BUILD}" -gt 0 ]; then
     CURRENT_IMAGE_ID=$(docker image inspect voting-chaincode:1.0 --format '{{.Id}}' 2>/dev/null) \
       || error "기존 sequence ${CURRENT_SEQ_BEFORE_BUILD} chaincode image가 없어 안전한 upgrade 복구 지점을 만들 수 없습니다."
@@ -303,14 +314,15 @@ cmd_deploy() {
   # A CCAAS package contains connection metadata only. Rebuild the executable
   # image so a lifecycle upgrade never restarts stale chaincode code.
   step "[배포 0/7] 현재 소스로 CCAAS 이미지 재빌드..."
-  if [ "${NETWORK_DIR}" = "${DEFAULT_NETWORK_DIR}" ] && [ "${CHAINCODE_PATH}" = "${PROJECT_DIR}/chaincode/voting" ]; then
+  if [ "${CURRENT_SEQ_BEFORE_BUILD}" -eq 0 ] && \
+     [ "${NETWORK_DIR}" = "${DEFAULT_NETWORK_DIR}" ] && [ "${CHAINCODE_PATH}" = "${PROJECT_DIR}/chaincode/voting" ]; then
     docker compose -f "${NETWORK_DIR}/docker-compose.yaml" build voting-chaincode
   else
     # A feature checkout may intentionally keep Fabric identities and channel
     # artifacts in a protected operational checkout. Build the executable from
     # the explicitly selected source instead of the compose file's relative
     # context, which may otherwise rebuild stale main-branch code.
-    docker build -t voting-chaincode:1.0 "${CHAINCODE_PATH}"
+    docker build -t "${DEPLOY_IMAGE_TAG}" "${CHAINCODE_PATH}"
   fi
 
   step "[배포 1/7] CCAAS 패키지 생성..."
@@ -318,9 +330,9 @@ cmd_deploy() {
   rm -rf "${CCAAS_PKG}" && mkdir -p "${CCAAS_PKG}"
 
   # connection.json: 피어가 체인코드 서비스에 연결할 주소
-  cat > "${CCAAS_PKG}/connection.json" << 'EOF'
+  cat > "${CCAAS_PKG}/connection.json" << EOF
 {
-  "address": "voting-chaincode:7052",
+  "address": "${CHAINCODE_CONTAINER_NAME}:7052",
   "dial_timeout": "10s",
   "tls_required": false
 }
@@ -373,16 +385,23 @@ EOF
     || error "방금 생성한 CCAAS package ID가 peer0.ec 설치 목록에 없습니다."
   info "Package ID: ${PACKAGE_ID}"
 
-  # voting-chaincode 컨테이너에 패키지 ID 설정 후 재시작
-  info "  CCAAS 컨테이너에 CHAINCODE_ID 주입..."
+  # First deployment owns the conventional container. An upgrade starts a
+  # sequence-bound candidate alongside the still-live prior definition.
+  info "  CCAAS candidate에 CHAINCODE_ID 주입..."
   if [ -z "${ED25519_PUBLIC_KEY_DER_B64:-}" ]; then
     warn "  ED25519_PUBLIC_KEY_DER_B64 미설정: ed25519 credential의 체인코드 직접 검증은 실패합니다."
     warn "  application 디렉터리에서 'npm run keys:ed25519'로 키를 생성한 뒤 공개키를 export 하세요."
   fi
   cd "$NETWORK_DIR"
-  docker rm -f voting-chaincode 2>/dev/null || true
+  if [ "${CURRENT_SEQ_BEFORE_BUILD}" -eq 0 ]; then
+    docker rm -f voting-chaincode 2>/dev/null || true
+  else
+    if docker inspect "${CHAINCODE_CONTAINER_NAME}" >/dev/null 2>&1; then
+      error "candidate container already exists; refusing to replace it: ${CHAINCODE_CONTAINER_NAME}"
+    fi
+  fi
   docker run -d \
-    --name voting-chaincode \
+    --name "${CHAINCODE_CONTAINER_NAME}" \
     --network voting-net \
     --user 65532:65532 \
     --read-only \
@@ -395,8 +414,8 @@ EOF
     -e PS_ISSUER_PUBLIC_KEY_B64="${PS_ISSUER_PUBLIC_KEY_B64:-}" \
     -e BBS_PUBLIC_KEY_B64="${BBS_PUBLIC_KEY_B64:-}" \
     -e ALLOW_BYPASS_CREDENTIAL="${ALLOW_BYPASS_CREDENTIAL:-false}" \
-    voting-chaincode:1.0
-  info "  CCAAS 컨테이너 기동 완료 (PackageID: ${PACKAGE_ID:0:40}...)"
+    "${DEPLOY_IMAGE_TAG}"
+  info "  CCAAS candidate 기동 완료: ${CHAINCODE_CONTAINER_NAME} (PackageID: ${PACKAGE_ID:0:40}...)"
   sleep 3
 
   # ── 현재 커밋된 시퀀스 조회 → 다음 시퀀스 계산 ─────────────
@@ -407,7 +426,7 @@ EOF
     | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('sequence',0))" 2>/dev/null || echo "0")
   [ "${CURRENT_SEQ}" = "${CURRENT_SEQ_BEFORE_BUILD}" ] \
     || error "definition changed during chaincode build/install: expected sequence ${CURRENT_SEQ_BEFORE_BUILD}, got ${CURRENT_SEQ}"
-  NEXT_SEQ=$((CURRENT_SEQ + 1))
+  NEXT_SEQ="${NEXT_SEQ_BEFORE_BUILD}"
   info "현재 시퀀스: ${CURRENT_SEQ} → 다음 시퀀스: ${NEXT_SEQ}"
 
   # ── 3개 기관 각각 승인 (n-of-m 핵심) ────────────────────────
@@ -475,6 +494,10 @@ EOF
     'import json,sys; d=json.load(sys.stdin); expected_seq=int(sys.argv[1]); expected_version=sys.argv[2]; sys.exit(0 if d.get("sequence")==expected_seq and d.get("version")==expected_version else 1)' \
     "${NEXT_SEQ}" "${CHAINCODE_VERSION}" \
     || error "committed chaincode definition does not match requested sequence/version"
+  if [ "${CURRENT_SEQ_BEFORE_BUILD}" -gt 0 ]; then
+    docker image tag "${DEPLOY_IMAGE_TAG}" voting-chaincode:1.0
+    info "mutable current image tag advanced after verified commit: ${DEPLOY_IMAGE_TAG}"
+  fi
 
   # InitLedger is a first-deployment operation. Re-invoking it during an
   # upgrade adds an unrelated ledger mutation and makes preservation evidence
