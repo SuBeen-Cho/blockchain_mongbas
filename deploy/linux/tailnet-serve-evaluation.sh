@@ -8,7 +8,9 @@ approval="${1:-}"
 ensure_runtime
 require_cmd curl
 require_cmd node
+require_cmd pgrep
 require_cmd sha256sum
+require_cmd ss
 require_cmd tailscale
 
 if pgrep -af '[v]erifier-evaluation\.sh' >/dev/null 2>&1; then

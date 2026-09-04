@@ -11,9 +11,12 @@ expected_origin="${2:-}"
 
 ensure_runtime
 require_cmd curl
+require_cmd docker
 require_cmd git
+require_cmd pgrep
 require_cmd python3
 require_cmd sha256sum
+require_cmd ss
 require_cmd sudo
 require_cmd systemctl
 

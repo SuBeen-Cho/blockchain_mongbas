@@ -10,6 +10,9 @@ test('tailnet QR deployment wrapper preserves state and refuses unsafe overlap',
   assert.match(script, /APPLY_TAILNET_QR_PROFILE_WITHOUT_RESET/);
   assert.match(script, /https:\/\/\*\.ts\.net/);
   assert.match(script, /pgrep -af '\[v\]erifier-evaluation\\\.sh'/);
+  for (const command of ['docker', 'pgrep', 'ss']) {
+    assert.match(script, new RegExp(`require_cmd ${command}`));
+  }
   assert.match(script, /status --porcelain/);
   assert.match(script, /service-before\.txt/);
   assert.match(script, /listeners-before\.txt/);

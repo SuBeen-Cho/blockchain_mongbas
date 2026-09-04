@@ -9,6 +9,9 @@ test('Serve evidence wrapper is tailnet-only, non-overwriting and rollback-capab
   const source = fs.readFileSync(path.join(__dirname, '../../deploy/linux/tailnet-serve-evaluation.sh'), 'utf8');
   assert.match(source, /ENABLE_TAILNET_ONLY_SERVE/);
   assert.match(source, /pgrep -af '\[v\]erifier-evaluation\\\.sh'/);
+  for (const command of ['pgrep', 'ss']) {
+    assert.match(source, new RegExp(`require_cmd ${command}`));
+  }
   assert.match(source, /endsWith\('\.ts\.net\.'\)/);
   assert.match(source, /No serve config/);
   assert.match(source, /tailscale serve --bg --yes http:\/\/127\.0\.0\.1:3000/);
