@@ -278,6 +278,27 @@ cmd_deploy() {
     error "CREDENTIAL_SECRET 길이 부족: 최소 32바이트가 필요합니다."
   fi
 
+  # The compose/build tag is mutable. Before an upgrade rebuilds it, preserve
+  # the exact running image under the committed sequence so a failed rollout
+  # has an executable recovery point. First deployment has no prior image.
+  use_ec0
+  CURRENT_SEQ_BEFORE_BUILD=$(peer lifecycle chaincode querycommitted \
+    --channelID "${CHANNEL_NAME}" --name "${CHAINCODE_NAME}" \
+    --output json 2>/dev/null \
+    | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('sequence',0))" 2>/dev/null || echo "0")
+  if [ "${CURRENT_SEQ_BEFORE_BUILD}" -gt 0 ]; then
+    CURRENT_IMAGE_ID=$(docker image inspect voting-chaincode:1.0 --format '{{.Id}}' 2>/dev/null) \
+      || error "기존 sequence ${CURRENT_SEQ_BEFORE_BUILD} chaincode image가 없어 안전한 upgrade 복구 지점을 만들 수 없습니다."
+    ROLLBACK_IMAGE_TAG="voting-chaincode:rollback-seq-${CURRENT_SEQ_BEFORE_BUILD}"
+    if ROLLBACK_IMAGE_ID=$(docker image inspect "${ROLLBACK_IMAGE_TAG}" --format '{{.Id}}' 2>/dev/null); then
+      [ "${ROLLBACK_IMAGE_ID}" = "${CURRENT_IMAGE_ID}" ] \
+        || error "${ROLLBACK_IMAGE_TAG}가 현재 실행 image와 달라 덮어쓰기를 거부합니다."
+    else
+      docker image tag "${CURRENT_IMAGE_ID}" "${ROLLBACK_IMAGE_TAG}"
+    fi
+    info "upgrade recovery image 보존: ${ROLLBACK_IMAGE_TAG} (${CURRENT_IMAGE_ID})"
+  fi
+
   # ── CCAAS 패키지 생성 ─────────────────────────────────────────
   # A CCAAS package contains connection metadata only. Rebuild the executable
   # image so a lifecycle upgrade never restarts stale chaincode code.
@@ -384,6 +405,8 @@ EOF
     --channelID "${CHANNEL_NAME}" --name "${CHAINCODE_NAME}" \
     --output json 2>/dev/null \
     | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('sequence',0))" 2>/dev/null || echo "0")
+  [ "${CURRENT_SEQ}" = "${CURRENT_SEQ_BEFORE_BUILD}" ] \
+    || error "definition changed during chaincode build/install: expected sequence ${CURRENT_SEQ_BEFORE_BUILD}, got ${CURRENT_SEQ}"
   NEXT_SEQ=$((CURRENT_SEQ + 1))
   info "현재 시퀀스: ${CURRENT_SEQ} → 다음 시퀀스: ${NEXT_SEQ}"
 

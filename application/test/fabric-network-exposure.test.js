@@ -39,3 +39,13 @@ test('chaincode upgrade never re-invokes InitLedger on an existing channel defin
   assert.match(script, /else[\s\S]*?기존 sequence \$\{CURRENT_SEQ\} upgrade: InitLedger를 호출하지 않습니다/);
   assert.equal((script.match(/--ctor '\{"function":"InitLedger","Args":\[\]\}'/g) || []).length, 1);
 });
+
+test('chaincode upgrade preserves the running image and rejects a definition race before commit', () => {
+  const script = fs.readFileSync(path.join(__dirname, '../../network/scripts/network.sh'), 'utf8');
+  assert.match(script, /CURRENT_SEQ_BEFORE_BUILD=.*querycommitted/);
+  assert.match(script, /rollback-seq-\$\{CURRENT_SEQ_BEFORE_BUILD\}/);
+  assert.match(script, /docker image tag "\$\{CURRENT_IMAGE_ID\}" "\$\{ROLLBACK_IMAGE_TAG\}"/);
+  assert.match(script, /CURRENT_SEQ.*CURRENT_SEQ_BEFORE_BUILD[\s\S]*definition changed during chaincode build\/install/);
+  assert.ok(script.indexOf('CURRENT_SEQ_BEFORE_BUILD=') < script.indexOf('docker compose -f'),
+    'committed definition and rollback image must be captured before rebuilding the mutable tag');
+});
