@@ -601,6 +601,43 @@ test('builds and verifies vector-v3 one-hot ballots and per-candidate threshold 
   assert.equal(verifyBundle(bundle).valid, false, 'tampered vector sum proof must fail');
 });
 
+test('vector bundle resource limits reject oversized dimensions before group arithmetic', () => {
+  const original = buildVectorBundle();
+  const tooManyBallots = structuredClone(original);
+  tooManyBallots.ballots = Array.from({ length: 10_001 }, () => ({}));
+  assert.match(verifyBundle(tooManyBallots).errors.join('\n'), /ballots: .*exceeds limit/);
+
+  const tooManyReceipts = structuredClone(original);
+  tooManyReceipts.vectorBallotReceipts = Array.from({ length: 20_001 }, () => ({}));
+  assert.match(verifyBundle(tooManyReceipts).errors.join('\n'), /vectorBallotReceipts: .*exceeds limit/);
+
+  const tooManyCandidates = structuredClone(original);
+  tooManyCandidates.configuration.candidates = Array.from({ length: 33 }, (_, index) => `candidate-${index}`);
+  assert.match(verifyBundle(tooManyCandidates).errors.join('\n'), /configuration\.candidates invalid/);
+
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'mongbas-vector-bounds-'));
+  try {
+    const oversizedPath = path.join(directory, 'oversized.json');
+    fs.writeFileSync(oversizedPath, canonicalize(tooManyBallots));
+    const reference = spawnSync('python3', [path.join(__dirname, '../reference/python_bundle_v4_verify.py'), oversizedPath],
+      { encoding: 'utf8', timeout: 30_000 });
+    assert.equal(reference.status, 1, 'independent verifier accepted an oversized ballot array');
+    assert.match(reference.stderr, /ballot limits/);
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('vector-v4 schema declares the same 10,000-ballot bounds as runtime without the scalar 9,999 cap', () => {
+  const schema = JSON.parse(fs.readFileSync(path.join(__dirname, '../schema/election-bundle-v4.schema.json'), 'utf8'));
+  assert.equal(schema.properties.ballots.maxItems, 10_000);
+  assert.equal(schema.properties.vectorBallotReceipts.maxItems, 20_000);
+  assert.equal(schema.properties.vectorAuditDisclosures.maxItems, 10_000);
+  assert.equal(schema.$defs.vectorConfiguration.properties.candidates.maxItems, 32);
+  assert.equal(schema.$defs.vectorTally.properties.totalVotes.maximum, 10_000);
+  assert.equal(schema.$defs.vectorTally.properties.results.additionalProperties.maximum, 10_000);
+});
+
 test('independent Python/OpenSSL verifier checks the complete vector-v4 bundle', () => {
   const bundle = buildVectorBundle();
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'mongbas-python-bundle-v4-'));

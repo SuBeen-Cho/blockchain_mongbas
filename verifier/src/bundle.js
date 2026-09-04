@@ -2,6 +2,23 @@
 
 const crypto = require('node:crypto');
 const { ALGORITHM, P, canonicalize, merkleRoot, unsignedBundle } = require('./verify');
+const {
+  MAX_BALLOTS, MAX_CANDIDATES, MAX_ORGANIZATIONS, MAX_VECTOR_RECEIPTS, MAX_VECTOR_DISCLOSURES,
+} = require('./limits');
+
+function requireSourceBounds(source) {
+  if (!Array.isArray(source?.ballots) || source.ballots.length === 0 || source.ballots.length > MAX_BALLOTS) {
+    throw new Error(`bundle source ballots must contain 1..${MAX_BALLOTS} entries`);
+  }
+  const candidates = source.configuration?.candidates;
+  if (!Array.isArray(candidates) || candidates.length < 2 || candidates.length > MAX_CANDIDATES) {
+    throw new Error(`bundle source candidates must contain 2..${MAX_CANDIDATES} entries`);
+  }
+  if (!Array.isArray(source.configuration?.organizations) || source.configuration.organizations.length < 1 ||
+      source.configuration.organizations.length > MAX_ORGANIZATIONS) {
+    throw new Error(`bundle source organizations must contain 1..${MAX_ORGANIZATIONS} entries`);
+  }
+}
 
 function requireString(value, label) {
   if (typeof value !== 'string' || value.length === 0) throw new Error(`${label} is required`);
@@ -16,6 +33,7 @@ function splitCiphertext(value, label) {
 
 function buildUnsignedBundle(source) {
   if (source?.schema !== 'mongbas-election-bundle-source/v1') throw new Error('unsupported bundle source schema');
+  requireSourceBounds(source);
   if (source.encryptionMode === 'elgamal-vector-v3') return buildUnsignedVectorBundle(source);
   if (source.encryptionMode !== 'elgamal') throw new Error('bundle supports ElGamal elections only');
   if (!Array.isArray(source.ballots) || source.ballots.length === 0) throw new Error('bundle source contains no ballots');
@@ -97,7 +115,12 @@ function buildUnsignedBundle(source) {
 }
 
 function buildUnsignedVectorBundle(source) {
-  if (!Array.isArray(source.ballots) || source.ballots.length === 0) throw new Error('bundle source contains no ballots');
+  if (!Array.isArray(source.vectorBallotReceipts) || source.vectorBallotReceipts.length > MAX_VECTOR_RECEIPTS) {
+    throw new Error(`vector receipts must contain at most ${MAX_VECTOR_RECEIPTS} entries`);
+  }
+  if (!Array.isArray(source.vectorAuditDisclosures) || source.vectorAuditDisclosures.length > MAX_VECTOR_DISCLOSURES) {
+    throw new Error(`vector disclosures must contain at most ${MAX_VECTOR_DISCLOSURES} entries`);
+  }
   const candidateCount = source.configuration?.candidates?.length;
   if (!Number.isInteger(candidateCount) || candidateCount < 2) throw new Error('invalid candidate configuration');
   const ballots = source.ballots.map((ballot, index) => {

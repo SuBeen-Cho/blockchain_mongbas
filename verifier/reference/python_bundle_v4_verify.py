@@ -4,6 +4,13 @@ import json, re, sys
 import python_bundle_v1_verify as core
 import python_bundle_v2_verify as threshold
 
+MAX_BALLOTS=10_000
+MAX_CANDIDATES=32
+MAX_ORGANIZATIONS=32
+MAX_SIGNATURES=32
+MAX_VECTOR_RECEIPTS=20_000
+MAX_VECTOR_DISCLOSURES=10_000
+
 def require_time(value,label):
     if not isinstance(value,int) or isinstance(value,bool) or value < 0: core.fail(f'{label}: invalid timestamp')
 def artifact_hash(election,candidates,vector,proof):
@@ -76,7 +83,7 @@ def verify_partials(y,aggregates,results,candidates,shares,partials):
 
 def verify_audit(bundle,y):
     election,candidates=bundle['configuration']['electionID'],bundle['configuration']['candidates']; receipts=bundle['vectorBallotReceipts']; disclosures=bundle['vectorAuditDisclosures']
-    if not isinstance(receipts,list) or not isinstance(disclosures,list): core.fail('audit arrays')
+    if not isinstance(receipts,list) or len(receipts)>MAX_VECTOR_RECEIPTS or not isinstance(disclosures,list) or len(disclosures)>MAX_VECTOR_DISCLOSURES: core.fail('audit array limits')
     by_id={}
     for receipt in receipts:
         core.exact(receipt,['schema','ballotID','electionID','artifactHash','status','createdAt','createdTxID','terminalAt','terminalTxID'],'receipt')
@@ -117,19 +124,19 @@ def verify(bundle, skip_signatures=False):
     core.exact(bundle['algorithms'],['canonicalization','hash','signature','tally'],'algorithms')
     if bundle['algorithms']!={'canonicalization':'mongbas-canonical-json-v1','hash':'sha-256','signature':'ed25519','tally':'mongbas-exp-elgamal-vector-threshold-v3'}: core.fail('algorithm mismatch')
     config=bundle['configuration']; core.exact(config,['electionID','candidates','signatureThreshold','organizations'],'configuration'); election,candidates=config['electionID'],config['candidates']
-    if not isinstance(election,str) or not re.fullmatch(r'[A-Za-z0-9_.-]{1,256}',election) or not isinstance(candidates,list) or len(candidates)<2 or any(not isinstance(x,str) or not x for x in candidates) or len(set(candidates))!=len(candidates): core.fail('configuration')
+    if not isinstance(election,str) or not re.fullmatch(r'[A-Za-z0-9_.-]{1,256}',election) or not isinstance(candidates,list) or not 2<=len(candidates)<=MAX_CANDIDATES or any(not isinstance(x,str) or not x or len(x)>256 for x in candidates) or len(set(candidates))!=len(candidates): core.fail('configuration')
     keys={}; threshold_count=config['signatureThreshold']; orgs=config['organizations']
-    if not isinstance(threshold_count,int) or isinstance(threshold_count,bool) or not isinstance(orgs,list) or not 1<=threshold_count<=len(orgs): core.fail('signature configuration')
+    if not isinstance(threshold_count,int) or isinstance(threshold_count,bool) or not isinstance(orgs,list) or not 1<=threshold_count<=len(orgs)<=MAX_ORGANIZATIONS: core.fail('signature configuration')
     for org in orgs:
         core.exact(org,['id','ed25519PublicKeyDer'],'organization')
-        if not isinstance(org['id'],str) or not org['id'] or org['id'] in keys: core.fail('organization')
+        if not isinstance(org['id'],str) or not org['id'] or len(org['id'])>128 or org['id'] in keys: core.fail('organization')
         keys[org['id']]=core.b64(org['ed25519PublicKeyDer'],'public key')
     core.exact(bundle['provenance'],['gitCommit','imageDigest','softwareVersion'],'provenance'); provenance=bundle['provenance']
     if not re.fullmatch(r'[0-9a-f]{40}',provenance['gitCommit']) or not re.fullmatch(r'sha256:[0-9a-f]{64}',provenance['imageDigest']) or not isinstance(provenance['softwareVersion'],str) or not provenance['softwareVersion']: core.fail('provenance')
     core.exact(bundle['publicKey'],['p','g','y'],'publicKey')
     if bundle['publicKey']['p']!=core.P_HEX or bundle['publicKey']['g']!='2': core.fail('group')
     y=core.integer(bundle['publicKey']['y'],'publicKey.y',subgroup=True); ballots=bundle['ballots']
-    if not isinstance(ballots,list) or not ballots: core.fail('empty ballots')
+    if not isinstance(ballots,list) or not 1<=len(ballots)<=MAX_BALLOTS: core.fail('ballot limits')
     seen=set(); aggregates=[{'c1':1,'c2':1} for _ in candidates]
     for ballot in ballots:
         core.exact(ballot,['nullifierHash','preparedBallotID','candidateCommitment','ciphertextVector','validityProof'],'ballot'); nullifier=ballot['nullifierHash']
@@ -149,7 +156,7 @@ def verify(bundle, skip_signatures=False):
     signatures=bundle['signatures']
     if not skip_signatures:
         unsigned=dict(bundle); del unsigned['signatures']; payload=core.canonical(unsigned).encode()
-        if not isinstance(signatures,list) or len(signatures)<threshold_count: core.fail('insufficient signatures')
+        if not isinstance(signatures,list) or not threshold_count<=len(signatures)<=MAX_SIGNATURES: core.fail('signature limits')
         signed=set()
         for entry in signatures:
             core.exact(entry,['organizationID','signature'],'signature'); identity=entry['organizationID']

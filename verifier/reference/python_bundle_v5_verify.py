@@ -63,7 +63,7 @@ def verify(bundle):
     legacy=dict(bundle); del legacy['keyCeremony']; legacy['schema']='mongbas-election-bundle/v4'
     body=vector.verify(legacy,skip_signatures=True)
     config=bundle['configuration']; organizations={item['id']:core.b64(item['ed25519PublicKeyDer'],'organization key') for item in config['organizations']}; signatures=bundle['signatures']
-    if not isinstance(signatures,list) or len(signatures)<config['signatureThreshold']: core.fail('insufficient signatures')
+    if not isinstance(signatures,list) or not config['signatureThreshold']<=len(signatures)<=vector.MAX_SIGNATURES: core.fail('signature limits')
     unsigned=dict(bundle); del unsigned['signatures']; payload=core.canonical(unsigned).encode(); seen=set()
     for entry in signatures:
         core.exact(entry,['organizationID','signature'],'signature'); identity=entry['organizationID']

@@ -1,6 +1,10 @@
 'use strict';
 
 const crypto = require('node:crypto');
+const {
+  MAX_BALLOTS, MAX_CANDIDATES, MAX_ORGANIZATIONS, MAX_SIGNATURES,
+  MAX_VECTOR_RECEIPTS, MAX_VECTOR_DISCLOSURES,
+} = require('./limits');
 
 const P_HEX = [
   'FFFFFFFFFFFFFFFFC90FDAA22168C234C4C6628B80DC1CD1',
@@ -50,14 +54,15 @@ function validateBundleEnvelope(bundle, schema, tallyAlgorithm, topLevelKeys, { 
   requireExactKeys(bundle.configuration, ['electionID', 'candidates', 'signatureThreshold', 'organizations'], 'configuration');
   if (!/^[A-Za-z0-9_.-]{1,256}$/.test(bundle.configuration.electionID)) throw new Error('configuration.electionID invalid');
   const candidates = bundle.configuration.candidates;
-  if (!Array.isArray(candidates) || candidates.length < 2 || candidates.some(candidate => typeof candidate !== 'string' || candidate.length === 0) ||
+  if (!Array.isArray(candidates) || candidates.length < 2 || candidates.length > MAX_CANDIDATES ||
+      candidates.some(candidate => typeof candidate !== 'string' || candidate.length === 0 || candidate.length > 256) ||
       new Set(candidates).size !== candidates.length) throw new Error('configuration.candidates invalid');
   const organizations = bundle.configuration.organizations;
-  if (!Array.isArray(organizations) || organizations.length === 0) throw new Error('configuration.organizations invalid');
+  if (!Array.isArray(organizations) || organizations.length === 0 || organizations.length > MAX_ORGANIZATIONS) throw new Error('configuration.organizations invalid');
   const organizationIDs = new Set();
   for (const [index, organization] of organizations.entries()) {
     requireExactKeys(organization, ['id', 'ed25519PublicKeyDer'], `organization[${index}]`);
-    if (typeof organization.id !== 'string' || organization.id.length === 0 || organizationIDs.has(organization.id)) throw new Error('duplicate or invalid organization id');
+    if (typeof organization.id !== 'string' || organization.id.length === 0 || organization.id.length > 128 || organizationIDs.has(organization.id)) throw new Error('duplicate or invalid organization id');
     organizationIDs.add(organization.id);
     const publicKey = crypto.createPublicKey({ key: requireCanonicalBase64(organization.ed25519PublicKeyDer, `organization[${index}].ed25519PublicKeyDer`), format: 'der', type: 'spki' });
     if (publicKey.asymmetricKeyType !== 'ed25519') throw new Error(`organization[${index}] key is not Ed25519`);
@@ -78,7 +83,7 @@ function validateBundleEnvelope(bundle, schema, tallyAlgorithm, topLevelKeys, { 
     const count = bundle.tally.results[candidate];
     if (!Number.isSafeInteger(count) || count < 0 || (!vector && count >= Number(HOMOMORPHIC_BASE))) throw new Error(`tally result invalid for ${candidate}`);
   }
-  if (!Array.isArray(bundle.signatures)) throw new Error('signatures invalid');
+  if (!Array.isArray(bundle.signatures) || bundle.signatures.length > MAX_SIGNATURES) throw new Error('signatures invalid');
   bundle.signatures.forEach((signature, index) => {
     requireExactKeys(signature, ['organizationID', 'signature'], `signature[${index}]`);
     if (typeof signature.organizationID !== 'string' || signature.organizationID.length === 0) throw new Error(`signature[${index}].organizationID invalid`);
@@ -574,7 +579,13 @@ function verifyVectorBundle(bundle) {
   const y = check('publicKey.y', () => parseHex(key?.y, 'publicKey.y', { subgroup: true }));
 	if (dkgV5) check('keyCeremony', () => verifyDKGKeyCeremony(bundle));
   const ballots = bundle?.ballots;
-  if (!Array.isArray(ballots) || ballots.length === 0) errors.push('ballots: empty or missing');
+  if (!Array.isArray(ballots) || ballots.length === 0 || ballots.length > MAX_BALLOTS) errors.push('ballots: empty, missing or exceeds limit');
+  if (!Array.isArray(bundle?.vectorBallotReceipts) || bundle.vectorBallotReceipts.length > MAX_VECTOR_RECEIPTS) {
+    errors.push('vectorBallotReceipts: missing or exceeds limit');
+  }
+  if (!Array.isArray(bundle?.vectorAuditDisclosures) || bundle.vectorAuditDisclosures.length > MAX_VECTOR_DISCLOSURES) {
+    errors.push('vectorAuditDisclosures: missing or exceeds limit');
+  }
   const aggregates = Array.isArray(candidates) ? candidates.map(() => ({ c1: 1n, c2: 1n })) : [];
   const seen = new Set();
   // First perform inexpensive envelope, binding and aggregate checks. An
@@ -634,7 +645,7 @@ function verifyBundleUnchecked(bundle) {
   if (key?.p !== P_HEX || key?.g !== '2') errors.push('publicKey: parameters are not RFC 3526 group 14');
   const y = check('publicKey.y', () => parseHex(key?.y, 'publicKey.y', { subgroup: true }));
   const ballots = bundle?.ballots;
-  if (!Array.isArray(ballots) || ballots.length === 0) errors.push('ballots: empty or missing');
+  if (!Array.isArray(ballots) || ballots.length === 0 || ballots.length > MAX_BALLOTS) errors.push('ballots: empty, missing or exceeds limit');
   const seenNullifiers = new Set();
   let aggregateC1 = 1n;
   let aggregateC2 = 1n;
