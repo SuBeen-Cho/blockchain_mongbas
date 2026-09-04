@@ -77,3 +77,11 @@ test('CCAAS upgrade uses a sequence-bound candidate without replacing live code 
   assert.ok(script.indexOf('docker run -d') < script.indexOf('peer lifecycle chaincode commit'));
   assert.ok(script.indexOf('peer lifecycle chaincode commit') < script.indexOf('docker image tag "${DEPLOY_IMAGE_TAG}" voting-chaincode:1.0'));
 });
+
+test('CCAAS packaging uses a private temporary directory instead of deleting a fixed path', () => {
+  const script = fs.readFileSync(path.join(__dirname, '../../network/scripts/network.sh'), 'utf8');
+  assert.doesNotMatch(script, /CCAAS_PKG="\/tmp\/voting_ccaas_pkg"/);
+  assert.match(script, /CCAAS_PKG=\$\(mktemp -d "\$\{TMPDIR:-\/tmp\}\/mongbas-voting-ccaas\.XXXXXX"\)/);
+  assert.match(script, /chmod 0700 "\$\{CCAAS_PKG\}"/);
+  assert.match(script, /rm -rf -- "\$\{CCAAS_PKG\}"/);
+});

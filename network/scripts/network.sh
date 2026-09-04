@@ -326,8 +326,14 @@ cmd_deploy() {
   fi
 
   step "[배포 1/7] CCAAS 패키지 생성..."
-  CCAAS_PKG="/tmp/voting_ccaas_pkg"
-  rm -rf "${CCAAS_PKG}" && mkdir -p "${CCAAS_PKG}"
+  CCAAS_PKG=$(mktemp -d "${TMPDIR:-/tmp}/mongbas-voting-ccaas.XXXXXX")
+  chmod 0700 "${CCAAS_PKG}"
+  cleanup_ccaas_pkg() {
+    if [ -n "${CCAAS_PKG:-}" ] && [ -d "${CCAAS_PKG}" ]; then
+      rm -rf -- "${CCAAS_PKG}"
+    fi
+  }
+  trap cleanup_ccaas_pkg EXIT
 
   # connection.json: 피어가 체인코드 서비스에 연결할 주소
   cat > "${CCAAS_PKG}/connection.json" << EOF
@@ -353,6 +359,9 @@ EOF
   COPYFILE_DISABLE=1 tar czf code.tar.gz connection.json
   COPYFILE_DISABLE=1 tar czf "${NETWORK_DIR}/${CHAINCODE_LABEL}_ccaas.tar.gz" code.tar.gz metadata.json
   cd "${NETWORK_DIR}"
+  rm -rf -- "${CCAAS_PKG}"
+  CCAAS_PKG=""
+  trap - EXIT
   info "CCAAS 패키지 완료: ${CHAINCODE_LABEL}_ccaas.tar.gz"
 
   # ── 4개 피어 전체 설치 ───────────────────────────────────────
