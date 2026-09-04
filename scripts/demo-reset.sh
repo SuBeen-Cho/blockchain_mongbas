@@ -19,7 +19,7 @@ echo "[1/5] 백엔드 종료..."
 demo_stop_owned "${BACKEND_PID_FILE}" "node src/app.js" "${DEMO_REPO_DIR}/application" "백엔드"
 
 echo "[2/5] 네트워크 down (컨테이너 + 볼륨 제거)..."
-(cd network && ./scripts/network.sh down) || true
+(cd network && ./scripts/network.sh down --confirm-destroy-ledger) || true
 
 echo "[3/5] crypto-config 정리 (macOS ACL 'deny delete' 제거 포함)..."
 # Fabric CA가 root/ACL로 만든 잔여물 때문에 일반 rm이 실패하는 경우 대응

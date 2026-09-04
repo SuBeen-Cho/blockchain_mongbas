@@ -53,3 +53,16 @@ test('destructive demo reset requires an exact confirmation before any operation
   const source = fs.readFileSync(reset, 'utf8');
   assert.ok(source.indexOf('--confirm-destroy-demo-ledger') < source.indexOf('demo_runtime_init'));
 });
+
+test('Fabric volume and ledger deletion requires an exact confirmation before setup', () => {
+  const network = path.join(__dirname, '../../network/scripts/network.sh');
+  for (const command of ['down', 'clean']) {
+    const result = spawnSync(network, [command], { encoding: 'utf8' });
+    assert.equal(result.status, 2, command);
+    assert.equal(result.stdout, '', command);
+    assert.match(result.stderr, /REFUSED/, command);
+    assert.match(result.stderr, /--confirm-destroy-ledger/, command);
+  }
+  const source = fs.readFileSync(network, 'utf8');
+  assert.ok(source.indexOf('--confirm-destroy-ledger') < source.indexOf('docker-compose.yaml'));
+});

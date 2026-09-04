@@ -205,8 +205,8 @@ npm run dev                   # http://localhost:5173
 
 ```bash
 cd network
-./scripts/network.sh down     # 컨테이너 중지 및 제거
-./scripts/network.sh clean    # 인증서 및 채널 아티팩트 전체 삭제
+./scripts/network.sh down --confirm-destroy-ledger  # 컨테이너 중지 + 볼륨/원장 삭제
+./scripts/network.sh clean --confirm-destroy-ledger # 인증서·채널 아티팩트·볼륨/원장 전체 삭제
 ```
 
 ### 트러블슈팅
@@ -214,7 +214,7 @@ cd network
 | 증상 | 해결 |
 |------|------|
 | `peer lifecycle` 명령 실패 | `fabric-samples/bin`이 `$PATH`에 포함되어 있는지 확인 |
-| 체인코드 배포 시 시퀀스 에러 | `./scripts/network.sh clean` 후 `up` → `deploy` 재실행 |
+| 체인코드 배포 시 시퀀스 에러 | 먼저 현재 definition/승인 상태를 진단한다. 원장 폐기가 승인된 경우에만 `./scripts/network.sh clean --confirm-destroy-ledger` 후 `up` → `deploy` 재실행 |
 | CouchDB 연결 실패 | `docker ps`로 CouchDB 컨테이너 상태 확인, 포트 충돌 여부 점검 |
 | 프론트엔드 API 연결 실패 | `.env`의 `CORS_ORIGIN`에 `http://localhost:5173` 추가 |
 

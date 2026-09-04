@@ -17,6 +17,16 @@
 
 set -euo pipefail
 
+case "${1:-}" in
+  down|clean)
+    if [ "$#" -ne 2 ] || [ "$2" != "--confirm-destroy-ledger" ]; then
+      echo "REFUSED: $1 deletes Fabric volumes and ledger data" >&2
+      echo "usage: $0 $1 --confirm-destroy-ledger" >&2
+      exit 2
+    fi
+    ;;
+esac
+
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 DEFAULT_NETWORK_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 PROJECT_DIR="$(cd "$DEFAULT_NETWORK_DIR/.." && pwd)"
@@ -596,12 +606,13 @@ case "${1:-help}" in
   test)   cmd_test ;;
   clean)  cmd_clean ;;
   *)
-    echo "사용법: $0 {up|down|deploy|test|clean}"
+    echo "사용법: $0 {up|deploy|test}"
+    echo "        $0 {down|clean} --confirm-destroy-ledger"
     echo ""
     echo "  up     — 인증서 생성 + 제네시스 블록 + Docker 네트워크 실행"
-    echo "  down   — 컨테이너 종료 및 볼륨 삭제"
+    echo "  down   — 확인 인자 필수; 컨테이너 종료 및 볼륨/원장 삭제"
     echo "  deploy — 체인코드 3개 기관 설치·승인·2-of-3 커밋·최초 InitLedger"
     echo "  test   — 투표 → Nullifier 확인 → 이중투표 차단 smoke test"
-    echo "  clean  — 완전 초기화 (인증서·아티팩트·볼륨 포함)"
+    echo "  clean  — 확인 인자 필수; 완전 초기화 (인증서·아티팩트·볼륨/원장 포함)"
     ;;
 esac

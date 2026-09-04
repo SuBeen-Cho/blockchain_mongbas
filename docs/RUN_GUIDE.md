@@ -93,7 +93,9 @@ cd mongbas/frontend && npm run dev
 ### 네트워크 관리
 ```bash
 cd mongbas/network
-./scripts/network.sh up | deploy | test | down | clean
+./scripts/network.sh up | deploy | test
+./scripts/network.sh down --confirm-destroy-ledger
+./scripts/network.sh clean --confirm-destroy-ledger
 ```
 - `down` 정지 / `clean` 암호화 자료까지 완전 초기화. 원장·볼륨·생성 키 삭제를 승인한 경우에만 `./scripts/demo-reset.sh --confirm-destroy-demo-ledger`를 사용한다.
 
