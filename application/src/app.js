@@ -27,7 +27,7 @@ const electionsRouter              = require('./routes/elections');
 const voteRouter                   = require('./routes/vote');
 const { router: credentialRouter } = require('./routes/credential');
 const { requireVoterAuth, measureAuthLatency, idemixStatus } = require('./middleware/auth');
-const { guardElectionAdminRoutes, validateAdminConfiguration } = require('./middleware/admin');
+const { guardElectionAdminRoutes, validateAdminConfiguration, skipAuthenticatedDashboardRead } = require('./middleware/admin');
 const { fabricConcurrencyGate } = require('./lib/fabricConcurrencyGate');
 const { demoEndpointsEnabled } = require('./lib/demoFeatures');
 const { validateRuntimeSecurity, apiRequestShapeGuard } = require('./lib/runtimeSecurity');
@@ -95,12 +95,26 @@ app.use(express.static(FRONTEND_DIST));
 const globalLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 300,
+  skip: skipAuthenticatedDashboardRead,
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: '요청이 너무 많습니다. 잠시 후 다시 시도하세요.' },
 });
+// One control dashboard makes 600 authenticated feed reads per five minutes
+// (three feeds every 1.5 seconds). Keep operational headroom while bounding a
+// stolen administrator token or runaway client independently of the global
+// limiter, which intentionally skips only these exact authenticated reads.
+const dashboardReadLimiter = rateLimit({
+  windowMs: 5 * 60 * 1000,
+  max: 900,
+  skip: (req) => !skipAuthenticatedDashboardRead(req),
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: '관제판 실시간 조회가 너무 많습니다.' },
+});
 if (!DISABLE_RATE_LIMITS) {
   app.use(globalLimiter);
+  app.use(dashboardReadLimiter);
 }
 
 // ── 민감 엔드포인트 Rate Limiting ─────────────────────────────────

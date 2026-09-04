@@ -38,6 +38,12 @@ function requireAdmin(req, res, next) {
 // Any new POST route is therefore protected until explicitly reviewed.
 const PUBLIC_POST_PATH = /^\/[^/]+\/(?:verify-elgamal|proof|verify-public)$/;
 const ADMIN_GET_PATH = /^\/[^/]+\/shares\/[^/]+$/;
+const DASHBOARD_READ_PATH = /^\/api\/elections\/[^/]+\/(?:live-count|live-votes|demo-events)$/;
+
+function skipAuthenticatedDashboardRead(req) {
+  return req.method === 'GET' && DASHBOARD_READ_PATH.test(req.path) && ADMIN_API_TOKEN.length >= 32 &&
+    constantTimeTokenEqual(bearerToken(req), ADMIN_API_TOKEN);
+}
 
 function guardElectionAdminRoutes(req, res, next) {
   if ((req.method === 'POST' && !PUBLIC_POST_PATH.test(req.path)) ||
@@ -58,6 +64,8 @@ module.exports = {
   guardElectionAdminRoutes,
   validateAdminConfiguration,
   constantTimeTokenEqual,
+  skipAuthenticatedDashboardRead,
   PUBLIC_POST_PATH,
   ADMIN_GET_PATH,
+  DASHBOARD_READ_PATH,
 };

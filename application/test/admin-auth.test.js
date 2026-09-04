@@ -78,6 +78,26 @@ test('route classifier protects state changes and share retrieval only', () => {
   assert.equal(ADMIN_GET_PATH.test('/e/tally'), false);
 });
 
+test('global rate-limit bypass is restricted to exact authenticated dashboard reads', () => {
+  const token = 'r'.repeat(48);
+  const { skipAuthenticatedDashboardRead } = loadAdmin({ ADMIN_API_TOKEN: token, NODE_ENV: 'production' });
+  const request = (method, requestPath, authorization = `Bearer ${token}`) => ({
+    method, path: requestPath, get: name => name.toLowerCase() === 'authorization' ? authorization : '',
+  });
+  for (const route of ['live-count', 'live-votes', 'demo-events']) {
+    assert.equal(skipAuthenticatedDashboardRead(request('GET', `/api/elections/election-a/${route}`)), true, route);
+  }
+  assert.equal(skipAuthenticatedDashboardRead(request('GET', '/api/elections/election-a/live-count', 'Bearer wrong')), false);
+  assert.equal(skipAuthenticatedDashboardRead(request('POST', '/api/elections/election-a/live-count')), false);
+  assert.equal(skipAuthenticatedDashboardRead(request('GET', '/api/elections/election-a/tally')), false);
+  assert.equal(skipAuthenticatedDashboardRead(request('GET', '/api/elections/election-a/live-count/extra')), false);
+
+  const app = fs.readFileSync(path.join(__dirname, '../src/app.js'), 'utf8');
+  assert.match(app, /rateLimit\(\{[\s\S]{0,300}skip:\s*skipAuthenticatedDashboardRead/);
+  assert.match(app, /dashboardReadLimiter\s*=\s*rateLimit\(\{[\s\S]{0,300}max:\s*900,[\s\S]{0,200}skip:\s*\(req\)\s*=>\s*!skipAuthenticatedDashboardRead\(req\)/);
+  assert.match(app, /app\.use\(dashboardReadLimiter\)/);
+});
+
 test('every public mutation router has an explicit authentication boundary', () => {
   const { PUBLIC_POST_PATH } = loadAdmin({ ADMIN_API_TOKEN: 'd'.repeat(48) });
   const elections = fs.readFileSync(path.join(__dirname, '../src/routes/elections.js'), 'utf8');
