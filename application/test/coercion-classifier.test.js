@@ -2,7 +2,13 @@
 
 const assert = require('node:assert/strict');
 const test = require('node:test');
-const { evaluateThreshold, trainThreshold, wilsonInterval } = require('../src/lib/coercionClassifier');
+const {
+  evaluateThreshold,
+  meanDifferenceInterval,
+  trainThreshold,
+  wilsonInterval,
+  withinEquivalenceMargin,
+} = require('../src/lib/coercionClassifier');
 
 test('threshold classifier is trained only on training rows and evaluated out of sample', () => {
   const training = [
@@ -21,4 +27,24 @@ test('Wilson interval validates counts and contains the observed proportion', ()
   const interval = wilsonInterval(50, 100);
   assert.ok(interval.lower < 0.5 && interval.upper > 0.5);
   assert.throws(() => wilsonInterval(2, 1), /invalid binomial/);
+});
+
+test('mean-difference interval is symmetric and equivalence requires the whole interval inside the margin', () => {
+  const interval = meanDifferenceInterval([10, 11, 9, 10], [11, 12, 10, 11]);
+  assert.equal(interval.difference, 1);
+  assert.ok(interval.lower < interval.difference);
+  assert.ok(interval.upper > interval.difference);
+  assert.equal(withinEquivalenceMargin(interval, 4), true);
+  assert.equal(withinEquivalenceMargin(interval, 1), false);
+  assert.throws(() => meanDifferenceInterval([1], [1, 2]), /at least two/);
+  assert.throws(() => withinEquivalenceMargin(interval, 0), /positive/);
+});
+
+test('classifier advantage gate uses its confidence upper bound, not point accuracy alone', () => {
+  const small = evaluateThreshold({ field: 'elapsedMs', threshold: 5, direction: 'above-is-panic' }, [
+    { label: 'normal', elapsedMs: 1 },
+    { label: 'panic', elapsedMs: 2 },
+  ]);
+  assert.equal(small.accuracy, 0.5);
+  assert.ok(small.confidence95.upper > 0.6);
 });

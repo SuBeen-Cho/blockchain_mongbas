@@ -38,4 +38,45 @@ function evaluateThreshold(model, rows) {
   return { correct, total: rows.length, accuracy: correct / rows.length, confidence95: wilsonInterval(correct, rows.length) };
 }
 
-module.exports = { evaluateThreshold, trainThreshold, wilsonInterval };
+function finiteSample(values, label) {
+  if (!Array.isArray(values) || values.length < 2) throw new Error(`at least two ${label} samples are required`);
+  if (values.some(value => !Number.isFinite(value))) throw new Error(`non-finite ${label} sample`);
+  const mean = values.reduce((sum, value) => sum + value, 0) / values.length;
+  const variance = values.reduce((sum, value) => sum + ((value - mean) ** 2), 0) / (values.length - 1);
+  return { count: values.length, mean, variance };
+}
+
+function meanDifferenceInterval(referenceValues, comparisonValues, critical = 1.959963984540054) {
+  if (!Number.isFinite(critical) || critical <= 0) throw new Error('critical value must be positive');
+  const reference = finiteSample(referenceValues, 'reference');
+  const comparison = finiteSample(comparisonValues, 'comparison');
+  const difference = comparison.mean - reference.mean;
+  const standardError = Math.sqrt((reference.variance / reference.count) + (comparison.variance / comparison.count));
+  const radius = critical * standardError;
+  return {
+    reference,
+    comparison,
+    difference,
+    standardError,
+    confidence: 0.95,
+    method: 'large-sample-Welch-normal-approximation',
+    lower: difference - radius,
+    upper: difference + radius,
+  };
+}
+
+function withinEquivalenceMargin(interval, margin) {
+  if (!Number.isFinite(margin) || margin <= 0) throw new Error('equivalence margin must be positive');
+  if (!interval || !Number.isFinite(interval.lower) || !Number.isFinite(interval.upper)) {
+    throw new Error('finite confidence interval is required');
+  }
+  return interval.lower > -margin && interval.upper < margin;
+}
+
+module.exports = {
+  evaluateThreshold,
+  meanDifferenceInterval,
+  trainThreshold,
+  wilsonInterval,
+  withinEquivalenceMargin,
+};

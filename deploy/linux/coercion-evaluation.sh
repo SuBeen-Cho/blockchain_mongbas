@@ -60,7 +60,9 @@ git -C "${MONGBAS_REPO_DIR}" rev-parse HEAD >"${out}/git-commit.txt"
 started_at="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
 set +e
 E2E_BASE_URL="${base_url}" COERCION_OUTPUT_DIR="${out}" \
-  COERCION_SAMPLES_PER_CLASS="${COERCION_SAMPLES_PER_CLASS:-50}" \
+  COERCION_SAMPLES_PER_CLASS="${COERCION_SAMPLES_PER_CLASS:-500}" \
+  COERCION_TIMING_EQUIVALENCE_MARGIN_MS="${COERCION_TIMING_EQUIVALENCE_MARGIN_MS:-10}" \
+  COERCION_CLASSIFIER_ACCURACY_UPPER_LIMIT="${COERCION_CLASSIFIER_ACCURACY_UPPER_LIMIT:-0.60}" \
   node "${MONGBAS_REPO_DIR}/application/scripts/coercion-transcript-evaluation.js" \
   >"${out}/evaluation.stdout.log" 2>"${out}/evaluation.stderr.log"
 status=$?
@@ -72,7 +74,7 @@ stop_backend
 if [ -z "${E2E_BASE_URL:-}" ]; then
   ss -H -ltn "sport = :${port}" | grep -q . && die "isolated evaluation backend still owns port ${port} after cleanup"
 fi
-printf '{"schema":"mongbas-coercion-evaluation/v1","startedAt":"%s","endedAt":"%s","baseURL":"%s","exitStatus":%d,"gitCommit":"%s"}\n' \
+printf '{"schema":"mongbas-coercion-evaluation/v2","startedAt":"%s","endedAt":"%s","baseURL":"%s","exitStatus":%d,"gitCommit":"%s"}\n' \
   "${started_at}" "${ended_at}" "${base_url}" "${status}" "$(cat "${out}/git-commit.txt")" >"${out}/metadata.json"
 (cd "${out}" && find . -type f ! -name sha256-inventory.txt -print0 | sort -z | xargs -0 sha256sum) >"${out}/sha256-inventory.txt"
 

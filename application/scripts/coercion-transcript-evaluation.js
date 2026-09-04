@@ -4,13 +4,20 @@
 const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
-const { evaluateThreshold, trainThreshold, wilsonInterval } = require('../src/lib/coercionClassifier');
+const {
+  evaluateThreshold,
+  meanDifferenceInterval,
+  trainThreshold,
+  withinEquivalenceMargin,
+} = require('../src/lib/coercionClassifier');
 const { deriveLookupToken } = require('../src/lib/deniableProof');
 
 const BASE_URL = (process.env.E2E_BASE_URL || 'http://127.0.0.1:3005').replace(/\/$/, '');
 const ADMIN_API_TOKEN = process.env.ADMIN_API_TOKEN || '';
 const OUTPUT_DIR = process.env.COERCION_OUTPUT_DIR || '';
-const SAMPLES_PER_CLASS = Number(process.env.COERCION_SAMPLES_PER_CLASS || 50);
+const SAMPLES_PER_CLASS = Number(process.env.COERCION_SAMPLES_PER_CLASS || 500);
+const TIMING_EQUIVALENCE_MARGIN_MS = Number(process.env.COERCION_TIMING_EQUIVALENCE_MARGIN_MS || 10);
+const CLASSIFIER_ACCURACY_UPPER_LIMIT = Number(process.env.COERCION_CLASSIFIER_ACCURACY_UPPER_LIMIT || 0.60);
 const CANDIDATES = ['ALPHA', 'BETA'];
 
 function sha256Hex(value) { return crypto.createHash('sha256').update(value).digest('hex'); }
@@ -56,8 +63,14 @@ function splitBalanced(rows) {
 
 async function main() {
   if (!ADMIN_API_TOKEN || !OUTPUT_DIR) throw new Error('ADMIN_API_TOKEN and COERCION_OUTPUT_DIR are required');
-  if (!Number.isInteger(SAMPLES_PER_CLASS) || SAMPLES_PER_CLASS < 20 || SAMPLES_PER_CLASS > 1000) {
-    throw new Error('COERCION_SAMPLES_PER_CLASS must be an integer from 20 to 1000');
+  if (!Number.isInteger(SAMPLES_PER_CLASS) || SAMPLES_PER_CLASS < 500 || SAMPLES_PER_CLASS > 2000) {
+    throw new Error('COERCION_SAMPLES_PER_CLASS must be an integer from 500 to 2000');
+  }
+  if (!Number.isFinite(TIMING_EQUIVALENCE_MARGIN_MS) || TIMING_EQUIVALENCE_MARGIN_MS <= 0 || TIMING_EQUIVALENCE_MARGIN_MS > 100) {
+    throw new Error('COERCION_TIMING_EQUIVALENCE_MARGIN_MS must be greater than 0 and at most 100');
+  }
+  if (!Number.isFinite(CLASSIFIER_ACCURACY_UPPER_LIMIT) || CLASSIFIER_ACCURACY_UPPER_LIMIT < 0.50 || CLASSIFIER_ACCURACY_UPPER_LIMIT > 0.60) {
+    throw new Error('COERCION_CLASSIFIER_ACCURACY_UPPER_LIMIT must be from 0.50 to 0.60');
   }
   fs.mkdirSync(OUTPUT_DIR, { recursive: true, mode: 0o700 });
   const electionID = `coercion-eval-${Date.now()}`;
@@ -111,15 +124,41 @@ async function main() {
   const { training, testing } = splitBalanced(rows);
   const timingModel = trainThreshold(training, 'elapsedMs');
   const sizeModel = trainThreshold(training, 'bodyBytes');
+  const timingClassifier = evaluateThreshold(timingModel, testing);
+  const sizeClassifier = evaluateThreshold(sizeModel, testing);
+  const normalRows = rows.filter(row => row.label === 'normal');
+  const panicRows = rows.filter(row => row.label === 'panic');
+  const timingDifference = meanDifferenceInterval(
+    normalRows.map(row => row.elapsedMs), panicRows.map(row => row.elapsedMs),
+  );
+  const bodySizeDifference = meanDifferenceInterval(
+    normalRows.map(row => row.bodyBytes), panicRows.map(row => row.bodyBytes),
+  );
+  const timingEquivalencePass = withinEquivalenceMargin(timingDifference, TIMING_EQUIVALENCE_MARGIN_MS);
+  const bodySizeEquivalencePass = withinEquivalenceMargin(bodySizeDifference, 1);
+  const classifierGatePass = timingClassifier.confidence95.upper <= CLASSIFIER_ACCURACY_UPPER_LIMIT &&
+    sizeClassifier.confidence95.upper <= CLASSIFIER_ACCURACY_UPPER_LIMIT;
   const summary = {
-    schema: 'mongbas-coercion-transcript-evaluation/v1', electionID, samplesPerClass: SAMPLES_PER_CLASS,
+    schema: 'mongbas-coercion-transcript-evaluation/v2', electionID, samplesPerClass: SAMPLES_PER_CLASS,
     totalSamples: rows.length,
     responseKeyShapes: [...new Set(rows.map(row => JSON.stringify([row.topLevelKeys, row.proofKeys])))].length,
     targetNullifierExposure: { exposedSamples: rows.filter(row => row.exposesTargetNullifier).length, total: rows.length },
-    timingClassifier: { model: timingModel, test: evaluateThreshold(timingModel, testing) },
-    bodySizeClassifier: { model: sizeModel, test: evaluateThreshold(sizeModel, testing) },
+    predeclaredGates: {
+      timingEquivalenceMarginMs: TIMING_EQUIVALENCE_MARGIN_MS,
+      bodySizeEquivalenceMarginBytes: 1,
+      classifierAccuracyConfidenceUpperLimit: CLASSIFIER_ACCURACY_UPPER_LIMIT,
+      minimumSamplesPerClass: 500,
+    },
+    timingDifference,
+    bodySizeDifference,
+    timingEquivalencePass,
+    bodySizeEquivalencePass,
+    timingClassifier: { model: timingModel, test: timingClassifier },
+    bodySizeClassifier: { model: sizeModel, test: sizeClassifier },
+    classifierGatePass,
     securityGatePass: rows.every(row => !row.exposesTargetNullifier) &&
-      evaluateThreshold(sizeModel, testing).accuracy <= 0.60 && evaluateThreshold(timingModel, testing).accuracy <= 0.60,
+      rows.every(row => row.status === 200) &&
+      timingEquivalencePass && bodySizeEquivalencePass && classifierGatePass,
     limitation: 'Same-host API-transcript evaluation only. PDC/backend collusion, public revote patterns, compromised clients and independent network acquisition remain separate failing or untested games.',
   };
   fs.writeFileSync(path.join(OUTPUT_DIR, 'samples.jsonl'), `${rows.map(row => JSON.stringify(row)).join('\n')}\n`, { mode: 0o600 });
