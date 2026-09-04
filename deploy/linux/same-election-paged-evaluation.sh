@@ -61,6 +61,7 @@ if command -v ss >/dev/null && ss -H -ltn "sport = :${benchmark_port}" | grep -q
 fi
 
 setsid env PORT="${benchmark_port}" LISTEN_HOST=127.0.0.1 NODE_ENV=development \
+  FABRIC_ENDORSE_TIMEOUT_MS=600000 FABRIC_COMMIT_TIMEOUT_MS=600000 \
   DISABLE_RATE_LIMITS=true ENABLE_BENCHMARK_ENDPOINT=true CREDENTIAL_TTL_SEC=1800 \
   node "${MONGBAS_REPO_DIR}/application/src/app.js" >"${out}/backend.stdout.log" 2>"${out}/backend.stderr.log" &
 backend_pid=$!

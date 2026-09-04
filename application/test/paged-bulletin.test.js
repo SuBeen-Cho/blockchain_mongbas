@@ -175,11 +175,15 @@ test('same-election benchmark rejects unsafe scale and output before network acc
 
 test('Linux same-election wrapper has bounded scale, disk abort and isolated loopback backend', () => {
   const source = fs.readFileSync(path.join(__dirname, '../../deploy/linux/same-election-paged-evaluation.sh'), 'utf8');
+  const benchmark = fs.readFileSync(path.join(__dirname, '../benchmark/same-election-paged-bench.js'), 'utf8');
   assert.match(source, /ballots must be 100\.\.10000/);
   assert.match(source, /required_bytes=\$\(\(estimated_growth_bytes \* 2 \+ 20000000000\)\)/);
   assert.match(source, /LISTEN_HOST=127\.0\.0\.1/);
   assert.match(source, /DISABLE_RATE_LIMITS=true/);
+  assert.match(source, /FABRIC_ENDORSE_TIMEOUT_MS=600000/);
   assert.match(source, /timeout --signal=TERM --kill-after=30/);
   assert.match(source, /minimum_free_bytes=20000000000/);
   assert.doesNotMatch(source, /docker compose down|docker volume rm|network\.sh (?:down|clean)/);
+  assert.match(benchmark, /mongbas-same-election-cast-checkpoint\/v1/);
+  assert.match(benchmark, /writeJsonEvidenceExclusive\(castCheckpointPath/);
 });

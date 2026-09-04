@@ -102,7 +102,21 @@ async function main() {
 
   const expected = Object.fromEntries(CANDIDATES.map(candidate => [candidate, 0]));
   for (let index = 0; index < BALLOTS; index += 1) expected[CANDIDATES[index % CANDIDATES.length]]++;
-  const tally = await measureExactTally(election.electionID, expected);
+  const castCheckpointPath = path.join(path.dirname(OUT), 'cast-checkpoint.json');
+  writeJsonEvidenceExclusive(castCheckpointPath, {
+    schema: 'mongbas-same-election-cast-checkpoint/v1',
+    createdAt: new Date().toISOString(),
+    electionID: election.electionID,
+    config: { ballots: BALLOTS, offeredRate: RATE, maxInFlight: MAX_IN_FLIGHT,
+      encryptionMode: 'elgamal-vector-v3', candidates: CANDIDATES.length },
+    expectedTally: expected,
+    castResults: submitted.results,
+    credentialAndProofGenerationMs: submitted.generationMs,
+    elapsedMs: submitted.elapsedMs,
+    maximumInFlight: submitted.maximumInFlight,
+    evidenceBoundary: 'Cast-phase checkpoint only; it does not prove close, tally, publication, export, or final verification.',
+  });
+  const tally = await measureExactTally(election.electionID, expected, 1_300_000);
   if (!tally.success || tally.totalVotes !== BALLOTS) throw new Error(`same-election exact tally failed: ${tally.error || 'count mismatch'}`);
   const publishStarted = process.hrtime.bigint();
   const publish = await adminPost(`/api/elections/${election.electionID}/publish-audit`, {});

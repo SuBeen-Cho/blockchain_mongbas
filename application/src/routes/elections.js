@@ -24,6 +24,7 @@ const { demoEndpointsEnabled, requireDemoEndpoint } = require('../lib/demoFeatur
 const { requireAdmin } = require('../middleware/admin');
 const { isCanonicalToken, serializeFixedProof } = require('../lib/deniableProof');
 const { collectPagedBulletin } = require('../lib/pagedBulletin');
+const { closeAndAggregateElection } = require('../lib/closeElection');
 
 const router = express.Router();
 
@@ -356,9 +357,8 @@ router.post('/:id/close', async (req, res) => {
   const { id } = req.params;
   const { gateway, contract } = await connectGateway();
   try {
-    await contract.submitTransaction('CloseElection', id);
-    await contract.submitTransaction('AggregateClosedElection', id);
-    res.json({ message: `선거 ${id}가 종료되었습니다. 암호문 집계가 완료되었습니다.` });
+    const recovery = await closeAndAggregateElection(contract, id);
+    res.json({ message: `선거 ${id}가 종료되었습니다. 암호문 집계가 완료되었습니다.`, ...recovery });
   } catch (err) {
     console.error('[elections] CloseElection error:', err.message);
     res.status(500).json({ error: sanitizeError(err) });
