@@ -1,6 +1,8 @@
 'use strict';
 
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
 const test = require('node:test');
 const { parseSnapshot, summarize } = require('../benchmark/summarize-state-growth');
 
@@ -16,4 +18,15 @@ test('state growth summary fails closed on malformed, changed or non-growing sna
   assert.throws(() => parseSnapshot('peer\tledger\tnan\n'));
   assert.throws(() => summarize('peer\tledger\t100\n', 'other\tledger\t120\n', 1));
   assert.throws(() => summarize('peer\tledger\t100\n', 'peer\tledger\t100\n', 1));
+});
+
+test('100k state-growth wrapper monitors disk, memory, OOM and Fabric health without reset', () => {
+  const source = fs.readFileSync(path.join(__dirname, '../../deploy/linux/state-growth-evaluation.sh'), 'utf8');
+  assert.match(source, /MONGBAS_STATE_GROWTH_MIN_FREE_BYTES/);
+  assert.match(source, /MONGBAS_STATE_GROWTH_MIN_MEM_AVAILABLE_BYTES/);
+  assert.match(source, /oom_kill/);
+  assert.match(source, /health_seen/);
+  assert.match(source, /container-not-running/);
+  assert.match(source, /abort-reason\.txt/);
+  assert.doesNotMatch(source, /docker compose down|docker volume rm|network\.sh (?:down|clean)/);
 });
