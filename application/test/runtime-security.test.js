@@ -47,7 +47,10 @@ test('benchmark endpoint requires explicit non-production enablement', () => {
 
 test('QR admission enforcement requires the demo endpoint profile', () => {
   assert.throws(() => validateRuntimeSecurity({ REQUIRE_DEMO_ADMISSION: 'true' }), /ENABLE_DEMO_ENDPOINTS/);
-  const profile = validateRuntimeSecurity({ REQUIRE_DEMO_ADMISSION: 'true', ENABLE_DEMO_ENDPOINTS: 'true' });
+  assert.throws(() => validateRuntimeSecurity({ REQUIRE_DEMO_ADMISSION: 'true', ENABLE_DEMO_ENDPOINTS: 'true' }), /DEMO_ADMISSION_FILE/);
+  assert.throws(() => validateRuntimeSecurity({ REQUIRE_DEMO_ADMISSION: 'true', ENABLE_DEMO_ENDPOINTS: 'true', DEMO_ADMISSION_FILE: 'relative.json' }), /absolute/);
+  assert.throws(() => validateRuntimeSecurity({ REQUIRE_DEMO_ADMISSION: 'true', ENABLE_DEMO_ENDPOINTS: 'true', DEMO_ADMISSION_FILE: '/protected/../checkout/state.json' }), /normalized/);
+  const profile = validateRuntimeSecurity({ REQUIRE_DEMO_ADMISSION: 'true', ENABLE_DEMO_ENDPOINTS: 'true', DEMO_ADMISSION_FILE: '/protected/demo-admissions.json' });
   assert.equal(profile.demoAdmissionRequired, true);
 });
 

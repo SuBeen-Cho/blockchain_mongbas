@@ -31,12 +31,14 @@ def fsync_directory(directory):
 
 
 def main():
-    if len(sys.argv) != 4:
-        print("usage: configure-tailnet-qr-profile.py <absolute-env> <exact-https-origin> <absolute-backup>", file=sys.stderr)
+    if len(sys.argv) != 5:
+        print("usage: configure-tailnet-qr-profile.py <absolute-env> <exact-https-origin> <absolute-backup> <absolute-admission-state>", file=sys.stderr)
         return 2
-    env_path, expected_origin, backup_path = sys.argv[1:]
-    if env_path != os.path.abspath(env_path) or backup_path != os.path.abspath(backup_path):
-        fail("environment and backup paths must be absolute")
+    env_path, expected_origin, backup_path, admission_path = sys.argv[1:]
+    if any(value != os.path.abspath(value) for value in (env_path, backup_path, admission_path)):
+        fail("environment, backup and admission state paths must be absolute")
+    if len({env_path, backup_path, admission_path}) != 3:
+        fail("environment, backup and admission state paths must be distinct")
     parsed = urlsplit(expected_origin)
     if (parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password or parsed.port or
             parsed.path or parsed.query or parsed.fragment or expected_origin != f"https://{parsed.hostname}"):
@@ -49,12 +51,19 @@ def main():
         fail("environment permissions must be 0600")
     parent = os.path.dirname(env_path)
     backup_parent = os.path.dirname(backup_path)
-    for directory in {parent, backup_parent}:
+    admission_parent = os.path.dirname(admission_path)
+    for directory in {parent, backup_parent, admission_parent}:
         directory_stat = os.lstat(directory)
         if stat.S_ISLNK(directory_stat.st_mode) or not stat.S_ISDIR(directory_stat.st_mode):
-            fail("environment and backup parents must be non-symlink directories")
+            fail("environment, backup and admission parents must be non-symlink directories")
+    if stat.S_IMODE(os.lstat(admission_parent).st_mode) != 0o700:
+        fail("admission state parent permissions must be 0700")
     if os.path.lexists(backup_path):
         fail("backup already exists")
+    if os.path.lexists(admission_path):
+        admission_stat = os.lstat(admission_path)
+        if stat.S_ISLNK(admission_stat.st_mode) or not stat.S_ISREG(admission_stat.st_mode) or stat.S_IMODE(admission_stat.st_mode) != 0o600:
+            fail("existing admission state must be a regular non-symlink mode-0600 file")
 
     descriptor = os.open(env_path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
     try:
@@ -87,7 +96,8 @@ def main():
     if expected_origin not in origins:
         fail("CORS_ORIGIN does not contain the expected Tailscale HTTPS origin")
 
-    for key, value in TARGETS.items():
+    targets = {**TARGETS, "DEMO_ADMISSION_FILE": admission_path}
+    for key, value in targets.items():
         replacement = f"{key}={value}"
         if key in positions:
             lines[positions[key]] = replacement

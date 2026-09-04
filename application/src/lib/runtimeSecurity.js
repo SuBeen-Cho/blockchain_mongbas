@@ -1,5 +1,7 @@
 'use strict';
 
+const path = require('node:path');
+
 function parseListenHost(value = '127.0.0.1') {
   const host = String(value || '127.0.0.1').trim();
   if (!['0.0.0.0', '127.0.0.1', '::', '::1'].includes(host)) {
@@ -31,6 +33,11 @@ function validateRuntimeSecurity(env = process.env) {
   }
   if (env.REQUIRE_DEMO_ADMISSION === 'true' && env.ENABLE_DEMO_ENDPOINTS !== 'true') {
     throw new Error('REQUIRE_DEMO_ADMISSION=true requires ENABLE_DEMO_ENDPOINTS=true');
+  }
+  if (env.REQUIRE_DEMO_ADMISSION === 'true' &&
+      (typeof env.DEMO_ADMISSION_FILE !== 'string' || !path.isAbsolute(env.DEMO_ADMISSION_FILE) ||
+       path.normalize(env.DEMO_ADMISSION_FILE) !== env.DEMO_ADMISSION_FILE)) {
+    throw new Error('REQUIRE_DEMO_ADMISSION=true requires a normalized absolute DEMO_ADMISSION_FILE');
   }
   if (production && !env.CORS_ORIGIN) throw new Error('production requires explicit CORS_ORIGIN');
   if (production && env.ASYM_CRED_ENABLED !== 'true' && !['ps', 'bbs'].includes(env.IDEMIX_IMPL || '')) {

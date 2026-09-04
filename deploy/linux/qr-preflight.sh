@@ -16,6 +16,7 @@ warn() { log "WARN $*"; warnings=$((warnings + 1)); }
 require_cmd git
 require_cmd curl
 require_cmd docker
+require_cmd realpath
 
 branch="$(git -C "${MONGBAS_REPO_DIR}" symbolic-ref --quiet --short HEAD 2>/dev/null || true)"
 commit="$(git -C "${MONGBAS_REPO_DIR}" rev-parse --verify HEAD 2>/dev/null || true)"
@@ -55,6 +56,32 @@ if [ -f "${MONGBAS_ENV_FILE}" ]; then
       fail "tailnet HTTPS profile requires ${expected}"
     fi
   done
+  admission_file="$(sed -n 's/^[[:space:]]*DEMO_ADMISSION_FILE=//p' "${MONGBAS_ENV_FILE}" 2>/dev/null | tail -1)"
+  admission_resolved="$(realpath -m -- "${admission_file:-.}" 2>/dev/null || true)"
+  if [ "${admission_file}" != "${admission_resolved}" ]; then
+    fail "DEMO_ADMISSION_FILE must be a normalized absolute path"
+  fi
+  case "${admission_resolved}" in
+    "${MONGBAS_RUNTIME_DIR}"/*) pass "DEMO_ADMISSION_FILE uses the protected absolute runtime" ;;
+    *) fail "DEMO_ADMISSION_FILE must be an absolute path below the protected runtime" ;;
+  esac
+  if [ -n "${admission_file}" ]; then
+    admission_parent="$(dirname "${admission_file}")"
+    if [ -d "${admission_parent}" ] && [ ! -L "${admission_parent}" ] && [ "$(stat -c '%a' "${admission_parent}" 2>/dev/null || true)" = 700 ]; then
+      pass "demo admission parent is a mode-0700 non-symlink directory"
+    else
+      fail "demo admission parent must be a mode-0700 non-symlink directory"
+    fi
+    if [ -e "${admission_file}" ] || [ -L "${admission_file}" ]; then
+      if [ -f "${admission_file}" ] && [ ! -L "${admission_file}" ] && [ "$(stat -c '%a' "${admission_file}" 2>/dev/null || true)" = 600 ]; then
+        pass "existing demo admission state is a mode-0600 regular file"
+      else
+        fail "existing demo admission state must be a mode-0600 non-symlink regular file"
+      fi
+    else
+      pass "demo admission state will be created in the protected runtime"
+    fi
+  fi
   if grep -Eq '^[[:space:]]*(ALLOW_BYPASS_CREDENTIAL|DISABLE_RATE_LIMITS)=true[[:space:]]*$' "${MONGBAS_ENV_FILE}"; then
     fail "unsafe credential bypass or rate-limit bypass is enabled"
   else
