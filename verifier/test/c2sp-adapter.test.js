@@ -422,8 +422,20 @@ test('Linux witness startup preflight rejects a SQLite checkpoint behind its ext
   assert.match(launcherSource, /expected_command_sha256/);
   assert.match(launcherSource, /sha256sum/);
   assert.match(launcherSource, /database changed during startup preflight/);
-  const startedMarker = path.join(directory, 'started');
+  assert.match(launcherSource, /state_fingerprint/);
+  assert.match(launcherSource, /-wal/);
+  assert.match(launcherSource, /-shm/);
   const touchHash = spawnSync('sha256sum', ['/usr/bin/touch'], { encoding: 'utf8' }).stdout.split(/\s+/)[0];
+  const sidecarTarget = path.join(directory, 'sidecar-target');
+  fs.writeFileSync(sidecarTarget, 'not sqlite state');
+  fs.symlinkSync(sidecarTarget, `${files.db}-wal`);
+  const sidecarMarker = path.join(directory, 'must-not-run-sidecar');
+  const sidecarRejected = spawnSync(launcher,
+    [files.db, origin, files.trust, files.policy, files.anchor, touchHash, '/usr/bin/touch', sidecarMarker], { encoding: 'utf8' });
+  assert.equal(sidecarRejected.status, 1); assert.match(sidecarRejected.stderr, /sidecar must not be a symlink/);
+  assert.equal(fs.existsSync(sidecarMarker), false);
+  fs.unlinkSync(`${files.db}-wal`);
+  const startedMarker = path.join(directory, 'started');
   const started = spawnSync(launcher,
     [files.db, origin, files.trust, files.policy, files.anchor, touchHash, '/usr/bin/touch', startedMarker], { encoding: 'utf8' });
   assert.equal(started.status, 0, started.stderr); assert.equal(fs.existsSync(startedMarker), true);

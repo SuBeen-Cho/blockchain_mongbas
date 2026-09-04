@@ -40,11 +40,34 @@ actual_command_sha256="$(sha256sum /dev/fd/9 | awk '{print $1}')"
   exit 1
 }
 
-database_before="$(sha256sum "${db_path}" | awk '{print $1}')"
+for sqlite_sidecar in "${db_path}-wal" "${db_path}-shm"; do
+  if [ -L "${sqlite_sidecar}" ]; then
+    echo "witness database sidecar must not be a symlink" >&2
+    exit 1
+  fi
+done
+
+state_fingerprint() {
+  local state_path
+  for state_path in "${db_path}" "${db_path}-wal" "${db_path}-shm"; do
+    if [ -L "${state_path}" ]; then
+      printf 'symlink\n'
+    elif [ -f "${state_path}" ]; then
+      printf 'file:'
+      sha256sum "${state_path}" | awk '{print $1}'
+    elif [ -e "${state_path}" ]; then
+      printf 'other\n'
+    else
+      printf 'absent\n'
+    fi
+  done | sha256sum | awk '{print $1}'
+}
+
+database_before="$(state_fingerprint)"
 
 "${script_dir}/witness-anchor-preflight.sh" \
   "${db_path}" "${origin}" "${log_trust}" "${witness_policy}" "${external_anchor}"
-database_after="$(sha256sum "${db_path}" | awk '{print $1}')"
+database_after="$(state_fingerprint)"
 [ "${database_before}" = "${database_after}" ] || {
   echo "witness database changed during startup preflight" >&2
   exit 1

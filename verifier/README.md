@@ -356,6 +356,13 @@ Linux the verified executable is invoked through its already-open descriptor;
 this reduces pathname replacement races but does not defend against a hostile
 root or replace independently administered anchor storage.
 
+The launcher fingerprints the SQLite database together with any `-wal` and
+`-shm` sidecars before and after preflight, and rejects symlink sidecars. A
+sidecar that appears, disappears or changes while the external anchor is being
+checked therefore prevents startup. This closes a local startup race; it still
+assumes the witness is stopped and cannot protect against a hostile root that
+can alter state after the verified process begins.
+
 Create a consistent SQLite snapshot with the online-backup API rather than
 copying the database, WAL and SHM files independently. The destination must not
 exist and is published atomically with mode `0600`:
