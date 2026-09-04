@@ -8,14 +8,16 @@ if [ ! -f "${MONGBAS_ENV_FILE}" ]; then
   install -m 0600 "${MONGBAS_REPO_DIR}/application/.env.example" "${MONGBAS_ENV_FILE}"
   credential_secret="$(openssl rand -base64 48)"
   admin_api_token="$(openssl rand -base64 48)"
+  audit_hmac_key="$(openssl rand -base64 48)"
   sed -i \
     -e "s|^CREDENTIAL_SECRET=.*|CREDENTIAL_SECRET=${credential_secret}|" \
     -e "s|^# *CREDENTIAL_SECRET=.*|CREDENTIAL_SECRET=${credential_secret}|" \
     -e "s|^# *ADMIN_API_TOKEN=.*|ADMIN_API_TOKEN=${admin_api_token}|" \
+    -e "s|^# *AUDIT_HMAC_KEY=.*|AUDIT_HMAC_KEY=${audit_hmac_key}|" \
     "${MONGBAS_ENV_FILE}"
   sed -i 's/^ENABLE_DEMO_CREDENTIALS=.*/ENABLE_DEMO_CREDENTIALS=true/' "${MONGBAS_ENV_FILE}"
-  unset credential_secret admin_api_token
-  log "created secret template with generated credential/admin secrets"
+  unset credential_secret admin_api_token audit_hmac_key
+  log "created secret template with independent credential/admin/audit secrets"
 else
   chmod 0600 "${MONGBAS_ENV_FILE}"
   if ! grep -q '^ADMIN_API_TOKEN=' "${MONGBAS_ENV_FILE}"; then
@@ -26,6 +28,12 @@ else
   fi
   if ! grep -q '^ENABLE_DEMO_CREDENTIALS=' "${MONGBAS_ENV_FILE}"; then
     printf '\nENABLE_DEMO_CREDENTIALS=true\n' >> "${MONGBAS_ENV_FILE}"
+  fi
+  if ! grep -q '^AUDIT_HMAC_KEY=' "${MONGBAS_ENV_FILE}"; then
+    audit_hmac_key="$(openssl rand -base64 48)"
+    printf '\nAUDIT_HMAC_KEY=%s\n' "${audit_hmac_key}" >> "${MONGBAS_ENV_FILE}"
+    unset audit_hmac_key
+    log "added a generated independent audit HMAC key to the existing secret env"
   fi
   log "preserved existing secret env"
 fi

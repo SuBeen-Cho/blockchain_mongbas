@@ -22,7 +22,7 @@ function getStream() {
 
 function sourcePseudonym(sourceAddress) {
   if (!sourceAddress) return null;
-  const key = process.env.AUDIT_HMAC_KEY || process.env.CREDENTIAL_SECRET || '';
+  const key = process.env.AUDIT_HMAC_KEY || '';
   if (Buffer.byteLength(key) < 32) return null;
   return crypto.createHmac('sha256', key).update(`source:${sourceAddress}`).digest('hex');
 }

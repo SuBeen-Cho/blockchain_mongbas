@@ -2,6 +2,8 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
 const { sourcePseudonym, credentialPseudonym } = require('../src/lib/audit-log');
 
 test('audit source pseudonym is deterministic keyed HMAC and never raw address', () => {
@@ -22,8 +24,8 @@ test('audit source pseudonym is deterministic keyed HMAC and never raw address',
 test('audit source pseudonym fails closed when no adequate key exists', () => {
   const originalAudit = process.env.AUDIT_HMAC_KEY;
   const originalCredential = process.env.CREDENTIAL_SECRET;
-  process.env.AUDIT_HMAC_KEY = 'short';
-  delete process.env.CREDENTIAL_SECRET;
+  delete process.env.AUDIT_HMAC_KEY;
+  process.env.CREDENTIAL_SECRET = 'credential-domain-must-not-be-reused'.repeat(2);
   try { assert.equal(sourcePseudonym('203.0.113.7'), null); }
   finally {
     if (originalAudit === undefined) delete process.env.AUDIT_HMAC_KEY; else process.env.AUDIT_HMAC_KEY = originalAudit;
@@ -55,4 +57,11 @@ test('credential audit omits its pseudonym without a dedicated strong audit key'
     if (original === undefined) delete process.env.AUDIT_HMAC_KEY;
     else process.env.AUDIT_HMAC_KEY = original;
   }
+});
+
+test('Linux runtime provisioning creates an independent audit HMAC key', () => {
+  const source = fs.readFileSync(path.join(__dirname, '../../deploy/linux/prepare-runtime.sh'), 'utf8');
+  assert.match(source, /audit_hmac_key="\$\(openssl rand -base64 48\)"/);
+  assert.match(source, /AUDIT_HMAC_KEY=\$\{audit_hmac_key\}/);
+  assert.doesNotMatch(source, /AUDIT_HMAC_KEY=\$\{credential_secret\}/);
 });
