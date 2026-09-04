@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Mongbas — 누구도 못 보지만, 누구나 검증하는 투표</title>
+<title>Mongbas — 암호화하고 독립 검증을 지향하는 투표</title>
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css" />
 <style>
   /* 색감: UnicornStudio 히어로(일렉트릭 블루 + 화이트 + 크롬)에서 추출 / 구조: wasabi 참고 */
@@ -292,7 +292,7 @@
     <div class="propband reveal" style="margin-top:40px"><div class="pgrid" id="pgrid">
       <div class="pitem b"><div class="pn">01 / 07</div><div class="pi"><img src="/icons/free-icon-vote-8597002.png" alt="" /></div><h3>비밀투표</h3><div class="pen">Ballot Secrecy</div><p>2-of-3 DKG·부분복호화를 구현했지만, 단일 host root 신뢰 한계가 남아 있습니다.</p></div>
       <div class="pitem w"><div class="pn">02 / 07</div><div class="pi"><img src="/icons/free-icon-vote-8597093.png" alt="" /></div><h3>의도대로 투표</h3><div class="pen">Cast-as-Intended</div><p>내가 고른 후보가 그대로 암호화됐는지 제출 전 확인.</p></div>
-      <div class="pitem b"><div class="pn">03 / 07</div><div class="pi"><img src="/icons/free-icon-absentee-ballot-16977065.png" alt="" /></div><h3>기록대로 투표</h3><div class="pen">Recorded-as-Cast</div><p>내 표가 변조 없이 블록체인에 기록됐는지 영수증으로 추적.</p></div>
+      <div class="pitem b"><div class="pn">03 / 07</div><div class="pi"><img src="/icons/free-icon-absentee-ballot-16977065.png" alt="" /></div><h3>기록대로 투표</h3><div class="pen">Recorded-as-Cast</div><p>추적번호에 대응하는 암호문의 게시판 포함 여부를 확인.</p></div>
       <div class="pitem w"><div class="pn">04 / 07</div><div class="pi"><img src="/icons/free-icon-conclusion-18648709.png" alt="" /></div><h3>기록대로 집계</h3><div class="pen">Tallied-as-Recorded</div><p>기록된 표가 결과에 정확히 반영됐음을 수학적으로 증명.</p></div>
       <div class="pitem w"><div class="pn">05 / 07</div><div class="pi"><img src="/icons/free-icon-coordinate-8965026.png" alt="" /></div><h3>누구나 검증</h3><div class="pen">Universal Verifiability</div><p>독립 번들 verifier를 구현했으며 외부 관찰자·제2 구현 검증이 남아 있습니다.</p></div>
       <div class="pitem b"><div class="pn">06 / 07</div><div class="pi"><img src="/icons/free-icon-validity-18648598.png" alt="" /></div><h3>자격 확인</h3><div class="pen">Eligibility</div><p>선거별 credential·nullifier·폐기 경로를 시험했으며 현재 기본은 완전 익명 credential이 아닙니다.</p></div>
@@ -312,7 +312,7 @@
         <div class="fbody">
         <div class="pulse"></div>
         <div class="fstep"><div class="fbox solid"><span class="fn">1</span>자격증명 제시</div><div class="fnote">선거에 결합된 서명 credential로 투표 자격을 검증</div></div>
-        <div class="fstep"><div class="fbox"><span class="fn">2</span>고유표식 생성</div><div class="fnote">1인 1표용 일회용 번호 생성 — 신원은 노출 안 됨</div></div>
+        <div class="fstep"><div class="fbox"><span class="fn">2</span>고유표식 생성</div><div class="fnote">선거별 중복·재투표 판정에 쓰이는 연결 가능 표식</div></div>
         <div class="fstep"><div class="fbox"><span class="fn">3</span>후보 암호화</div><div class="fnote">폰에서 ElGamal로 암호화, 평문은 밖으로 안 나감</div></div>
         <div class="fstep"><div class="fbox"><span class="fn">4</span>영지식 증명</div><div class="fnote">후보값은 숨긴 채 ‘정상 범위의 한 표’를 <span style="white-space:nowrap">수학적으로 증명</span></div></div>
         <div class="fstep"><div class="fbox"><span class="fn">5</span>암호화 전송</div><div class="fnote">후보 선택 평문 대신 암호문·증명을 전송</div></div>
@@ -329,8 +329,8 @@
         <div class="fstep"><div class="fbox"><span class="fn">9</span>중복·재투표 처리</div><div class="fnote">같은 표식이면 마지막 표 우선 (Last-Vote-Wins)</div></div>
         <div class="fstep"><div class="fbox"><span class="fn">10</span>증명 검증</div><div class="fnote">정상적인 한 표인지 수학적으로 확인</div></div>
         <div class="fstep"><div class="fbox"><span class="fn">11</span>표 봉인(커밋)</div><div class="fnote">나중에 못 바꾸도록 표를 봉인</div></div>
-        <div class="fstep"><div class="fbox"><span class="fn">12</span>PDC 저장</div><div class="fnote">신원 관련 데이터는 비공개 영역(PDC)에만</div></div>
-        <div class="fstep"><div class="fbox solid"><span class="fn">13</span>공개 원장 기록</div><div class="fnote">암호문·증명만 공개 — 비밀키 없이 누구나 검증</div></div>
+        <div class="fstep"><div class="fbox"><span class="fn">12</span>PDC 저장</div><div class="fnote">history opening 등 제한된 자료를 승인 조직 PDC에 저장</div></div>
+        <div class="fstep"><div class="fbox solid"><span class="fn">13</span>공개 원장 기록</div><div class="fnote">암호문·증명을 기록하고 공개 번들 verifier로 검증</div></div>
         </div>
       </div>
     </div>
@@ -427,7 +427,7 @@
           <div class="trk">0xd71…05</div>
           <div class="popseal">Merkle 봉인 일치 ✓</div>
         </div></div>
-        <figcaption class="phcap"><div class="ct">VERIFY · 보편 검증</div><div class="cd">비밀키 없이 누구나 검증</div></figcaption>
+        <figcaption class="phcap"><div class="ct">VERIFY · 보편 검증</div><div class="cd">공개 번들 verifier로 암호·집계 관계 검증</div></figcaption>
       </figure>
     </div>
   </div></section>
@@ -435,7 +435,7 @@
   <!-- 비교 -->
   <section id="why"><div class="wrap">
     <div class="kick reveal">Why Mongbas</div>
-    <h2 class="stmt reveal" style="margin-top:14px">기존 투표가 못 하던 것을, 전부.</h2>
+    <h2 class="stmt reveal" style="margin-top:14px">기존 투표의 신뢰 집중을 줄이는 방향.</h2>
     <div class="vs">
       <div class="vc reveal"><h3>기존 전자투표</h3>
         <div class="vr"><span class="m">✕</span>중앙 서버가 모든 표를 본다</div>
@@ -444,7 +444,7 @@
         <div class="vr"><span class="m">✕</span>협박에 무방비</div></div>
       <div class="vc b reveal"><h3><span class="ink-i">Mongbas</span></h3>
         <div class="vr"><span class="m">✓</span>운영자조차 개별 표를 못 본다</div>
-        <div class="vr"><span class="m">✓</span>누구나 비밀키 없이 전체 개표 검증</div>
+        <div class="vr"><span class="m">✓</span>공개 번들로 암호·집계 관계를 독립 검증</div>
         <div class="vr"><span class="m">✓</span>2-of-3 기관 합의 없인 조작 불가</div>
         <div class="vr"><span class="m">⚠</span>강압저항성은 현재 unverified — 제한된 API 누출 보완만 실험</div></div>
     </div>
@@ -456,7 +456,7 @@
       <div class="wmin">VOTE</div>
       <div class="kick" style="color:#bcd4ff">Try it now</div>
       <h2 style="margin-top:14px">직접 투표해보세요.</h2>
-      <p style="margin:20px auto 0;max-width:560px;color:rgba(255,255,255,.9);font-weight:500;font-size:clamp(16px,1.6vw,19px)">QR을 찍고 한 표를 던진 뒤, 당신의 추적번호로 내 표를 직접 검증해보세요.</p>
+      <p style="margin:20px auto 0;max-width:560px;color:rgba(255,255,255,.9);font-weight:500;font-size:clamp(16px,1.6vw,19px)">QR로 한 표를 제출한 뒤, 추적번호로 대응하는 암호문의 게시판 포함 여부를 확인해보세요.</p>
       <div class="qr" id="liveqr"><span id="qrwait" style="font-size:13px;line-height:1.4">Tailnet 관제판<br><span style="font-weight:600;opacity:.7">일회용 QR을 사용하세요</span></span></div>
     </div>
   </div></section>
@@ -481,7 +481,7 @@ i.onload=function(){try{UnicornStudio.init()}catch(e){}};(document.head||documen
 const PROPS=[
  {n:"01",img:"vote-8597002",t:"비밀투표",en:"Ballot Secrecy",d:"2-of-3 DKG·부분복호화를 구현했지만, 단일 host root 신뢰 한계가 남아 있습니다."},
  {n:"02",img:"vote-8597093",t:"의도대로 투표",en:"Cast-as-Intended",d:"내가 고른 후보가 그대로 암호화됐는지 제출 전 확인."},
- {n:"03",img:"absentee-ballot-16977065",t:"기록대로 투표",en:"Recorded-as-Cast",d:"내 표가 변조 없이 블록체인에 기록됐는지 영수증으로 추적."},
+ {n:"03",img:"absentee-ballot-16977065",t:"기록대로 투표",en:"Recorded-as-Cast",d:"추적번호에 대응하는 암호문의 게시판 포함 여부를 확인."},
  {n:"04",img:"conclusion-18648709",t:"기록대로 집계",en:"Tallied-as-Recorded",d:"기록된 표가 결과에 정확히 반영됐음을 수학적으로 증명."},
  {n:"05",img:"coordinate-8965026",t:"누구나 검증",en:"Universal Verifiability",d:"독립 번들 verifier를 구현했으며 외부 관찰자·제2 구현 검증이 남아 있습니다."},
  {n:"06",img:"validity-18648598",t:"자격 확인",en:"Eligibility",d:"선거별 credential·nullifier·폐기 경로를 시험했으며 현재 기본은 완전 익명 credential이 아닙니다."},

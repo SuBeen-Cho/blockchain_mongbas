@@ -78,6 +78,8 @@ test('public showcase and credential labels do not claim unverified equivalence'
   assert.doesNotMatch(showcase, /7<b>\/7<\/b>|7\/7[^\n]{0,80}전부 충족|학술 보안속성 전부 충족/);
   assert.doesNotMatch(showcase, /하나도 빠짐없이 달성한 첫 사례/);
   assert.doesNotMatch(showcase, /완벽한 비밀|모두 충족|100% 전부 달성|강압자가 눈치챌 수 없|프라이버시는 거의 공짜/);
+  assert.doesNotMatch(showcase, /누구도 못 보|신원은 노출 안 됨|신원 관련 데이터는 비공개 영역\(PDC\)에만/);
+  assert.doesNotMatch(showcase, /기존 투표가 못 하던 것을, 전부|누구나 비밀키 없이 전체 개표 검증/);
   assert.match(showcase, /현재 7\/7 완전 검증을 주장하지 않습니다/);
   assert.match(showcase, /강압저항성은 현재 unverified/);
   assert.doesNotMatch(auth, /진짜 Idemix|Fabric Idemix와 동일/);
