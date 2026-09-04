@@ -4,6 +4,13 @@
 # 주의: 모든 선거/원장 데이터가 삭제됩니다. 시연일 시작 전 또는 꼬였을 때만 사용.
 # 일반적인 "다음 그룹 시작"은 관제판 [새 세션] 버튼으로 충분합니다.
 set -e
+
+if [ "$#" -ne 1 ] || [ "$1" != "--confirm-destroy-demo-ledger" ]; then
+  echo "REFUSED: this command deletes the demo ledger, volumes and generated cryptographic material" >&2
+  echo "usage: ./scripts/demo-reset.sh --confirm-destroy-demo-ledger" >&2
+  exit 2
+fi
+
 cd "$(dirname "$0")/.."   # → mongbas/
 source scripts/demo-process-lib.sh
 demo_runtime_init

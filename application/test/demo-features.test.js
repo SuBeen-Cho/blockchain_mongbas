@@ -3,6 +3,7 @@
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const { spawnSync } = require('node:child_process');
 const test = require('node:test');
 const { demoEndpointsEnabled } = require('../src/lib/demoFeatures');
 
@@ -40,4 +41,15 @@ test('demo launchers never kill unrelated processes and public tunnels require o
   assert.match(processLibrary, /expected_cwd/);
   assert.match(processLibrary, /kill -0/);
   assert.doesNotMatch(processLibrary, /pkill|killall/);
+});
+
+test('destructive demo reset requires an exact confirmation before any operation', () => {
+  const reset = path.join(__dirname, '../../scripts/demo-reset.sh');
+  const result = spawnSync(reset, [], { encoding: 'utf8' });
+  assert.equal(result.status, 2);
+  assert.equal(result.stdout, '');
+  assert.match(result.stderr, /REFUSED/);
+  assert.match(result.stderr, /--confirm-destroy-demo-ledger/);
+  const source = fs.readFileSync(reset, 'utf8');
+  assert.ok(source.indexOf('--confirm-destroy-demo-ledger') < source.indexOf('demo_runtime_init'));
 });

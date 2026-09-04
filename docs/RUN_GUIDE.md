@@ -95,7 +95,7 @@ cd mongbas/frontend && npm run dev
 cd mongbas/network
 ./scripts/network.sh up | deploy | test | down | clean
 ```
-- `down` 정지 / `clean` 암호화 자료까지 완전 초기화. 꼬이면 `./scripts/demo-reset.sh`.
+- `down` 정지 / `clean` 암호화 자료까지 완전 초기화. 원장·볼륨·생성 키 삭제를 승인한 경우에만 `./scripts/demo-reset.sh --confirm-destroy-demo-ledger`를 사용한다.
 
 ---
 
@@ -119,4 +119,4 @@ cd mongbas/network
 | 공개 주소 안 열림 | 와이파이가 바뀌면 터널이 끊김 → `./scripts/demo-up.sh` 재실행(http2). `demo-status.sh`로 새 주소 확인 |
 | 폰이 QR 못 엶 | 대시보드를 **터널 주소로** 열었는지 확인(로컬호스트면 폰이 접근 불가) |
 | 개표 시 MVCC 충돌 | 자동 재시도됨. 안 되면 [개표] 다시 |
-| 전부 꼬임 | `./scripts/demo-reset.sh` → `./scripts/demo-up.sh` |
+| 전부 꼬임 | 복구 증거 보존 후 초기화를 승인했다면 `./scripts/demo-reset.sh --confirm-destroy-demo-ledger` → `./scripts/demo-up.sh` |

@@ -13,7 +13,7 @@ cd mongbas
 ./scripts/demo-start.sh        # 네트워크 확인 → 빌드 → 백엔드(:3000) → 헬스
 ```
 - 네트워크가 안 떠 있으면 자동으로 `up + deploy`(수 분). 이미 떠 있으면 건너뜀.
-- `./scripts/demo-reset.sh`는 모든 데모 데이터를 삭제하므로 필요한 기록을 보존하고 명시적으로 재설정할 때만 사용한다.
+- `./scripts/demo-reset.sh --confirm-destroy-demo-ledger`는 모든 데모 데이터와 생성 암호 자료를 삭제하므로 필요한 기록을 보존하고 명시적으로 초기화를 승인한 때만 사용한다.
 
 폰 접속용 공개 URL(다른 터미널):
 ```bash
@@ -81,7 +81,7 @@ cd mongbas
 | 폰이 페이지 못 엶 | 터널 URL 확인. 끊겼으면 `demo-tunnel.sh` 재실행(URL 바뀜 → QR 갱신). LAN 백업 전환. |
 | 투표가 거부됨(자격증명) | 백엔드를 `.env` 로드해 띄웠는지 확인(`demo-start.sh` 사용). bypass 모드면 체인코드가 거부. |
 | 결과가 안 열림 | 관제판이 조각 2개를 자동 제출함. 로그 확인. 안 되면 [집계 종료] 다시. |
-| 전부 꼬임 | `./scripts/demo-reset.sh` 로 초기화 후 `demo-start.sh`. |
+| 전부 꼬임 | 복구 증거 보존·초기화 승인 후 `./scripts/demo-reset.sh --confirm-destroy-demo-ledger`, 그런 다음 `demo-start.sh`. |
 | 네트워크 up 실패(crypto-config 삭제 오류) | `demo-reset.sh`가 macOS ACL을 벗기고 정리함. |
 
 ---
