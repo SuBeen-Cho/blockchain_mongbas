@@ -306,19 +306,25 @@ checkpoint hash to match the external anchor exactly:
 
 Do not place the preflight and witness start in two independently invoked
 operator commands. Use the anchored launcher so the witness process is reached
-only through the successful gate (the witness executable path must be absolute):
+only through the successful gate (the witness executable path must be absolute
+and its lowercase SHA-256 must be pinned):
 
 ```bash
 ./deploy/linux/witness-anchored-start.sh \
   /witness-state/witness.db mongbas.example/cast-history/election-id \
   /witness-config/log-trust.json /witness-config/witness-policy.json \
   /separate-state/c2sp-anchor.json \
+  "$(sha256sum /opt/mongbas/bin/omniwitness | awk '{print $1}')" \
   /opt/mongbas/bin/omniwitness --config /witness-config/omniwitness.yaml
 ```
 
 Use this launcher as the systemd `ExecStart` command rather than exposing a
 separate unchecked `omniwitness` start path. A failed, missing, stale or forked
-anchor exits before `exec` and therefore before the HTTP listener starts.
+anchor, changed database during preflight, symlink command or executable hash
+mismatch exits before `exec` and therefore before the HTTP listener starts. On
+Linux the verified executable is invoked through its already-open descriptor;
+this reduces pathname replacement races but does not defend against a hostile
+root or replace independently administered anchor storage.
 
 Create a consistent SQLite snapshot with the online-backup API rather than
 copying the database, WAL and SHM files independently. The destination must not

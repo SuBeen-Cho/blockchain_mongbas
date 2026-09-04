@@ -418,10 +418,20 @@ test('Linux witness startup preflight rejects a SQLite checkpoint behind its ext
   const accepted = spawnSync(preflight, [files.db, origin, files.trust, files.policy, files.anchor], { encoding: 'utf8' });
   assert.equal(accepted.status, 0, accepted.stderr); assert.match(accepted.stdout, /PREFLIGHT PASSED/);
   const launcher = path.join(__dirname, '../../deploy/linux/witness-anchored-start.sh');
+  const launcherSource = fs.readFileSync(launcher, 'utf8');
+  assert.match(launcherSource, /expected_command_sha256/);
+  assert.match(launcherSource, /sha256sum/);
+  assert.match(launcherSource, /database changed during startup preflight/);
   const startedMarker = path.join(directory, 'started');
+  const touchHash = spawnSync('sha256sum', ['/usr/bin/touch'], { encoding: 'utf8' }).stdout.split(/\s+/)[0];
   const started = spawnSync(launcher,
-    [files.db, origin, files.trust, files.policy, files.anchor, '/usr/bin/touch', startedMarker], { encoding: 'utf8' });
+    [files.db, origin, files.trust, files.policy, files.anchor, touchHash, '/usr/bin/touch', startedMarker], { encoding: 'utf8' });
   assert.equal(started.status, 0, started.stderr); assert.equal(fs.existsSync(startedMarker), true);
+  const unpinnedMarker = path.join(directory, 'must-not-run-unpinned');
+  const unpinned = spawnSync(launcher,
+    [files.db, origin, files.trust, files.policy, files.anchor, '0'.repeat(64), '/usr/bin/touch', unpinnedMarker], { encoding: 'utf8' });
+  assert.equal(unpinned.status, 1); assert.match(unpinned.stderr, /does not match the pinned executable/);
+  assert.equal(fs.existsSync(unpinnedMarker), false);
   const oldSigned = createSignedCheckpoint({ origin, treeSize: 1, rootHash: crypto.createHash('sha256').update('old').digest('hex'), privateKeyPem: pem(operator) });
   fs.writeFileSync(files.note, appendCosignature(oldSigned, 'witness.example/one', witness, now));
   const replace = 'import sqlite3,sys\ncon=sqlite3.connect(sys.argv[1])\ncon.execute("UPDATE chkpts SET chkpt=?",(open(sys.argv[2],"rb").read(),))\ncon.commit()\n';
@@ -430,7 +440,7 @@ test('Linux witness startup preflight rejects a SQLite checkpoint behind its ext
   assert.equal(rejected.status, 1); assert.match(rejected.stderr, /database rollback detected/);
   const rejectedMarker = path.join(directory, 'must-not-start');
   const blockedStart = spawnSync(launcher,
-    [files.db, origin, files.trust, files.policy, files.anchor, '/usr/bin/touch', rejectedMarker], { encoding: 'utf8' });
+    [files.db, origin, files.trust, files.policy, files.anchor, touchHash, '/usr/bin/touch', rejectedMarker], { encoding: 'utf8' });
   assert.equal(blockedStart.status, 1); assert.match(blockedStart.stderr, /database rollback detected/);
   assert.equal(fs.existsSync(rejectedMarker), false);
 });
