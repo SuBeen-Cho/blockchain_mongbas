@@ -5,6 +5,7 @@ const crypto = require('node:crypto');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { spawnSync } = require('node:child_process');
 const test = require('node:test');
 const {
   PAGE_SIZE, computeIndexHash, computeIdentifierPageHash, computeArtifactPageHash,
@@ -158,4 +159,27 @@ test('protected paged spool resumes only from authenticated complete pages', asy
   } finally {
     fs.rmSync(directory, { recursive: true, force: true });
   }
+});
+
+test('same-election benchmark rejects unsafe scale and output before network access', () => {
+  const script = path.join(__dirname, '../benchmark/same-election-paged-bench.js');
+  const run = spawnSync(process.execPath, [script, '--ballots', '10001', '--rate', '5',
+    '--out', path.join(os.tmpdir(), 'should-not-exist.json'), '--spool', path.join(os.tmpdir(), 'should-not-exist-spool')], {
+    encoding: 'utf8', env: { ...process.env, ADMIN_API_TOKEN: 'a'.repeat(48),
+      ED25519_PRIVATE_KEY_DER_B64: 'not-used', ED25519_PUBLIC_KEY_DER_B64: 'not-used' },
+  });
+  assert.equal(run.status, 1);
+  assert.match(run.stderr, /ballots must be 100\.\.10000/);
+  assert.doesNotMatch(run.stderr, /ECONNREFUSED|fetch failed/);
+});
+
+test('Linux same-election wrapper has bounded scale, disk abort and isolated loopback backend', () => {
+  const source = fs.readFileSync(path.join(__dirname, '../../deploy/linux/same-election-paged-evaluation.sh'), 'utf8');
+  assert.match(source, /ballots must be 100\.\.10000/);
+  assert.match(source, /required_bytes=\$\(\(estimated_growth_bytes \* 2 \+ 20000000000\)\)/);
+  assert.match(source, /LISTEN_HOST=127\.0\.0\.1/);
+  assert.match(source, /DISABLE_RATE_LIMITS=true/);
+  assert.match(source, /timeout --signal=TERM --kill-after=30/);
+  assert.match(source, /minimum_free_bytes=20000000000/);
+  assert.doesNotMatch(source, /docker compose down|docker volume rm|network\.sh (?:down|clean)/);
 });

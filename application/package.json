@@ -20,6 +20,7 @@
     "bench:elgamal": "node benchmark/elgamal-e2e-bench.js",
     "bench:elgamal:conc": "node benchmark/elgamal-concurrency-bench.js",
     "bench:elgamal:rate": "node benchmark/elgamal-rate-bench.js",
+    "bench:same-election-paged": "node benchmark/same-election-paged-bench.js",
     "bench:elgamal:run": "bash benchmark/run-elgamal-bench.sh"
   },
   "dependencies": {
