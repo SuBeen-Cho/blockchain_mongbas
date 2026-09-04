@@ -101,12 +101,22 @@ sudo MONGBAS_RUNTIME_DIR=/home/user1/mongbas-runtime ./deploy/linux/trustee-cust
 MONGBAS_PROFILE=benchmark MONGBAS_LONGEVITY_KIND=steady ./deploy/linux/longevity-evaluation.sh
 MONGBAS_PROFILE=benchmark MONGBAS_LONGEVITY_KIND=soak ./deploy/linux/longevity-evaluation.sh
 MONGBAS_PROFILE=benchmark ./deploy/linux/verifier-evaluation.sh
+
+# Explicitly approved, ledger-preserving upgrade from this checkout's chaincode source.
+# Replace the protected network path with the existing operational checkout; never use
+# this command to create or reset a network.
+MONGBAS_RUNTIME_DIR=/home/user1/mongbas-runtime \
+MONGBAS_FABRIC_NETWORK_DIR=/absolute/path/to/protected/network \
+MONGBAS_APPROVE_NONRESET_CHAINCODE_UPGRADE=APPROVE_NONRESET_CHAINCODE_UPGRADE \
+  ./deploy/linux/nonreset-chaincode-upgrade-evaluation.sh
 ./deploy/linux/supply-chain-evidence.sh
 ./deploy/linux/web-security-evaluation.sh
 ./deploy/linux/clean-clone-build-evaluation.sh
 ```
 
 `clean-clone-build-evaluation.sh`는 GitHub remote head를 새 private workspace에 clone하고, 빈 runtime에서 pinned tool bootstrap·secret 준비·전체 dependency audit/test·frontend·chaincode image build를 실행한다. 성공·실패 workspace를 임의로 삭제하지 않고 raw log·commit·image ID·SHA-256 inventory를 보존한다. 기존 원장을 보호하기 위해 fresh Fabric ledger 생성·container 기동·E2E는 이 gate의 범위가 아니며, 그 검증과 혼동해서는 안 된다.
+
+`nonreset-chaincode-upgrade-evaluation.sh`는 기존 committed definition이 있는 경우에만 실행된다. 명시적 승인 문자열과 protected network 절대 경로를 요구하고, 기존 channel/volume/image/definition을 기록한 뒤 current checkout의 chaincode를 sequence 하나만 올려 배포한다. 이전 image와 sequence-bound rollback tag, 세 MSP readiness, commit 후 호출 가능성, candidate/current image 일치, volume 목록 불변, main backend health와 최종 inventory를 보존한다. 이 wrapper에는 `up`, `down`, `clean` 또는 volume 삭제 경로가 없다. 실패 evidence가 보존되어도 Fabric definition이 이미 commit된 뒤의 장애라면 임의로 sequence를 되돌리지 말고 새 sequence 복구 계획을 세워야 한다.
 
 `extended-vulnerability-evidence.sh`는 활성 컨테이너의 고유 image를 모두
 스캔한다. 실행 중인 컨테이너를 교체하지 않고 pull한 canary image를
