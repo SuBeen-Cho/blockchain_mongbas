@@ -21,6 +21,7 @@ fi
 rates="${MONGBAS_TPS_RATES:-1,5,10,25,50}"
 duration="${MONGBAS_TPS_DURATION_SECONDS:-60}"
 repeats="${MONGBAS_TPS_REPEATS:-5}"
+benchmark_port="${MONGBAS_TPS_BENCHMARK_PORT:-3002}"
 sample_seconds="${MONGBAS_TPS_SAMPLE_SECONDS:-30}"
 minimum_free_bytes="${MONGBAS_TPS_MIN_FREE_BYTES:-60000000000}"
 minimum_start_bytes="${MONGBAS_TPS_MIN_START_BYTES:-80000000000}"
@@ -35,6 +36,8 @@ done
   die "TPS duration must be 30..600 seconds"
 [[ "${repeats}" =~ ^[0-9]+$ ]] && [ "${repeats}" -ge 2 ] && [ "${repeats}" -le 10 ] ||
   die "TPS repeats must be 2..10"
+[[ "${benchmark_port}" =~ ^[0-9]+$ ]] && [ "${benchmark_port}" -ge 1024 ] && [ "${benchmark_port}" -le 65535 ] ||
+  die "TPS benchmark port must be 1024..65535"
 [[ "${sample_seconds}" =~ ^[0-9]+$ ]] && [ "${sample_seconds}" -ge 5 ] && [ "${sample_seconds}" -le 60 ] ||
   die "TPS sample interval must be 5..60 seconds"
 [[ "${minimum_free_bytes}" =~ ^[0-9]+$ ]] && [ "${minimum_free_bytes}" -ge 5000000000 ] ||
@@ -67,6 +70,8 @@ baseline_oom_kills="$(awk '$1 == "oom_kill" { print $2 }' /proc/vmstat)"
 
 workload_pid=""
 abort_reason=""
+benchmark_health_seen=0
+benchmark_health_grace_deadline=$((SECONDS + 120))
 stop_workload() {
   if [ -n "${workload_pid}" ] && kill -0 "${workload_pid}" 2>/dev/null; then
     kill -TERM -- "-${workload_pid}" 2>/dev/null || true
@@ -82,6 +87,7 @@ trap stop_workload EXIT INT TERM
 setsid env MONGBAS_RUNTIME_DIR="${MONGBAS_RUNTIME_DIR}" MONGBAS_PROFILE=benchmark \
   MONGBAS_RATE_RESULT_ROOT="${out}/rate-results" MONGBAS_RATE_LEVELS="${rates}" \
   MONGBAS_RATE_DURATION_SECONDS="${duration}" MONGBAS_RATE_REPEATS="${repeats}" \
+  MONGBAS_RATE_PORT="${benchmark_port}" \
   "${LINUX_DEPLOY_DIR}/rate-evaluation.sh" >"${out}/workload.stdout.log" 2>"${out}/workload.stderr.log" &
 workload_pid=$!
 
@@ -98,13 +104,26 @@ while kill -0 "${workload_pid}" 2>/dev/null; do
     abort_reason=memory-below-minimum
   elif [ "${current_oom_kills}" -gt "${baseline_oom_kills}" ]; then
     abort_reason=kernel-oom-kill-observed
-  elif ! "${LINUX_DEPLOY_DIR}/healthcheck.sh" >/dev/null 2>&1 ||
-       ! curl --silent --fail --max-time 10 http://127.0.0.1:3000/health | node -e '
+  elif ! env MONGBAS_HEALTH_TIMEOUT=1 "${LINUX_DEPLOY_DIR}/healthcheck.sh" >/dev/null 2>&1; then
+    health=fabric-unavailable
+    abort_reason=fabric-health-unavailable
+  elif ! curl --silent --fail --max-time 10 http://127.0.0.1:3000/health | node -e '
          const value=JSON.parse(require("node:fs").readFileSync(0,"utf8"));
          process.exit(value.status === "ok" ? 0 : 1);
        ' >/dev/null 2>&1; then
-    health=unavailable
-    abort_reason=fabric-health-unavailable
+    health=normal-backend-unavailable
+    abort_reason=normal-backend-health-unavailable
+  elif curl --silent --fail --max-time 10 "http://127.0.0.1:${benchmark_port}/health" | node -e '
+         const value=JSON.parse(require("node:fs").readFileSync(0,"utf8"));
+         process.exit(value.status === "ok" && value.benchmark?.rateLimitsDisabled === true &&
+           value.benchmark?.preparedVisibilityRetryTelemetry === true ? 0 : 1);
+       ' >/dev/null 2>&1; then
+    benchmark_health_seen=1
+  elif [ "${benchmark_health_seen}" -eq 1 ] || [ "${SECONDS}" -ge "${benchmark_health_grace_deadline}" ]; then
+    health=benchmark-backend-unavailable
+    abort_reason=benchmark-backend-health-unavailable
+  else
+    health=benchmark-backend-starting
   fi
   printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "${observed_at}" "${current_available_bytes}" \
     "${current_mem_available_bytes}" "${current_swap_free_bytes}" "${current_oom_kills}" \
@@ -133,8 +152,8 @@ cmp -s "${out}/containers-before.tsv" "${out}/containers-after.tsv" ||
 cmp -s "${out}/volumes-before.txt" "${out}/volumes-after.txt" ||
   printf '%s\n' volume-inventory-changed >>"${out}/topology-warning.txt"
 curl --silent --show-error --fail http://127.0.0.1:3000/health >"${out}/normal-backend-final-health.json"
-printf '{"schema":"mongbas-post-fix-tps-evaluation/v1","rates":"%s","durationSeconds":%s,"repeats":%s,"workloadExitStatus":%s,"abortReason":"%s"}\n' \
-  "${rates}" "${duration}" "${repeats}" "${workload_status}" "${abort_reason}" >"${out}/metadata.json"
+printf '{"schema":"mongbas-post-fix-tps-evaluation/v1","rates":"%s","durationSeconds":%s,"repeats":%s,"benchmarkPort":%s,"workloadExitStatus":%s,"abortReason":"%s"}\n' \
+  "${rates}" "${duration}" "${repeats}" "${benchmark_port}" "${workload_status}" "${abort_reason}" >"${out}/metadata.json"
 (cd "${out}" && find . -type f ! -name sha256-inventory.txt -print0 | sort -z | xargs -0 sha256sum) \
   >"${out}/sha256-inventory.txt"
 log "post-fix TPS evidence saved to ${out}"

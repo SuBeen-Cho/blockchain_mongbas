@@ -15,10 +15,15 @@ test('post-fix TPS evaluation is repeated, isolated, monitored, and non-destruct
   assert.match(source, /TPS rates must be comma-separated positive integers/);
   assert.match(source, /each TPS rate must be 1\.\.200/);
   assert.match(source, /MONGBAS_TPS_REPEATS:-5/);
+  assert.match(source, /MONGBAS_TPS_BENCHMARK_PORT:-3002/);
   assert.match(source, /another state-growth, rate, or verifier workload is active/);
   assert.match(source, /MONGBAS_TPS_MIN_FREE_BYTES:-60000000000/);
   assert.match(source, /oom_kill/);
   assert.match(source, /fabric-health-unavailable/);
+  assert.match(source, /normal-backend-health-unavailable/);
+  assert.match(source, /benchmark-backend-health-unavailable/);
+  assert.match(source, /preparedVisibilityRetryTelemetry/);
+  assert.match(source, /benchmark_health_grace_deadline/);
   assert.match(source, /setsid env/);
   assert.match(source, /sha256-inventory\.txt/);
   assert.match(source, /volumes-before\.txt/);
