@@ -31,6 +31,7 @@ const crypto  = require('crypto');
 const { connectGateway } = require('../gateway');
 const { fabricConcurrencyGate } = require('../lib/fabricConcurrencyGate');
 const { submitTransactionAndWait } = require('../lib/submitTransaction');
+const { preparedVectorVisibilityRetry } = require('../lib/preparedVectorVisibilityRetry');
 const { createCastHistoryTransient } = require('../lib/castHistory');
 const liveCount = require('../lib/liveCount');  // [부스 시연] 라이브 투표 카운터
 const demoLive  = require('../lib/demoLive');   // [부스 시연] 라이브 암호문 표 + 셔플 + 이벤트 버스
@@ -40,6 +41,7 @@ const { classifyFabricVoteRejection } = require('../lib/fabricRejection');
 const { voterOwnsDemoEvent } = require('../lib/demoVerificationEvent');
 
 const router = express.Router();
+const castPreparedVisibilityRetry = preparedVectorVisibilityRetry();
 
 // The demo dashboard event is accepted only for a committed vote owned by the
 // authenticated credential. This endpoint is unavailable outside demo mode.
@@ -388,7 +390,13 @@ router.post('/cast-vector', async (req, res) => {
     const connection = await connectGateway();
     gateway = connection.gateway;
     await submitTransactionAndWait(connection.contract, 'CastPreparedVectorBallotWithHistory',
-      [electionID, ballotID, nullifierHash], { transientData });
+      [electionID, ballotID, nullifierHash], {
+        transientData,
+        // A successful prepare commit can briefly be invisible to another
+        // endorsement peer. Retry only that pre-submit ABORTED condition; a
+        // commit failure or any cryptographic/credential rejection is final.
+        endorsementRetry: castPreparedVisibilityRetry,
+      });
     let evictCount = 0;
     try {
       const bytes = await connection.contract.evaluateTransaction('GetNullifier', nullifierHash);
