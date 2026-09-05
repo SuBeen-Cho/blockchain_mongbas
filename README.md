@@ -224,6 +224,8 @@ cd network
 
 ## 성능 평가
 
+최근 Linux 부하·verifier·원격 QR 평가의 측정 방법, 결과와 한계는 [`docs/experiment-results`](./docs/experiment-results/)에 정리했습니다.
+
 ### Hyperledger Caliper — CastVote TPS
 
 | Round | Target TPS | Success | Avg Latency | Throughput |
@@ -242,7 +244,7 @@ cd network
 | D. 임계값 미만 share | 선언된 DKG 벡터에서 1-share 복원 실패, 2-share exact tally 성공. 단일-host root 공모 한계는 남음 |
 | E. 게시판·bundle 변조 | 선언된 mutation corpus를 verifier가 거부. 모든 결과 조작에 대한 보편적 정확도 주장은 아님 |
 
-> 상세 평가 원자료(성능·보안)는 로컬 `docs/performance/`·`docs/security-eval/` 에 보관됩니다. (용량 문제로 GitHub에는 미포함)
+> 대용량 원시 로그와 운영 자료는 비공개 연구 보관소에 두고, GitHub에는 민감정보를 제거한 결과표와 재현 절차만 공개합니다.
 
 ---
 
