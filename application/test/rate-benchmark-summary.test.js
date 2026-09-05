@@ -74,6 +74,11 @@ test('repetition summary reports sample deviation and Student-t 95% interval', (
 test('schema v3 preserves bounded prepared-visibility retry telemetry', () => {
   const report = validReport();
   report.schemaVersion = 3;
+  report.config = {
+    rates: [5], durationSec: 60, repeats: 1, maxInFlight: 250,
+    fabricTransactionsPerSuccessfulVoterOperation: 2,
+    preparedVisibilityRetryTelemetry: true,
+  };
   report.rounds[0].preparedVisibilityRetry = {
     voterOperationsRetried: 1,
     endorsementRetries: 2,
@@ -89,5 +94,30 @@ test('schema v3 preserves bounded prepared-visibility retry telemetry', () => {
 test('schema v3 rejects missing prepared-visibility retry telemetry', () => {
   const report = validReport();
   report.schemaVersion = 3;
+  report.config = {
+    rates: [5], durationSec: 60, repeats: 1, maxInFlight: 250,
+    fabricTransactionsPerSuccessfulVoterOperation: 2,
+    preparedVisibilityRetryTelemetry: true,
+  };
   assert.throws(() => summarize(report), /retry telemetry/);
+});
+
+test('schema v3 rejects a missing or duplicate rate/repetition round', () => {
+  const report = validReport();
+  report.schemaVersion = 3;
+  report.config = {
+    rates: [5], durationSec: 60, repeats: 2, maxInFlight: 250,
+    fabricTransactionsPerSuccessfulVoterOperation: 2,
+    preparedVisibilityRetryTelemetry: true,
+  };
+  report.rounds[0].preparedVisibilityRetry = {
+    voterOperationsRetried: 0,
+    endorsementRetries: 0,
+    requestedDelayMs: 0,
+    maximumRetriesForOneOperation: 0,
+  };
+  assert.throws(() => summarize(report), /grid is incomplete/);
+
+  report.rounds.push({ ...report.rounds[0] });
+  assert.throws(() => summarize(report), /duplicate or unexpected/);
 });

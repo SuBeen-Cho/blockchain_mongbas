@@ -24,11 +24,41 @@ function repetitionSummary(values) {
     confidence95: { method: 'two-sided Student-t over repetition means', low: +(mean - margin).toFixed(6), high: +(mean + margin).toFixed(6) } };
 }
 
+function validateV3Grid(report) {
+  const config = report.config;
+  if (!config || !Array.isArray(config.rates) || config.rates.length === 0 ||
+      config.rates.some(rate => !Number.isFinite(rate) || rate <= 0 || rate > 200) ||
+      new Set(config.rates).size !== config.rates.length ||
+      !Number.isInteger(config.durationSec) || config.durationSec < 1 || config.durationSec > 3600 ||
+      !Number.isInteger(config.repeats) || config.repeats < 1 || config.repeats > 20 ||
+      !Number.isInteger(config.maxInFlight) || config.maxInFlight < 1 || config.maxInFlight > 1000 ||
+      config.fabricTransactionsPerSuccessfulVoterOperation !== 2 ||
+      config.preparedVisibilityRetryTelemetry !== true) {
+    throw new Error('schema v3 fixed-rate configuration is missing or invalid');
+  }
+  const expected = new Set();
+  for (const rate of config.rates) {
+    for (let repetition = 1; repetition <= config.repeats; repetition += 1) {
+      expected.add(`${rate}:${repetition}`);
+    }
+  }
+  if (!Array.isArray(report.rounds) || report.rounds.length !== expected.size) {
+    throw new Error('schema v3 fixed-rate grid is incomplete');
+  }
+  for (const [index, round] of report.rounds.entries()) {
+    if (!Number.isInteger(round.repetition) || !expected.delete(`${round.offeredRate}:${round.repetition}`)) {
+      throw new Error(`round ${index}: duplicate or unexpected fixed-rate repetition`);
+    }
+  }
+  if (expected.size !== 0) throw new Error('schema v3 fixed-rate grid is incomplete');
+}
+
 function summarize(report) {
   if (!report || ![2, 3].includes(report.schemaVersion) || report.scenario !== 'vector-v3-fixed-offered-rate') {
     throw new Error('unsupported fixed-rate report schema');
   }
   if (!Array.isArray(report.rounds) || report.rounds.length === 0) throw new Error('fixed-rate report has no rounds');
+  if (report.schemaVersion === 3) validateV3Grid(report);
   const rounds = report.rounds.map((round, index) => {
     if (!Number.isFinite(round.offeredRate) || round.offeredRate <= 0) throw new Error(`round ${index}: invalid offered rate`);
     if (!Number.isInteger(round.attempted) || round.attempted < 1) throw new Error(`round ${index}: invalid attempted count`);
@@ -97,6 +127,7 @@ function summarize(report) {
   return {
     schemaVersion: report.schemaVersion,
     sourceScenario: report.scenario,
+    sourceConfig: report.schemaVersion === 3 ? report.config : null,
     createdAt: new Date().toISOString(),
     strict: true,
     totals: {
