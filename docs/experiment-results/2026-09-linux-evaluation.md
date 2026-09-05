@@ -199,6 +199,22 @@ MONGBAS_RUNTIME_DIR="${HOME}/.local/state/mongbas" \
 
 prepared-ballot visibility 재시도 로직을 반영한 100×1,000표 재실험과 별도로, 수정 후 처리율을 이전 결과와 같은 offered-rate 축에서 다시 측정합니다. 두 workload는 동시에 실행하지 않습니다.
 
+### 수정 전 fixed-rate 기준선
+
+기준선은 commit `7dce6ef`에서 rate별 60초를 5회씩 실행한 25개 라운드입니다. 27,300건의 voter operation과 54,600건의 Fabric transaction이 모두 commit됐고, 40개 선거의 tally가 모두 기대값과 일치했습니다. 보존된 31개 파일은 SHA-256 목록으로 다시 검증했습니다.
+
+| offered voter operation/s | committed voter operation/s (95% CI) | committed Fabric tx/s | 평균 latency | p50 | p95 | p99 |
+|---:|---:|---:|---:|---:|---:|---:|
+| 1 | 0.957 (0.954–0.959) | 1.913 | 3.841초 | 3.825초 | 4.834초 | 4.868초 |
+| 5 | 4.686 (4.678–4.694) | 9.372 | 3.883초 | 3.876초 | 4.873초 | 4.953초 |
+| 10 | 8.825 (8.659–8.991) | 17.650 | 10.768초 | 11.194초 | 15.352초 | 16.273초 |
+| 25 | 9.174 (9.092–9.257) | 18.349 | 23.880초 | 24.893초 | 29.947초 | 31.098초 |
+| 50 | 9.310 (9.171–9.449) | 18.620 | 25.252초 | 26.259초 | 30.181초 | 31.449초 |
+
+TPS는 단순 HTTP 성공 횟수가 아니라 측정 구간의 commit된 voter operation을 실제 제출 시간으로 나눈 값입니다. 각 voter operation은 prepare와 cast, 두 Fabric transaction으로 구성됩니다. latency p50·p95·p99는 각 반복 라운드에서 구한 percentile의 5회 산술평균입니다. 이 v2 기준선은 재시도 횟수를 계측하지 않았으므로, 재시도 영향은 수정 후 v3 결과와 100,000표 exact-success 재실험을 함께 보고 판단합니다.
+
+### 수정 후 실험 설정
+
 | 설정 | 값 |
 |---|---|
 | offered rate | 1, 5, 10, 25, 50 voter operation/s |
