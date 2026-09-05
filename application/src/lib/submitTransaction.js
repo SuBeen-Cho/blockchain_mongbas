@@ -4,6 +4,11 @@ async function submitTransactionAndWait(contract, transactionName, argumentsList
   const proposalOptions = { arguments: argumentsList };
   if (options.transientData) proposalOptions.transientData = options.transientData;
   const retry = options.endorsementRetry;
+  const retryObservation = options.endorsementRetryObservation;
+  if (retryObservation !== undefined &&
+      (!retryObservation || typeof retryObservation !== 'object' || Array.isArray(retryObservation))) {
+    throw new Error('endorsementRetryObservation must be an object');
+  }
   let retryIndex = 0;
   let transaction;
   while (!transaction) {
@@ -18,6 +23,10 @@ async function submitTransactionAndWait(contract, transactionName, argumentsList
       if (!canRetry) throw error;
       const delayMs = retry.delayMs(retryIndex);
       retryIndex += 1;
+      if (retryObservation) {
+        retryObservation.count = retryIndex;
+        retryObservation.totalDelayMs = (retryObservation.totalDelayMs || 0) + delayMs;
+      }
       await retry.sleep(delayMs);
     }
   }

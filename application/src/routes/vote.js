@@ -42,6 +42,8 @@ const { voterOwnsDemoEvent } = require('../lib/demoVerificationEvent');
 
 const router = express.Router();
 const castPreparedVisibilityRetry = preparedVectorVisibilityRetry();
+const benchmarkRetryTelemetryEnabled = process.env.NODE_ENV !== 'production' &&
+  process.env.ENABLE_BENCH_ENDPOINTS === 'true' && process.env.DISABLE_RATE_LIMITS === 'true';
 
 // The demo dashboard event is accepted only for a committed vote owned by the
 // authenticated credential. This endpoint is unavailable outside demo mode.
@@ -383,6 +385,7 @@ router.post('/cast-vector', async (req, res) => {
     transientData.voterPW = Buffer.from(JSON.stringify({ normalPWHash, panicPWHash, normalLookupToken, panicLookupToken,
       panicCandidateID: panicCandidateID || '' }));
   }
+  const retryObservation = { count: 0, totalDelayMs: 0 };
   let releaseFabricSlot;
   let gateway;
   try {
@@ -396,6 +399,7 @@ router.post('/cast-vector', async (req, res) => {
         // endorsement peer. Retry only that pre-submit ABORTED condition; a
         // commit failure or any cryptographic/credential rejection is final.
         endorsementRetry: castPreparedVisibilityRetry,
+        endorsementRetryObservation: retryObservation,
       });
     let evictCount = 0;
     try {
@@ -410,7 +414,11 @@ router.post('/cast-vector', async (req, res) => {
     }
     res.json({ message: evictCount > 0 ? '재투표가 완료되었습니다.' : '투표가 완료되었습니다.',
       electionID, ballotID, ...((normalLookupToken && panicLookupToken) ? {} : { nullifierHash }),
-      blindMode: true, isRevote: evictCount > 0, evictCount });
+      blindMode: true, isRevote: evictCount > 0, evictCount,
+      ...(benchmarkRetryTelemetryEnabled ? { benchmark: {
+        preparedVisibilityEndorsementRetries: retryObservation.count,
+        preparedVisibilityRetryDelayMs: retryObservation.totalDelayMs,
+      } } : {}) });
   } catch (err) {
     if (err.code === 'FABRIC_QUEUE_FULL' || err.code === 'FABRIC_QUEUE_TIMEOUT') {
       return res.status(503).json({ error: '투표 요청이 많습니다. 잠시 후 다시 시도해 주세요.' });

@@ -98,10 +98,13 @@ test('prepared-vector cast retries endorsement visibility lag before submit', as
       };
     },
   };
+  const retryObservation = { count: 0, totalDelayMs: 0 };
   const result = await submitTransactionAndWait(contract, 'CastPreparedVectorBallotWithHistory', [], {
     endorsementRetry: preparedVectorVisibilityRetry({ delaysMs: [0], sleep: async () => calls.push('sleep') }),
+    endorsementRetryObservation: retryObservation,
   });
   assert.equal(result.toString(), 'ok');
+  assert.deepEqual(retryObservation, { count: 1, totalDelayMs: 0 });
   assert.deepEqual(calls, ['proposal', 'endorse', 'sleep', 'proposal', 'endorse', 'submit', 'status']);
 });
 

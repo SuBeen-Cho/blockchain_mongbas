@@ -25,7 +25,7 @@ function repetitionSummary(values) {
 }
 
 function summarize(report) {
-  if (!report || report.schemaVersion !== 2 || report.scenario !== 'vector-v3-fixed-offered-rate') {
+  if (!report || ![2, 3].includes(report.schemaVersion) || report.scenario !== 'vector-v3-fixed-offered-rate') {
     throw new Error('unsupported fixed-rate report schema');
   }
   if (!Array.isArray(report.rounds) || report.rounds.length === 0) throw new Error('fixed-rate report has no rounds');
@@ -50,6 +50,15 @@ function summarize(report) {
         !Number.isFinite(accounting?.committedFabricTransactionsPerSec)) {
       throw new Error(`round ${index}: invalid two-transaction voter-operation accounting`);
     }
+    const retry = round.preparedVisibilityRetry;
+    if (report.schemaVersion === 3 &&
+        (!retry || !Number.isInteger(retry.voterOperationsRetried) || retry.voterOperationsRetried < 0 ||
+         retry.voterOperationsRetried > round.committed || !Number.isInteger(retry.endorsementRetries) ||
+         retry.endorsementRetries < retry.voterOperationsRetried || !Number.isInteger(retry.requestedDelayMs) ||
+         retry.requestedDelayMs < 0 || !Number.isInteger(retry.maximumRetriesForOneOperation) ||
+         retry.maximumRetriesForOneOperation < 0 || retry.maximumRetriesForOneOperation > 10)) {
+      throw new Error(`round ${index}: invalid prepared visibility retry telemetry`);
+    }
     for (const metric of ['prepareCommitLatencyMs', 'castCommitLatencyMs']) {
       for (const field of ['n', 'avg', 'stddev', 'p50', 'p95', 'p99', 'max']) {
         if (!Number.isFinite(round[metric]?.[field])) throw new Error(`round ${index}: invalid ${metric} ${field}`);
@@ -63,6 +72,7 @@ function summarize(report) {
       committed: round.committed,
       failed: round.failed,
       transactionAccounting: accounting,
+      preparedVisibilityRetry: retry || null,
       latencyMs: round.latencyMs,
       prepareCommitLatencyMs: round.prepareCommitLatencyMs,
       castCommitLatencyMs: round.castCommitLatencyMs,
@@ -85,7 +95,7 @@ function summarize(report) {
     logicalLatencyAverageMs: values.length >= 2 ? repetitionSummary(values.map(value => value.latencyMs.avg)) : null,
   })).sort((left, right) => left.offeredRate - right.offeredRate);
   return {
-    schemaVersion: 2,
+    schemaVersion: report.schemaVersion,
     sourceScenario: report.scenario,
     createdAt: new Date().toISOString(),
     strict: true,
@@ -97,6 +107,14 @@ function summarize(report) {
       fabricTransactionsAttempted: rounds.reduce((sum, round) => sum + round.transactionAccounting.fabricTransactionsAttempted, 0),
       fabricTransactionsCommitted: rounds.reduce((sum, round) => sum + round.transactionAccounting.fabricTransactionsCommitted, 0),
       elections: rounds.reduce((sum, round) => sum + round.electionCount, 0),
+      ...(report.schemaVersion === 3 ? {
+        preparedVisibilityVoterOperationsRetried: rounds.reduce((sum, round) =>
+          sum + round.preparedVisibilityRetry.voterOperationsRetried, 0),
+        preparedVisibilityEndorsementRetries: rounds.reduce((sum, round) =>
+          sum + round.preparedVisibilityRetry.endorsementRetries, 0),
+        preparedVisibilityRetryDelayMs: rounds.reduce((sum, round) =>
+          sum + round.preparedVisibilityRetry.requestedDelayMs, 0),
+      } : {}),
     },
     byOfferedRate,
     rounds,

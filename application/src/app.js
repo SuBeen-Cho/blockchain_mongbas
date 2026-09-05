@@ -159,6 +159,7 @@ app.get('/health', (_req, res) => {
     benchmark: {
       authEndpointEnabled: runtimeSecurity.benchEndpoints,
       rateLimitsDisabled: DISABLE_RATE_LIMITS,
+      preparedVisibilityRetryTelemetry: runtimeSecurity.benchEndpoints && DISABLE_RATE_LIMITS,
       demoCredentialsEnabled: process.env.ENABLE_DEMO_CREDENTIALS === 'true',
     },
     demo: {

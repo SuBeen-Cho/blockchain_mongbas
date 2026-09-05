@@ -48,7 +48,8 @@ baseline_container_count="$(docker ps -q | wc -l)"
   # The isolated benchmark uses its bounded synthetic voters directly. Do not
   # inherit the QR demonstration's one-use admission gate from the shared
   # runtime env; the normal backend keeps that policy unchanged on port 3000.
-  exec env PORT="${port}" DISABLE_RATE_LIMITS=true REQUIRE_DEMO_ADMISSION=false node src/app.js
+  exec env PORT="${port}" DISABLE_RATE_LIMITS=true ENABLE_BENCH_ENDPOINTS=true \
+    REQUIRE_DEMO_ADMISSION=false node src/app.js
 ) >"${out}/benchmark-backend.log" 2>&1 &
 backend_pid=$!
 
@@ -56,7 +57,8 @@ ready=0
 for _ in $(seq 1 60); do
   if curl --silent --fail "http://127.0.0.1:${port}/health" | node -e '
     const v=JSON.parse(require("fs").readFileSync(0,"utf8"));
-    process.exit(v.status === "ok" && v.benchmark?.rateLimitsDisabled === true && v.idemix?.enabled === true ? 0 : 1);
+    process.exit(v.status === "ok" && v.benchmark?.rateLimitsDisabled === true &&
+      v.benchmark?.preparedVisibilityRetryTelemetry === true && v.idemix?.enabled === true ? 0 : 1);
   ' >/dev/null 2>&1; then ready=1; break; fi
   kill -0 "${backend_pid}" 2>/dev/null || break
   sleep 1

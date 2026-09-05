@@ -70,3 +70,24 @@ test('repetition summary reports sample deviation and Student-t 95% interval', (
     high: 4.962928,
   });
 });
+
+test('schema v3 preserves bounded prepared-visibility retry telemetry', () => {
+  const report = validReport();
+  report.schemaVersion = 3;
+  report.rounds[0].preparedVisibilityRetry = {
+    voterOperationsRetried: 1,
+    endorsementRetries: 2,
+    requestedDelayMs: 350,
+    maximumRetriesForOneOperation: 2,
+  };
+  const result = summarize(report);
+  assert.equal(result.totals.preparedVisibilityVoterOperationsRetried, 1);
+  assert.equal(result.totals.preparedVisibilityEndorsementRetries, 2);
+  assert.equal(result.totals.preparedVisibilityRetryDelayMs, 350);
+});
+
+test('schema v3 rejects missing prepared-visibility retry telemetry', () => {
+  const report = validReport();
+  report.schemaVersion = 3;
+  assert.throws(() => summarize(report), /retry telemetry/);
+});

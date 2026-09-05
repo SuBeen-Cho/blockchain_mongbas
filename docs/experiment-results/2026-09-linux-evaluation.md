@@ -203,11 +203,13 @@ prepared-ballot visibility 재시도 로직을 반영한 100×1,000표 재실험
 |---|---|
 | offered rate | 1, 5, 10, 25, 50 voter operation/s |
 | 구간 길이 | rate별 60초 |
-| 반복 | 각 3회 |
+| 반복 | 수정 전 기준선과 같은 각 5회 |
 | voter operation | prepare commit + cast commit, Fabric transaction 2건 |
-| 주요 지표 | committed voter operation/s, Fabric transaction/s, 평균·p50·p95·p99·최대 latency, scheduler lag |
+| 주요 지표 | committed voter operation/s, Fabric transaction/s, 평균·p50·p95·p99·최대 latency, scheduler lag, prepared-visibility endorsement 재시도 횟수·대기시간 |
 | 통계 | 반복 평균·표준편차·Student-t 95% 신뢰구간 |
 | 정확성 gate | 실패 0건, 모든 선거 tally 성공, transaction accounting 일치 |
 | 안전 gate | 시작 시 80GB 이상, 실행 중 60GB 미만·OOM·메모리 하한·Fabric health 실패 시 중단 |
 
 실행기는 [`post-fix-tps-evaluation.sh`](../../deploy/linux/post-fix-tps-evaluation.sh)입니다. 실행 결과가 나오기 전에는 이 계획을 측정 완료로 표현하지 않습니다.
+
+수정 전 기준선은 같은 60초 offered-rate를 각 5회 반복한 결과입니다. 다만 후속 실험은 100,000표가 원장에 더 누적된 뒤 실행되므로, 전후 차이를 재시도 로직만의 인과적 효과로 해석하지 않습니다. 코드 commit, 누적 ledger 크기와 실행 시각을 함께 기록합니다.

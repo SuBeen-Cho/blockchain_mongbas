@@ -128,6 +128,12 @@ async function runRate(rate, repetition) {
   const fabricTransactionsAttempted = all.reduce((sum, item) => sum + 1 + Number(item.castAttempted === true), 0);
   const fabricTransactionsCommitted = all.reduce((sum, item) =>
     sum + Number(item.prepareCommitted === true) + Number(item.castCommitted === true), 0);
+  const retryCounts = all.map(item => item.preparedVisibilityEndorsementRetries);
+  const retryDelays = all.map(item => item.preparedVisibilityRetryDelayMs);
+  if (retryCounts.some(value => !Number.isInteger(value) || value < 0) ||
+      retryDelays.some(value => !Number.isInteger(value) || value < 0)) {
+    throw new Error(`prepared visibility retry telemetry missing at rate=${rate}, repetition=${repetition}`);
+  }
   const measuredSubmissionSec = measuredSubmissionMs / 1000;
   return {
     offeredRate: rate,
@@ -144,6 +150,12 @@ async function runRate(rate, repetition) {
       measuredSubmissionSec: +measuredSubmissionSec.toFixed(6),
       committedVoterOperationsPerSec: +(successes.length / measuredSubmissionSec).toFixed(6),
       committedFabricTransactionsPerSec: +(fabricTransactionsCommitted / measuredSubmissionSec).toFixed(6),
+    },
+    preparedVisibilityRetry: {
+      voterOperationsRetried: retryCounts.filter(value => value > 0).length,
+      endorsementRetries: retryCounts.reduce((sum, value) => sum + value, 0),
+      requestedDelayMs: retryDelays.reduce((sum, value) => sum + value, 0),
+      maximumRetriesForOneOperation: Math.max(...retryCounts),
     },
     latencyMs: stats(successes.map(item => item.ms)),
     prepareCommitLatencyMs: stats(successes.map(item => item.prepareMs)),
@@ -163,6 +175,9 @@ async function main() {
     throw new Error('an isolated healthy backend with DISABLE_RATE_LIMITS=true is required');
   }
   if (!health.body?.idemix?.enabled) throw new Error('credential verification must be enabled; bypass results are not authoritative');
+  if (health.body?.benchmark?.preparedVisibilityRetryTelemetry !== true) {
+    throw new Error('prepared visibility retry telemetry must be enabled for fixed-rate evidence');
+  }
 
   const rounds = [];
   for (const rate of RATES) {
@@ -171,12 +186,12 @@ async function main() {
     }
   }
   const output = {
-    schemaVersion: 2,
+    schemaVersion: 3,
     scenario: 'vector-v3-fixed-offered-rate',
     createdAt: new Date().toISOString(),
     config: { rates: RATES, durationSec: DURATION_SEC, repeats: REPEATS, maxInFlight: MAX_IN_FLIGHT,
       credentialMode: health.body.idemix, setupExcluded: true, voterOperation: 'prepare-vector commit + cast-vector commit',
-      fabricTransactionsPerSuccessfulVoterOperation: 2 },
+      fabricTransactionsPerSuccessfulVoterOperation: 2, preparedVisibilityRetryTelemetry: true },
     rounds,
   };
   fs.mkdirSync(path.dirname(OUT), { recursive: true });

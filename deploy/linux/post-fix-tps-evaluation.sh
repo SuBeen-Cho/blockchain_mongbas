@@ -20,7 +20,7 @@ fi
 
 rates="${MONGBAS_TPS_RATES:-1,5,10,25,50}"
 duration="${MONGBAS_TPS_DURATION_SECONDS:-60}"
-repeats="${MONGBAS_TPS_REPEATS:-3}"
+repeats="${MONGBAS_TPS_REPEATS:-5}"
 sample_seconds="${MONGBAS_TPS_SAMPLE_SECONDS:-30}"
 minimum_free_bytes="${MONGBAS_TPS_MIN_FREE_BYTES:-60000000000}"
 minimum_start_bytes="${MONGBAS_TPS_MIN_START_BYTES:-80000000000}"

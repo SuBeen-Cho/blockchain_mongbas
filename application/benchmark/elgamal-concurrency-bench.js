@@ -61,7 +61,7 @@ function rawRequest(method, urlPath, body = null, headers = {}, timeoutMs = 9000
         const ms = Number(process.hrtime.bigint() - start) / 1e6;
         let parsed = raw;
         try { parsed = raw ? JSON.parse(raw) : null; } catch {}
-        resolve({ status: res.statusCode, body: parsed, ms });
+        resolve({ status: res.statusCode, body: parsed, headers: res.headers, ms });
       });
     });
     req.on('error', err => resolve({ status: 0, body: { error: err.message }, ms: Number(process.hrtime.bigint() - start) / 1e6 }));
@@ -270,9 +270,13 @@ async function castPreparedVote(prepared, index = prepared.index) {
   }
   const cast = await post('/api/vote/cast-vector', { ...prepared.castBody, ballotID: committed.body.ballotID }, prepared.headers, 180000);
   const ok = cast.status >= 200 && cast.status < 300;
+  const retryEvidence = cast.body?.benchmark;
   return { index, ok, status: cast.status, ms: Number(process.hrtime.bigint() - started) / 1e6,
     prepareCommitted: true, castAttempted: true, castCommitted: ok,
-    prepareMs: committed.ms, castMs: cast.ms, error: ok ? null : (cast.body?.error || 'cast-vector failed') };
+    prepareMs: committed.ms, castMs: cast.ms,
+    preparedVisibilityEndorsementRetries: retryEvidence?.preparedVisibilityEndorsementRetries,
+    preparedVisibilityRetryDelayMs: retryEvidence?.preparedVisibilityRetryDelayMs,
+    error: ok ? null : (cast.body?.error || 'cast-vector failed') };
 }
 
 function systemSnapshot() {
