@@ -10,6 +10,7 @@ ensure_runtime
 require_cmd cloudflared
 require_cmd curl
 require_cmd getent
+require_cmd node
 require_cmd pgrep
 require_cmd sha256sum
 require_cmd ss
@@ -71,13 +72,31 @@ done
 [ -n "${origin}" ] || die "timed out waiting for a valid trycloudflare.com origin"
 printf '%s\n' "${origin}" >"${out}/https-origin.txt"
 
+origin_host="${origin#https://}"
 for _ in $(seq 1 120); do
-  if ! getent ahosts "${origin#https://}" >"${out}/origin-addresses.txt.tmp" 2>/dev/null; then
-    sleep 1
-    continue
+  probe_args=()
+  if getent ahosts "${origin_host}" >"${out}/origin-addresses.txt.tmp" 2>/dev/null; then
+    mv "${out}/origin-addresses.txt.tmp" "${out}/origin-addresses.txt"
+  else
+    rm -f "${out}/origin-addresses.txt.tmp"
+    if curl --fail --silent --show-error --max-time 10 -H 'accept: application/dns-json' \
+      "https://cloudflare-dns.com/dns-query?name=${origin_host}&type=A" >"${out}/origin-doh.json.tmp" 2>/dev/null; then
+      edge_ip="$(node - "${out}/origin-doh.json.tmp" <<'NODE' 2>/dev/null || true
+const fs = require('node:fs');
+const body = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
+const ip = body.Answer?.map(({ data }) => data).find(value =>
+  typeof value === 'string' && /^(?:\d{1,3}\.){3}\d{1,3}$/.test(value));
+if (!ip) process.exit(1);
+process.stdout.write(ip);
+NODE
+)"
+      if [ -n "${edge_ip}" ]; then
+        mv "${out}/origin-doh.json.tmp" "${out}/origin-doh.json"
+        probe_args=(--resolve "${origin_host}:443:${edge_ip}")
+      fi
+    fi
   fi
-  mv "${out}/origin-addresses.txt.tmp" "${out}/origin-addresses.txt"
-  if curl --fail --silent --show-error --max-time 15 \
+  if curl "${probe_args[@]}" --fail --silent --show-error --max-time 15 \
     "${origin}/health" >"${out}/https-health.json" 2>"${out}/https-health.stderr"; then
     break
   fi
@@ -86,7 +105,7 @@ done
 grep -Eq '"status"[[:space:]]*:[[:space:]]*"ok"' "${out}/https-health.json" ||
   die "public HTTPS health check failed"
 curl --fail --silent --show-error --max-time 15 --dump-header "${out}/https-headers.txt" \
-  --output /dev/null "${origin}/"
+  "${probe_args[@]}" --output /dev/null "${origin}/"
 grep -Eqi '^strict-transport-security:' "${out}/https-headers.txt" || die "HTTPS response is missing HSTS"
 grep -Eqi '^content-security-policy:' "${out}/https-headers.txt" || die "HTTPS response is missing CSP"
 

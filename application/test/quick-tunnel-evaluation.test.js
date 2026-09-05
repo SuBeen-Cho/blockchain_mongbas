@@ -24,6 +24,8 @@ test('Quick Tunnel evaluator gates loopback, admission, and rate limits', () => 
 test('Quick Tunnel evaluator accepts only a Cloudflare ephemeral origin and cleans up', () => {
   assert.match(source, /trycloudflare\\\.com/);
   assert.match(source, /getent ahosts/);
+  assert.match(source, /cloudflare-dns\.com\/dns-query/);
+  assert.match(source, /--resolve/);
   assert.match(source, /seq 1 120/);
   assert.match(source, /kill "\$\{tunnel_pid\}"/);
   assert.match(source, /sha256\.txt/);
