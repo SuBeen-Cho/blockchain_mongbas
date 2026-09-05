@@ -9,6 +9,7 @@ approval="${1:-}"
 ensure_runtime
 require_cmd cloudflared
 require_cmd curl
+require_cmd getent
 require_cmd pgrep
 require_cmd sha256sum
 require_cmd ss
@@ -70,7 +71,12 @@ done
 [ -n "${origin}" ] || die "timed out waiting for a valid trycloudflare.com origin"
 printf '%s\n' "${origin}" >"${out}/https-origin.txt"
 
-for _ in $(seq 1 20); do
+for _ in $(seq 1 120); do
+  if ! getent ahosts "${origin#https://}" >"${out}/origin-addresses.txt.tmp" 2>/dev/null; then
+    sleep 1
+    continue
+  fi
+  mv "${out}/origin-addresses.txt.tmp" "${out}/origin-addresses.txt"
   if curl --fail --silent --show-error --max-time 15 \
     "${origin}/health" >"${out}/https-health.json" 2>"${out}/https-health.stderr"; then
     break
