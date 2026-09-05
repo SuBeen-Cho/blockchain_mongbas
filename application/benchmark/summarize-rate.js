@@ -95,6 +95,10 @@ function summarize(report) {
       }
       if (round[metric].n !== round.committed) throw new Error(`round ${index}: ${metric} sample count mismatch`);
     }
+    for (const field of ['n', 'avg', 'stddev', 'p50', 'p95', 'p99', 'max']) {
+      if (!Number.isFinite(round.schedulerLagMs?.[field])) throw new Error(`round ${index}: invalid scheduler lag ${field}`);
+    }
+    if (round.schedulerLagMs.n !== round.attempted) throw new Error(`round ${index}: scheduler lag sample count mismatch`);
     return {
       offeredRate: round.offeredRate,
       repetition: round.repetition,
@@ -117,12 +121,37 @@ function summarize(report) {
     values.push(round);
     grouped.set(round.offeredRate, values);
   }
+  const acrossRepetitions = (values, select) =>
+    values.length >= 2 ? repetitionSummary(values.map(select)) : null;
+  const latencyAcrossRepetitions = (values, metric) => ({
+    averageMs: acrossRepetitions(values, value => value[metric].avg),
+    p50Ms: acrossRepetitions(values, value => value[metric].p50),
+    p95Ms: acrossRepetitions(values, value => value[metric].p95),
+    p99Ms: acrossRepetitions(values, value => value[metric].p99),
+    maximumMs: acrossRepetitions(values, value => value[metric].max),
+  });
   const byOfferedRate = [...grouped.entries()].map(([offeredRate, values]) => ({
     offeredRate,
     repetitions: values.length,
-    committedVoterOperationsPerSec: values.length >= 2 ? repetitionSummary(values.map(value => value.transactionAccounting.committedVoterOperationsPerSec)) : null,
-    committedFabricTransactionsPerSec: values.length >= 2 ? repetitionSummary(values.map(value => value.transactionAccounting.committedFabricTransactionsPerSec)) : null,
-    logicalLatencyAverageMs: values.length >= 2 ? repetitionSummary(values.map(value => value.latencyMs.avg)) : null,
+    committedVoterOperationsPerSec: acrossRepetitions(values,
+      value => value.transactionAccounting.committedVoterOperationsPerSec),
+    committedFabricTransactionsPerSec: acrossRepetitions(values,
+      value => value.transactionAccounting.committedFabricTransactionsPerSec),
+    logicalLatencyAverageMs: acrossRepetitions(values, value => value.latencyMs.avg),
+    logicalLatencyMs: latencyAcrossRepetitions(values, 'latencyMs'),
+    prepareCommitLatencyMs: latencyAcrossRepetitions(values, 'prepareCommitLatencyMs'),
+    castCommitLatencyMs: latencyAcrossRepetitions(values, 'castCommitLatencyMs'),
+    schedulerLagMs: latencyAcrossRepetitions(values, 'schedulerLagMs'),
+    preparedVisibilityRetry: values.every(value => value.preparedVisibilityRetry) ? {
+      voterOperationsRetried: values.reduce((sum, value) =>
+        sum + value.preparedVisibilityRetry.voterOperationsRetried, 0),
+      endorsementRetries: values.reduce((sum, value) =>
+        sum + value.preparedVisibilityRetry.endorsementRetries, 0),
+      requestedDelayMs: values.reduce((sum, value) =>
+        sum + value.preparedVisibilityRetry.requestedDelayMs, 0),
+      maximumRetriesForOneOperation: Math.max(...values.map(value =>
+        value.preparedVisibilityRetry.maximumRetriesForOneOperation)),
+    } : null,
   })).sort((left, right) => left.offeredRate - right.offeredRate);
   return {
     schemaVersion: report.schemaVersion,

@@ -25,7 +25,7 @@ function validReport() {
       latencyMs: { n: 2, avg: 10, stddev: 1, p50: 9, p95: 11, p99: 11, max: 11 },
       prepareCommitLatencyMs: { n: 2, avg: 5, stddev: 0.5, p50: 5, p95: 6, p99: 6, max: 6 },
       castCommitLatencyMs: { n: 2, avg: 5, stddev: 1, p50: 4, p95: 6, p99: 6, max: 6 },
-      schedulerLagMs: { n: 2, avg: 1, p50: 1, p95: 1, p99: 1, max: 1 },
+      schedulerLagMs: { n: 2, avg: 1, stddev: 0, p50: 1, p95: 1, p99: 1, max: 1 },
       maxInFlight: 1,
       tallies: [{ success: true }],
     }],
@@ -120,4 +120,18 @@ test('schema v3 rejects a missing or duplicate rate/repetition round', () => {
 
   report.rounds.push({ ...report.rounds[0] });
   assert.throws(() => summarize(report), /duplicate or unexpected/);
+});
+
+test('rate summary retains p50, p95 and p99 across repetitions', () => {
+  const report = validReport();
+  const second = structuredClone(report.rounds[0]);
+  second.repetition = 2;
+  second.latencyMs.p50 = 11;
+  second.latencyMs.p95 = 13;
+  second.latencyMs.p99 = 15;
+  report.rounds.push(second);
+  const summary = summarize(report).byOfferedRate[0];
+  assert.equal(summary.logicalLatencyMs.p50Ms.mean, 10);
+  assert.equal(summary.logicalLatencyMs.p95Ms.mean, 12);
+  assert.equal(summary.logicalLatencyMs.p99Ms.mean, 13);
 });
