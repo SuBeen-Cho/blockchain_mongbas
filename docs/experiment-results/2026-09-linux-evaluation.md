@@ -1,7 +1,7 @@
 # Mongbas Linux 성능·보안·원격 QR 평가
 
 - 평가 기간: 2026년 9월 1일–5일
-- 공개 코드 기준: `feat/ballot-history-consistency`, 최종 정리 전 `ce28c88`
+- 측정 코드 기준: 각 원시 결과 manifest에 기록된 commit. 본 공개 보고서는 `436d56c`에서 처음 추가
 - 환경: Ubuntu 24.04 x86-64, Hyperledger Fabric 2.5, CouchDB 3.4, Node.js 22
 - 배포 형태: 한 대의 Linux 서버에서 여러 Fabric 조직과 orderer를 컨테이너로 실행
 
@@ -148,6 +148,24 @@ Cloudflare Quick Tunnel을 사용해 Linux의 loopback backend를 임시 HTTPS �
 - 완전한 강압 저항성 또는 7개 보안 속성 전체의 독립 검증
 
 ## 6. 재현과 증거 관리
+
+### 공개 전 clean-clone 검증
+
+GitHub feature 브랜치를 새 디렉터리에 다시 clone하고 lockfile 그대로 의존성을 설치한 뒤 아래 검사를 수행했습니다. 프론트엔드 build와 애플리케이션 테스트를 처음에 동시에 실행했을 때 `frontend/dist`가 생성되기 전에 보안 헤더 테스트가 시작돼 1건이 실패했습니다. build 완료 후 순서대로 다시 실행한 결과는 170/170 통과였습니다. 이 첫 결과는 코드 실패가 아니라 실행 순서 오류로 분류했습니다.
+
+| 검사 | 최종 결과 |
+|---|---:|
+| application | 170/170 통과 |
+| frontend | 11/11 통과 |
+| frontend production build | 461 modules, 성공 |
+| standalone verifier | 134/134 통과 |
+| trustee | 12/12 통과 |
+| chaincode | `go test ./...` 성공 |
+| application/frontend/verifier/trustee npm audit | 배포 조건에서 high 이상 0건 |
+| Markdown 상대 링크 | 누락 0건 |
+| Git object 검사 | 오류 없음 |
+
+Gitleaks 8.30.1로 GitHub의 origin 브랜치 이력과 clean clone 현재 파일을 각각 검사했습니다. 두 검사 모두 격리된 과거 benchmark 스크립트의 synthetic credential fixture 하나를 탐지했습니다. 이 값은 실제 운영 credential이 아니며 해당 스크립트는 네트워크와 출력 생성 전에 종료되도록 회귀 시험합니다. 따라서 결과는 “신규 운영 비밀 0건, 분류된 synthetic fixture 1건”으로 기록합니다. Gitleaks 보고서는 모든 match를 마스킹해 비공개 증거 보관소에 남겼습니다.
 
 공개 재현 진입점:
 
