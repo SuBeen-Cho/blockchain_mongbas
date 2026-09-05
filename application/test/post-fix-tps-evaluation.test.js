@@ -29,6 +29,7 @@ test('post-fix TPS evaluation retains strict rate summarization and exact accoun
   const rate = fs.readFileSync(path.join(__dirname, '../../deploy/linux/rate-evaluation.sh'), 'utf8');
   const summary = fs.readFileSync(path.join(__dirname, '../benchmark/summarize-rate.js'), 'utf8');
   const benchmark = fs.readFileSync(path.join(__dirname, '../benchmark/elgamal-rate-bench.js'), 'utf8');
+  const benchmarkHelpers = fs.readFileSync(path.join(__dirname, '../benchmark/elgamal-concurrency-bench.js'), 'utf8');
   const voteRoute = fs.readFileSync(path.join(__dirname, '../src/routes/vote.js'), 'utf8');
   assert.match(rate, /summarize-rate\.js/);
   assert.match(rate, /REQUIRE_DEMO_ADMISSION=false/);
@@ -37,6 +38,9 @@ test('post-fix TPS evaluation retains strict rate summarization and exact accoun
   assert.match(summary, /transactionsPerCommittedVoterOperation !== 2/);
   assert.match(summary, /two-sided Student-t over repetition means/);
   assert.match(benchmark, /preparedVisibilityEndorsementRetries/);
+  assert.match(benchmarkHelpers, /process\.resourceUsage\(\)/);
+  assert.match(benchmarkHelpers, /\{\{\.NetIO\}\}/);
+  assert.match(benchmarkHelpers, /\{\{\.BlockIO\}\}/);
   assert.match(summary, /preparedVisibilityVoterOperationsRetried/);
   assert.match(voteRoute, /process\.env\.NODE_ENV !== 'production'/);
   assert.match(voteRoute, /benchmarkRetryTelemetryEnabled \? \{ benchmark:/);

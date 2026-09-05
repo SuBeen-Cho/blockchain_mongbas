@@ -280,8 +280,18 @@ async function castPreparedVote(prepared, index = prepared.index) {
 }
 
 function systemSnapshot() {
-  const snapshot = {};
-  try { snapshot.dockerStats = execSync("docker stats --no-stream --format 'table {{.Name}}\\t{{.CPUPerc}}\\t{{.MemUsage}}'", { encoding: 'utf8', timeout: 10000 }); } catch {}
+  const snapshot = {
+    benchmarkProcess: {
+      memoryUsage: process.memoryUsage(),
+      resourceUsage: process.resourceUsage(),
+    },
+  };
+  try {
+    snapshot.dockerStats = execSync(
+      "docker stats --no-stream --format 'table {{.Name}}\\t{{.CPUPerc}}\\t{{.MemUsage}}\\t{{.NetIO}}\\t{{.BlockIO}}\\t{{.PIDs}}'",
+      { encoding: 'utf8', timeout: 10000 },
+    );
+  } catch {}
   return snapshot;
 }
 
