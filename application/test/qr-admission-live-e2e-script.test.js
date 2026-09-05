@@ -22,6 +22,10 @@ test('live QR E2E script keeps admission, credential and nullifier material out 
   assert.match(source, /same-credential replacement was not classified as a revote/);
   assert.match(source, /vote\.revoted === true/);
   assert.match(source, /initialCount \+ 1/);
+  assert.match(source, /E2E_EDGE_IP/);
+  assert.match(source, /net\.isIP\(edgeIP\) !== 4/);
+  assert.match(source, /hostname !== targetHost/);
+  assert.match(source, /resolvedOptions\?\.all/);
 });
 
 test('DKG live evaluation uses the bounded one-use admission path', () => {

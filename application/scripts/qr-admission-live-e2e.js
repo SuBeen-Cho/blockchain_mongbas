@@ -2,15 +2,37 @@
 'use strict';
 
 const crypto = require('node:crypto');
+const dns = require('node:dns');
+const net = require('node:net');
 const { generateVectorBallot } = require('../src/lib/vectorElgamal');
 
 const baseURL = String(process.env.E2E_BASE_URL || 'http://127.0.0.1:3000').replace(/\/$/, '');
+const edgeIP = String(process.env.E2E_EDGE_IP || '');
 const adminToken = process.env.ADMIN_API_TOKEN || '';
 const electionID = process.env.E2E_ELECTION_ID || `QR_LIVE_${new Date().toISOString().replace(/[-:.TZ]/g, '')}`;
 const reuseElection = process.env.E2E_REUSE_ELECTION === 'true';
 const revoteSameCredential = process.env.E2E_REVOTE_SAME_CREDENTIAL === 'true';
 const credentialSurrenderGame = process.env.E2E_CREDENTIAL_SURRENDER_GAME === 'true';
 const candidates = ['ALPHA', 'BRAVO', 'CHARLIE'];
+
+if (edgeIP) {
+  if (net.isIP(edgeIP) !== 4 || new URL(baseURL).protocol !== 'https:') {
+    throw new Error('E2E_EDGE_IP requires one IPv4 address and an HTTPS E2E_BASE_URL');
+  }
+  const targetHost = new URL(baseURL).hostname;
+  const originalLookup = dns.lookup;
+  dns.lookup = (hostname, options, callback) => {
+    let resolvedOptions = options;
+    let resolvedCallback = callback;
+    if (typeof resolvedOptions === 'function') {
+      resolvedCallback = resolvedOptions;
+      resolvedOptions = {};
+    }
+    if (hostname !== targetHost) return originalLookup(hostname, resolvedOptions, resolvedCallback);
+    if (resolvedOptions?.all) return resolvedCallback(null, [{ address: edgeIP, family: 4 }]);
+    return resolvedCallback(null, edgeIP, 4);
+  };
+}
 
 function sha256(value) {
   return crypto.createHash('sha256').update(value).digest('hex');
