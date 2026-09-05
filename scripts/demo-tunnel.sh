@@ -9,7 +9,8 @@
 # 사전: 백엔드가 :3000에서 실행 중이어야 함
 #   cd application && npm start
 #
-# cloudflared 미설치 시: brew install cloudflared
+# macOS 설치: brew install cloudflared
+# Linux 실증/증거 보존: deploy/linux/quick-tunnel-evaluation.sh 사용
 #
 # 대안(터널 없이 같은 WiFi): 노트북 IP로 접속
 #   CORS_ORIGIN 에 http://<노트북IP>:3000 추가 후 http://<노트북IP>:3000/?app=kiosk&e=...
@@ -27,7 +28,8 @@ PORT="${1:-3000}"
 
 if ! command -v cloudflared >/dev/null 2>&1; then
   echo "[ERROR] cloudflared 가 설치되어 있지 않습니다."
-  echo "        설치: brew install cloudflared"
+  echo "        macOS 설치: brew install cloudflared"
+  echo "        Linux 설치: https://pkg.cloudflare.com/ 의 공식 패키지 저장소 사용"
   echo "        (대안) ngrok http ${PORT}  — 단, 무료는 첫 방문 경고 페이지 있음"
   exit 1
 fi

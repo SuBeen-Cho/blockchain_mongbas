@@ -25,6 +25,15 @@ MONGBAS_RUNTIME_DIR="${HOME}/.local/state/mongbas" \
 >
 > QR 시연 프로필에서는 `REQUIRE_DEMO_ADMISSION=true`를 반드시 사용한다. 관제판이 관리자 인증으로 120초짜리 일회용 admission을 발급하고, 폰은 URL fragment의 토큰을 즉시 지운 뒤 한 번만 교환한다. 이 admission은 실제 유권자 자격 증명이 아니며 eligibility 또는 ballot-stuffing 저항의 증거가 아니다. 승인된 단기 시험 외에는 인터넷 공개 터널로 노출하지 않는다.
 
+별도 승인된 일회성 인터넷 실증에서는 Linux 서버에서 다음 evaluator를 사용한다. 실행 전 loopback binding, admission 강제, rate limit, 저장소 청결도를 검사하고 `trycloudflare.com` HTTPS와 보안 헤더를 확인한 뒤 private runtime에 SHA-256 증거를 남긴다. 종료 시 `Ctrl-C`로 tunnel을 정리한다.
+
+```bash
+MONGBAS_RUNTIME_DIR="${HOME}/.local/state/mongbas" \
+  ./deploy/linux/quick-tunnel-evaluation.sh ENABLE_PUBLIC_QUICK_TUNNEL
+```
+
+Quick Tunnel URL은 임시이며 누구나 접근할 수 있다. QR fragment의 admission token이나 관리자 token을 로그·채팅·공개 Git에 복사하지 않고, 실증이 끝난 즉시 tunnel을 종료한다.
+
 화면 3개:
 - **관제판(노트북)**: `http://localhost:3000/?app=control` (원격 실증 시 Serve HTTPS URL + `/?app=control`)
 - **내 표 추적(노트북)**: `http://localhost:3000/?app=track`
