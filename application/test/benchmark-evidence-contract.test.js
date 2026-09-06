@@ -92,6 +92,19 @@ test('supported ElGamal benchmarks publish an explicit validity verdict without 
   }
 });
 
+test('concurrency benchmark supports repeated isolated threshold measurements', () => {
+  const benchmark = fs.readFileSync(path.join(__dirname, '../benchmark/elgamal-concurrency-bench.js'), 'utf8');
+  const wrapper = fs.readFileSync(path.join(__dirname, '../../deploy/linux/concurrency-benchmark.sh'), 'utf8');
+  assert.match(benchmark, /args\.repeats/);
+  assert.match(benchmark, /repetition <= REPEATS/);
+  assert.match(benchmark, /maximumFailRate/);
+  assert.match(wrapper, /MONGBAS_CONCURRENCY_REPEATS/);
+  assert.match(wrapper, /DISABLE_RATE_LIMITS=true ENABLE_BENCH_ENDPOINTS=true/);
+  assert.match(wrapper, /REQUIRE_DEMO_ADMISSION=false/);
+  assert.doesNotMatch(wrapper, /MONGBAS_BENCH_URL/);
+  assert.match(wrapper, /benchmark-exit-status\.txt/);
+});
+
 test('Linux evidence summarizers refuse to overwrite an existing result', () => {
   for (const name of ['summarize-longevity.js', 'summarize-rate.js', 'summarize-state-growth.js', 'validate-supply-chain.js']) {
     const source = fs.readFileSync(path.join(__dirname, '..', 'benchmark', name), 'utf8');

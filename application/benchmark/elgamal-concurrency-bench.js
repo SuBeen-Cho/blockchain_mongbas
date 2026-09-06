@@ -30,6 +30,7 @@ process.argv.slice(2).forEach((a, i, arr) => {
 const BASE = args.url || 'http://localhost:3000';
 const CONCURRENCIES = (args.conc || '1,10,50,100,300,500,1000').split(',').map(Number).filter(Boolean);
 const STOP_FAIL_RATE = Number(args.stopFailRate || 30);
+const REPEATS = Number(args.repeats || 1);
 const CANDIDATES = ['CANDIDATE_A', 'CANDIDATE_B', 'CANDIDATE_C'];
 const TIMESTAMP = new Date().toISOString().replace(/[:.]/g, '').slice(0, 15);
 const OUT = args.out || path.join(__dirname, `../benchmark-reports/elgamal-conc-${TIMESTAMP}.json`);
@@ -337,9 +338,9 @@ async function measureExactTally(electionID, expectedResults, closeTimeoutMs = 3
 }
 
 // ── 동시성 라운드 ───────────────────────────────────────────────
-async function runConcurrency(label, concurrency, idemixEnabled) {
-  console.log(`\n  [${label}] C=${concurrency} — 선거 생성...`);
-  const { electionID, pubKey, blindingFactor } = await createElection(`${label}-c${concurrency}`);
+async function runConcurrency(label, concurrency, idemixEnabled, repetition = 1) {
+  console.log(`\n  [${label}] C=${concurrency} rep=${repetition} — 선거 생성...`);
+  const { electionID, pubKey, blindingFactor } = await createElection(`${label}-c${concurrency}-rep${repetition}`);
 
   const credentials = [];
   if (idemixEnabled) {
@@ -380,6 +381,7 @@ async function runConcurrency(label, concurrency, idemixEnabled) {
   const round = {
     electionID,
     concurrency,
+    repetition,
     success: ok.length,
     fail: fail.length,
     overloadErrorCount,
@@ -401,6 +403,7 @@ async function runConcurrency(label, concurrency, idemixEnabled) {
 async function main() {
   if (!ADMIN_API_TOKEN) throw new Error('ADMIN_API_TOKEN is required');
   if (CONCURRENCIES.some(c => !Number.isInteger(c) || c < 1 || c > 1000)) throw new Error('concurrency must be an integer from 1 to 1000');
+  if (!Number.isInteger(REPEATS) || REPEATS < 1 || REPEATS > 10) throw new Error('repeats must be an integer from 1 to 10');
   const health = await get('/health');
   if (health.status !== 200) throw new Error('API server not ready');
   if (health.body?.benchmark?.rateLimitsDisabled !== true) {
@@ -421,11 +424,16 @@ async function main() {
 
   const rounds = [];
   for (const c of CONCURRENCIES) {
-    const round = await runConcurrency(label, c, idemix.enabled);
-    rounds.push(round);
+    const levelRounds = [];
+    for (let repetition = 1; repetition <= REPEATS; repetition += 1) {
+      const round = await runConcurrency(label, c, idemix.enabled, repetition);
+      rounds.push(round);
+      levelRounds.push(round);
+    }
 
-    if (round.failRate >= STOP_FAIL_RATE) {
-      console.log(`\n  [STOP] failRate ${round.failRate}% >= ${STOP_FAIL_RATE}% — 포화 도달`);
+    const maximumFailRate = Math.max(...levelRounds.map(round => round.failRate));
+    if (maximumFailRate >= STOP_FAIL_RATE) {
+      console.log(`\n  [STOP] max failRate ${maximumFailRate}% >= ${STOP_FAIL_RATE}% — 포화 도달`);
       break;
     }
   }
@@ -435,7 +443,7 @@ async function main() {
     evidenceClass: 'saturation-performance',
     scenario: `elgamal-concurrency-${label}`,
     timestamp: new Date().toISOString(),
-    config: { encryptionMode: 'elgamal-vector-v3', candidates: CANDIDATES.length, idemix, stopFailRate: STOP_FAIL_RATE, rateLimitsDisabled: true },
+    config: { encryptionMode: 'elgamal-vector-v3', candidates: CANDIDATES.length, idemix, stopFailRate: STOP_FAIL_RATE, rateLimitsDisabled: true, repeats: REPEATS },
     rounds,
   };
 
