@@ -131,6 +131,13 @@ test('CCAAS packaging uses a private temporary directory instead of deleting a f
   assert.match(script, /rm -rf -- "\$\{CCAAS_PKG\}"/);
 });
 
+test('CCAAS package carries CouchDB index metadata and verifies its archive path', () => {
+  const script = fs.readFileSync(path.join(__dirname, '../../network/scripts/network.sh'), 'utf8');
+  assert.match(script, /cp -R "\$\{CHAINCODE_PATH\}\/META-INF" "\$\{CCAAS_PKG\}\/META-INF"/);
+  assert.match(script, /tar czf code\.tar\.gz connection\.json META-INF/);
+  assert.match(script, /tar tzf code\.tar\.gz[^\n]*META-INF\/statedb\/couchdb\/indexes\/indexElection\.json/);
+});
+
 test('CCAAS candidate is running before approval and callable before current tag advances', () => {
   const script = fs.readFileSync(path.join(__dirname, '../../network/scripts/network.sh'), 'utf8');
   assert.match(script, /candidate failed to remain running before lifecycle approval/);

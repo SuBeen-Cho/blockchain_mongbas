@@ -34,5 +34,9 @@ test('non-reset upgrade wrapper rejects destructive network operations and valid
   assert.match(script, /rollback_image.*!=.*old_image/);
   assert.match(script, /current_image.*!=.*candidate_image/);
   assert.match(script, /candidate_running.*!=.*true/);
+  assert.match(script, /couchdb-indexes-after\.tsv/);
+  assert.match(script, /indexElection/);
+  assert.match(script, /electionIndex/);
+  assert.match(script, /couchdb-ec0 couchdb-ec1 couchdb-party couchdb-civil/);
   assert.match(script, /normal-backend-final-health\.json/);
 });

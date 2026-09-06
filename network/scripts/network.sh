@@ -262,7 +262,7 @@ cmd_up() {
 # cmd_deploy: 체인코드 배포 (CCAAS 방식 — macOS Docker Desktop 호환)
 #
 # CCAAS (Chaincode as a Service) 배포 흐름:
-#   1. CCAAS 패키지 생성 (connection.json + metadata.json)
+#   1. CCAAS 패키지 생성 (connection.json + CouchDB META-INF + metadata.json)
 #   2. 4개 피어에 설치
 #   3. 패키지 ID 조회 → voting-chaincode 컨테이너에 주입
 #   4. 3개 기관 승인 → 커밋 → 최초 정의에서만 InitLedger
@@ -315,8 +315,8 @@ cmd_deploy() {
   fi
 
   # ── CCAAS 패키지 생성 ─────────────────────────────────────────
-  # A CCAAS package contains connection metadata only. Rebuild the executable
-  # image so a lifecycle upgrade never restarts stale chaincode code.
+  # A CCAAS package carries connection metadata and state-database metadata.
+  # Rebuild the executable image so an upgrade never restarts stale code.
   step "[배포 0/7] 현재 소스로 CCAAS 이미지 재빌드..."
   if [ "${CURRENT_SEQ_BEFORE_BUILD}" -eq 0 ] && \
      [ "${NETWORK_DIR}" = "${DEFAULT_NETWORK_DIR}" ] && [ "${CHAINCODE_PATH}" = "${PROJECT_DIR}/chaincode/voting" ]; then
@@ -357,10 +357,16 @@ EOF
 }
 EOF
 
+  [ -f "${CHAINCODE_PATH}/META-INF/statedb/couchdb/indexes/indexElection.json" ] \
+    || error "required CouchDB election index metadata is missing"
+  cp -R "${CHAINCODE_PATH}/META-INF" "${CCAAS_PKG}/META-INF"
+
   cd "${CCAAS_PKG}"
   # macOS가 AppleDouble (._*) metadata를 archive에 넣으면 같은 입력에서도
   # package ID가 달라지고 Fabric이 경고한다. Linux에서는 이 변수가 무해하다.
-  COPYFILE_DISABLE=1 tar czf code.tar.gz connection.json
+  COPYFILE_DISABLE=1 tar czf code.tar.gz connection.json META-INF
+  tar tzf code.tar.gz | grep -Fx 'META-INF/statedb/couchdb/indexes/indexElection.json' >/dev/null \
+    || error "CCAAS package omitted the required CouchDB election index"
   COPYFILE_DISABLE=1 tar czf "${NETWORK_DIR}/${CHAINCODE_LABEL}_ccaas.tar.gz" code.tar.gz metadata.json
   cd "${NETWORK_DIR}"
   rm -rf -- "${CCAAS_PKG}"

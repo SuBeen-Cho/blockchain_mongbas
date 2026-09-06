@@ -124,6 +124,25 @@ assert after["version"] != before["version"]
 assert after["version"] == f'1.0.seq{after["sequence"]}'
 PY
 
+# A successful lifecycle commit is not enough for rich-query scalability: the
+# CCAAS code archive must also have installed the declared CouchDB index on
+# every peer database. Wait for metadata deployment and preserve the result.
+printf 'container\tindexPresent\n' >"${out}/couchdb-indexes-after.tsv"
+for couchdb_container in couchdb-ec0 couchdb-ec1 couchdb-party couchdb-civil; do
+  index_present=false
+  for _attempt in $(seq 1 60); do
+    if docker exec "${couchdb_container}" sh -lc \
+      'curl -fsS -u "$COUCHDB_USER:$COUCHDB_PASSWORD" http://127.0.0.1:5984/voting-channel_voting/_index' \
+      | python3 -c 'import json,sys; d=json.load(sys.stdin); sys.exit(0 if any(i.get("ddoc")=="_design/indexElection" and i.get("name")=="electionIndex" for i in d.get("indexes",[])) else 1)'; then
+      index_present=true
+      break
+    fi
+    sleep 5
+  done
+  printf '%s\t%s\n' "${couchdb_container}" "${index_present}" >>"${out}/couchdb-indexes-after.tsv"
+  [ "${index_present}" = true ] || die "CouchDB election index missing after upgrade: ${couchdb_container}"
+done
+
 curl --silent --show-error --fail --max-time 5 http://127.0.0.1:3000/health \
   >"${out}/normal-backend-final-health.json"
 completed=true
