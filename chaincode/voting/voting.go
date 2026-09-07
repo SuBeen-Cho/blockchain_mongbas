@@ -671,6 +671,57 @@ type VectorAuditDisclosure struct {
 	AuditedTxID               string                     `json:"auditedTxID"`
 }
 
+// vectorReceiptStateReader deliberately exposes only exact-key reads. Active
+// vector ballots already commit their PreparedBallotID, so reconstructing cast
+// receipts must not depend on a ledger-wide range query that Fabric may cap at
+// peer.totalQueryLimit.
+type vectorReceiptStateReader interface {
+	GetState(key string) ([]byte, error)
+}
+
+func loadActiveVectorReceipts(
+	state vectorReceiptStateReader,
+	electionID string,
+	candidates []string,
+	ballots []EncryptedBallot,
+) ([]VectorBallotReceipt, error) {
+	receipts := make([]VectorBallotReceipt, 0, len(ballots))
+	seen := make(map[string]struct{}, len(ballots))
+	for _, ballot := range ballots {
+		ballotID := ballot.PreparedBallotID
+		if !isCanonicalSHA256Hex(ballotID) {
+			return nil, fmt.Errorf("cast vector prepared ballot ID invalid: %s", ballotID)
+		}
+		if _, duplicate := seen[ballotID]; duplicate {
+			return nil, fmt.Errorf("cast vector prepared ballot ID duplicate: %s", ballotID)
+		}
+		seen[ballotID] = struct{}{}
+
+		encoded, err := state.GetState("VECTOR_PREP_" + ballotID)
+		if err != nil {
+			return nil, fmt.Errorf("cast vector receipt lookup failed: %s: %w", ballotID, err)
+		}
+		if encoded == nil {
+			return nil, fmt.Errorf("cast vector receipt missing: %s", ballotID)
+		}
+		var receipt VectorBallotReceipt
+		if err := json.Unmarshal(encoded, &receipt); err != nil {
+			return nil, fmt.Errorf("cast vector receipt decode failed: %s: %w", ballotID, err)
+		}
+		if receipt.Schema != "mongbas-vector-ballot-receipt/v1" || receipt.BallotID != ballotID ||
+			receipt.ElectionID != electionID || receipt.Status != "cast" || !isCanonicalSHA256Hex(receipt.ArtifactHash) {
+			return nil, fmt.Errorf("cast vector receipt binding invalid: %s", ballotID)
+		}
+		artifactHash, err := computeVectorAuditArtifactHash(electionID, candidates,
+			ballot.EncryptedCandidateVector, ballot.VectorBallotValidityProof)
+		if err != nil || subtle.ConstantTimeCompare([]byte(receipt.ArtifactHash), []byte(artifactHash)) != 1 {
+			return nil, fmt.Errorf("cast vector receipt artifact mismatch: %s", ballotID)
+		}
+		receipts = append(receipts, receipt)
+	}
+	return receipts, nil
+}
+
 // ============================================================
 // 체인코드 컨트랙트
 // ============================================================
@@ -5281,12 +5332,18 @@ func (c *VotingContract) PublishAuditData(
 	var vectorReceipts []VectorBallotReceipt
 	var vectorDisclosures []VectorAuditDisclosure
 	if election.EncryptionMode == "elgamal-vector-v3" {
+		vectorReceipts, err = loadActiveVectorReceipts(ctx.GetStub(), electionID, election.Candidates, ballots)
+		if err != nil {
+			return nil, err
+		}
+		// Audited (spoiled) ballots are not part of the active ballot set. Keep
+		// discovering those legacy records separately; cast receipt correctness
+		// no longer depends on this Fabric-capped global iterator.
 		receiptIterator, err := ctx.GetStub().GetStateByRange("VECTOR_PREP_", "VECTOR_PREP_\uffff")
 		if err != nil {
 			return nil, fmt.Errorf("vector receipt 조회 실패: %w", err)
 		}
 		defer receiptIterator.Close()
-		castReceiptIDs := make(map[string]string)
 		for receiptIterator.HasNext() {
 			entry, err := receiptIterator.Next()
 			if err != nil {
@@ -5300,9 +5357,6 @@ func (c *VotingContract) PublishAuditData(
 				continue
 			}
 			switch receipt.Status {
-			case "cast":
-				castReceiptIDs[receipt.BallotID] = receipt.ArtifactHash
-				vectorReceipts = append(vectorReceipts, receipt)
 			case "audited":
 				disclosureBytes, err := ctx.GetStub().GetState("VECTOR_AUDIT_" + receipt.BallotID)
 				if err != nil || disclosureBytes == nil {
@@ -5315,20 +5369,6 @@ func (c *VotingContract) PublishAuditData(
 				}
 				vectorReceipts = append(vectorReceipts, receipt)
 				vectorDisclosures = append(vectorDisclosures, disclosure)
-			}
-		}
-		if len(castReceiptIDs) != len(ballots) {
-			return nil, fmt.Errorf("cast vector receipt 수 불일치: receipts=%d ballots=%d", len(castReceiptIDs), len(ballots))
-		}
-		for _, ballot := range ballots {
-			receiptHash, exists := castReceiptIDs[ballot.PreparedBallotID]
-			if !exists {
-				return nil, fmt.Errorf("cast vector receipt 누락: %s", ballot.PreparedBallotID)
-			}
-			artifactHash, err := computeVectorAuditArtifactHash(electionID, election.Candidates,
-				ballot.EncryptedCandidateVector, ballot.VectorBallotValidityProof)
-			if err != nil || subtle.ConstantTimeCompare([]byte(receiptHash), []byte(artifactHash)) != 1 {
-				return nil, fmt.Errorf("cast vector receipt artifact 불일치: %s", ballot.PreparedBallotID)
 			}
 		}
 		sort.Slice(vectorReceipts, func(i, j int) bool { return vectorReceipts[i].BallotID < vectorReceipts[j].BallotID })
@@ -5535,12 +5575,15 @@ func (c *VotingContract) hydrateBulletinBoard(
 	if election.EncryptionMode != "elgamal-vector-v3" {
 		return nil
 	}
+	bb.VectorBallotReceipts, err = loadActiveVectorReceipts(ctx.GetStub(), bb.ElectionID, election.Candidates, ballots)
+	if err != nil {
+		return fmt.Errorf("BulletinBoard active vector receipts invalid: %w", err)
+	}
 	receipts, err := ctx.GetStub().GetStateByRange("VECTOR_PREP_", "VECTOR_PREP_￿")
 	if err != nil {
 		return fmt.Errorf("BulletinBoard vector receipt lookup failed: %w", err)
 	}
 	defer receipts.Close()
-	castArtifacts := make(map[string]string)
 	for receipts.HasNext() {
 		entry, err := receipts.Next()
 		if err != nil {
@@ -5553,10 +5596,6 @@ func (c *VotingContract) hydrateBulletinBoard(
 		if receipt.ElectionID != bb.ElectionID {
 			continue
 		}
-		if receipt.Status == "cast" {
-			castArtifacts[receipt.BallotID] = receipt.ArtifactHash
-		}
-		bb.VectorBallotReceipts = append(bb.VectorBallotReceipts, receipt)
 		if receipt.Status == "audited" {
 			disclosureBytes, err := ctx.GetStub().GetState("VECTOR_AUDIT_" + receipt.BallotID)
 			if err != nil || disclosureBytes == nil {
@@ -5568,18 +5607,8 @@ func (c *VotingContract) hydrateBulletinBoard(
 				disclosure.ArtifactHash != receipt.ArtifactHash || disclosure.Status != "audited" {
 				return fmt.Errorf("BulletinBoard audit disclosure is invalid: %s", receipt.BallotID)
 			}
+			bb.VectorBallotReceipts = append(bb.VectorBallotReceipts, receipt)
 			bb.VectorAuditDisclosures = append(bb.VectorAuditDisclosures, disclosure)
-		}
-	}
-	if len(castArtifacts) != len(ballots) {
-		return fmt.Errorf("BulletinBoard cast receipt count mismatch: got=%d want=%d", len(castArtifacts), len(ballots))
-	}
-	for _, ballot := range ballots {
-		receiptHash, exists := castArtifacts[ballot.PreparedBallotID]
-		artifactHash, hashErr := computeVectorAuditArtifactHash(bb.ElectionID, election.Candidates,
-			ballot.EncryptedCandidateVector, ballot.VectorBallotValidityProof)
-		if !exists || hashErr != nil || subtle.ConstantTimeCompare([]byte(receiptHash), []byte(artifactHash)) != 1 {
-			return fmt.Errorf("BulletinBoard cast receipt artifact mismatch: %s", ballot.PreparedBallotID)
 		}
 	}
 	sort.Slice(bb.VectorBallotReceipts, func(i, j int) bool {

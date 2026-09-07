@@ -192,6 +192,78 @@ type castHistoryStub struct {
 	eventPayload []byte
 }
 
+type exactReceiptStub struct {
+	state []byte
+	keys  []string
+}
+
+func (stub *exactReceiptStub) GetState(key string) ([]byte, error) {
+	stub.keys = append(stub.keys, key)
+	return stub.state, nil
+}
+
+func TestActiveVectorReceiptUsesPreparedBallotExactLookup(t *testing.T) {
+	ballotID := strings.Repeat("a", 64)
+	ballot := EncryptedBallot{
+		PreparedBallotID:          ballotID,
+		EncryptedCandidateVector:  []ElGamalCiphertext{{C1: "2", C2: "3"}, {C1: "4", C2: "5"}},
+		VectorBallotValidityProof: &VectorBallotValidityProof{},
+	}
+	artifactHash, err := computeVectorAuditArtifactHash("election-a", []string{"A", "B"},
+		ballot.EncryptedCandidateVector, ballot.VectorBallotValidityProof)
+	if err != nil {
+		t.Fatal(err)
+	}
+	receipt, err := json.Marshal(VectorBallotReceipt{
+		Schema: "mongbas-vector-ballot-receipt/v1", BallotID: ballotID, ElectionID: "election-a",
+		ArtifactHash: artifactHash, Status: "cast", CreatedAt: 1, CreatedTxID: "tx-1",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	stub := &exactReceiptStub{state: receipt}
+	receipts, err := loadActiveVectorReceipts(stub, "election-a", []string{"A", "B"}, []EncryptedBallot{ballot})
+	if err != nil {
+		t.Fatalf("valid exact-key receipt rejected: %v", err)
+	}
+	if len(receipts) != 1 || len(stub.keys) != 1 || stub.keys[0] != "VECTOR_PREP_"+ballotID {
+		t.Fatalf("active receipt did not use one exact lookup: receipts=%d keys=%v", len(receipts), stub.keys)
+	}
+
+	stub.state = nil
+	if _, err := loadActiveVectorReceipts(stub, "election-a", []string{"A", "B"}, []EncryptedBallot{ballot}); err == nil || !strings.Contains(err.Error(), "missing") {
+		t.Fatalf("missing exact-key receipt was not rejected: %v", err)
+	}
+	stub.state = receipt
+	if _, err := loadActiveVectorReceipts(stub, "election-a", []string{"A", "B"}, []EncryptedBallot{ballot, ballot}); err == nil || !strings.Contains(err.Error(), "duplicate") {
+		t.Fatalf("duplicate prepared ballot ID was not rejected: %v", err)
+	}
+}
+
+func TestActiveVectorReceiptRejectsBindingAndArtifactMismatch(t *testing.T) {
+	ballotID := strings.Repeat("b", 64)
+	ballot := EncryptedBallot{
+		PreparedBallotID:          ballotID,
+		EncryptedCandidateVector:  []ElGamalCiphertext{{C1: "2", C2: "3"}, {C1: "4", C2: "5"}},
+		VectorBallotValidityProof: &VectorBallotValidityProof{},
+	}
+	for name, receipt := range map[string]VectorBallotReceipt{
+		"wrong-election": {Schema: "mongbas-vector-ballot-receipt/v1", BallotID: ballotID, ElectionID: "other", ArtifactHash: strings.Repeat("c", 64), Status: "cast"},
+		"wrong-status":   {Schema: "mongbas-vector-ballot-receipt/v1", BallotID: ballotID, ElectionID: "election-a", ArtifactHash: strings.Repeat("c", 64), Status: "audited"},
+		"wrong-artifact": {Schema: "mongbas-vector-ballot-receipt/v1", BallotID: ballotID, ElectionID: "election-a", ArtifactHash: strings.Repeat("c", 64), Status: "cast"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			encoded, err := json.Marshal(receipt)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := loadActiveVectorReceipts(&exactReceiptStub{state: encoded}, "election-a", []string{"A", "B"}, []EncryptedBallot{ballot}); err == nil {
+				t.Fatal("invalid receipt was accepted")
+			}
+		})
+	}
+}
+
 func (stub *castHistoryStub) GetPrivateData(collection, key string) ([]byte, error) {
 	return stub.private[collection+"\x00"+key], nil
 }
