@@ -13,6 +13,7 @@ const source = fs.readFileSync(
 test('Quick Tunnel evaluator requires explicit public-exposure approval', () => {
   assert.match(source, /ENABLE_PUBLIC_QUICK_TUNNEL/);
   assert.match(source, /repository must be clean before public exposure/);
+  assert.match(source, /cloudflared must run as a non-root operator/);
 });
 
 test('Quick Tunnel evaluator gates loopback, admission, and rate limits', () => {
@@ -31,4 +32,12 @@ test('Quick Tunnel evaluator accepts only a Cloudflare ephemeral origin and clea
   assert.match(source, /sha256\.txt/);
   assert.match(source, /strict-transport-security/);
   assert.match(source, /content-security-policy/);
+});
+
+test('Quick Tunnel evaluator atomically applies and rolls back the detected origin', () => {
+  assert.match(source, /MONGBAS_BACKEND_ENV/);
+  assert.match(source, /MONGBAS_ADMISSION_STATE/);
+  assert.match(source, /configure-tailnet-qr-profile\.py/);
+  assert.match(source, /systemctl restart mongbas-backend\.service/);
+  assert.match(source, /install -m 0600/);
 });

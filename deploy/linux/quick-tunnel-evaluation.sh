@@ -5,6 +5,7 @@ source "$(cd "$(dirname "$0")" && pwd)/lib.sh"
 approval="${1:-}"
 [ "${approval}" = "ENABLE_PUBLIC_QUICK_TUNNEL" ] ||
   die "explicit public Quick Tunnel approval argument is required"
+[ "${EUID}" -ne 0 ] || die "cloudflared must run as a non-root operator"
 
 ensure_runtime
 require_cmd cloudflared
@@ -14,6 +15,14 @@ require_cmd node
 require_cmd pgrep
 require_cmd sha256sum
 require_cmd ss
+require_cmd sudo
+
+backend_env="${MONGBAS_BACKEND_ENV:-}"
+admission_state="${MONGBAS_ADMISSION_STATE:-}"
+[ -n "${backend_env}" ] && [ "${backend_env#/}" != "${backend_env}" ] ||
+  die "MONGBAS_BACKEND_ENV must be an explicit absolute path"
+[ -n "${admission_state}" ] && [ "${admission_state#/}" != "${admission_state}" ] ||
+  die "MONGBAS_ADMISSION_STATE must be an explicit absolute path"
 
 if pgrep -af '[c]loudflared tunnel .*127\.0\.0\.1:3000' >/dev/null 2>&1; then
   die "a Mongbas Quick Tunnel already appears to be active"
@@ -24,12 +33,18 @@ out="${MONGBAS_RESULT_DIR}/quick-tunnel-${stamp}"
 (umask 077; mkdir "${out}")
 tunnel_pid=""
 passed=false
+profile_applied=false
+profile_backup="${backend_env}.quick-tunnel-${stamp}.bak"
 
 finish() {
   status=$?
   if [ -n "${tunnel_pid}" ] && kill -0 "${tunnel_pid}" 2>/dev/null; then
     kill "${tunnel_pid}" 2>/dev/null || true
     wait "${tunnel_pid}" 2>/dev/null || true
+  fi
+  if [ "${profile_applied}" = true ] && [ -f "${profile_backup}" ]; then
+    sudo install -m 0600 "${profile_backup}" "${backend_env}" || true
+    sudo systemctl restart mongbas-backend.service || true
   fi
   printf 'status=%s\nexitCode=%s\nfinishedUtc=%s\n' \
     "$([ "${passed}" = true ] && printf passed || printf failed)" "${status}" "$(date -u +'%FT%TZ')" >"${out}/result.txt"
@@ -71,6 +86,14 @@ for _ in $(seq 1 60); do
 done
 [ -n "${origin}" ] || die "timed out waiting for a valid trycloudflare.com origin"
 printf '%s\n' "${origin}" >"${out}/https-origin.txt"
+
+# Privilege separation: the temporary tunnel remains owned by the invoking
+# operator. sudo is used only for the protected environment update and backend
+# restart, and no password or token is passed through arguments or files.
+sudo python3 "${MONGBAS_REPO_DIR}/deploy/linux/configure-tailnet-qr-profile.py" \
+  "${backend_env}" "${origin}" "${profile_backup}" "${admission_state}"
+profile_applied=true
+sudo systemctl restart mongbas-backend.service
 
 origin_host="${origin#https://}"
 for _ in $(seq 1 120); do
