@@ -38,7 +38,7 @@ export default function TrackPage({ electionId }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  async function track(rawCode) {
+  async function track(rawCode, tampered = false) {
     setBusy(true); setRes(null); setFail('');
     try {
       if (!eid) throw new Error('선거 ID를 입력하세요.');
@@ -62,7 +62,11 @@ export default function TrackPage({ electionId }) {
         leafHash: proofResp.leafHash, chainRoot: merkle.rootHash, computedRoot, sealMatch,
         tallyTotal: board.totalVotes, cipher: ballot.encryptedCandidateID,
       });
-    } catch (e) { setFail(e.message); }
+    } catch (e) {
+      setFail(tampered
+        ? '한 글자를 바꾼 추적번호는 공개 게시판 또는 Merkle leaf와 일치하지 않습니다. (변조 탐지 성공)'
+        : e.message);
+    }
     setBusy(false);
   }
 
@@ -72,7 +76,7 @@ export default function TrackPage({ electionId }) {
     if (!hex) return;
     const last = hex[hex.length - 1];
     const flipped = (parseInt(last, 16) ^ 1).toString(16);
-    track(hex.slice(0, -1) + flipped);
+    track(hex.slice(0, -1) + flipped, true);
   }
 
   const card = { background: '#fff', borderRadius: 14, padding: 20, marginBottom: 16, boxShadow: '0 1px 3px rgba(0,0,0,.08)' };
