@@ -53,6 +53,15 @@ test('demo admission is election-bound, expires, persists and redeems exactly on
   }
 });
 
+test('explicit shared-session redemption keeps the QR admission reusable until expiry', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mongbas-demo-shared-'));
+  const store = new DemoAdmissionStore(path.join(dir, 'admissions.json'));
+  const issued = store.issue('election-shared', { now: 1_000, ttlMs: 120_000 });
+  assert.equal(store.redeem('election-shared', issued.token, { now: 2_000, consume: false }).electionID, 'election-shared');
+  assert.equal(store.redeem('election-shared', issued.token, { now: 3_000, consume: false }).electionID, 'election-shared');
+  assert.throws(() => store.redeem('election-shared', issued.token, { now: 121_001, consume: false }), /unavailable/);
+});
+
 test('demo admission rejects symlink state and malformed token/election/TTL', () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'mongbas-admission-invalid-'));
   try {

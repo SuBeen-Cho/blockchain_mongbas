@@ -233,9 +233,13 @@ router.post('/demo-admission', requireDemoEndpoint, requireAdmin, (req, res) => 
 router.post('/demo-admission/redeem', requireDemoEndpoint, async (req, res) => {
   const { electionID, token } = req.body || {};
   try {
-    const admission = getDemoAdmissionStore().redeem(electionID, token);
+    const sharedSessionQr = req.body?.sharedSession === true;
+    const admission = getDemoAdmissionStore().redeem(electionID, token, { consume: !sharedSessionQr });
+    // A reusable session QR must never mint the same credential/nullifier for
+    // multiple phones. The random redemption scope is server-side only.
+    const redemptionScope = sharedSessionQr ? `:${crypto.randomBytes(16).toString('hex')}` : '';
     const { token: credential, credType, sizeBytes, nullifierMaterial } =
-      await issueCredentialAuto(`admission:${admission.admissionID}`, electionID);
+      await issueCredentialAuto(`admission:${admission.admissionID}${redemptionScope}`, electionID);
     logCredentialIssuance({
       credentialHash: crypto.createHash('sha256').update(credential).digest('hex'),
       electionID,

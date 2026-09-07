@@ -461,7 +461,7 @@ function QRCard({ qr, url, error, onRenew, disabled, expiresAt }) {
           : <div style={{ width: 200, height: 200, padding: 18, boxSizing: 'border-box', background: T.paper2, display: 'flex', alignItems: 'center', justifyContent: 'center', color: error ? '#b42318' : T.sub, fontSize: 13, fontWeight: 700 }}>{error || '새 세션 시작 시 QR 표시'}</div>}
       </div>
       {url && <div style={{ marginTop: 10, fontSize: 10.5, color: T.sub, wordBreak: 'break-all', fontFamily: 'monospace' }}>{displayKioskUrl(url)}</div>}
-      {expiresAt && <div style={{ marginTop: 8, fontSize: 11.5, color: T.sub, fontWeight: 700 }}>일회용 · {new Date(expiresAt).toLocaleTimeString()}까지</div>}
+      {expiresAt && <div style={{ marginTop: 8, fontSize: 11.5, color: T.sub, fontWeight: 700 }}>세션 공용 QR · {new Date(expiresAt).toLocaleTimeString()}까지</div>}
       <button onClick={onRenew} disabled={disabled}
         style={{ width: '100%', marginTop: 12, padding: 11, border: `1.5px solid ${T.blue}`, background: disabled ? T.paper2 : '#fff', color: disabled ? T.sub : T.blue, fontSize: 13, fontWeight: 900, fontFamily: 'inherit', cursor: disabled ? 'not-allowed' : 'pointer' }}>
         다음 참가자용 새 QR 발급

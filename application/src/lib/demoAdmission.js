@@ -186,16 +186,18 @@ class DemoAdmissionStore {
     });
   }
 
-  redeem(electionID, token, { now = Date.now() } = {}) {
+  redeem(electionID, token, { now = Date.now(), consume = true } = {}) {
     const unavailable = () => new Error('demo admission is invalid or unavailable');
     if (!ELECTION_RE.test(electionID || '') || !TOKEN_RE.test(token || '') || !Number.isSafeInteger(now) || now < 0) throw unavailable();
     return this._withLock(() => {
       const state = this._state();
       const hash = tokenHash(token);
       const record = state.records[hash];
-      if (!record || record.electionID !== electionID || record.usedAt !== null || now > record.expiresAt) throw unavailable();
-      record.usedAt = now;
-      this._write(state);
+      if (!record || record.electionID !== electionID || (consume && record.usedAt !== null) || now > record.expiresAt) throw unavailable();
+      if (consume) {
+        record.usedAt = now;
+        this._write(state);
+      }
       return { admissionID: hash, electionID, expiresAt: record.expiresAt };
     });
   }

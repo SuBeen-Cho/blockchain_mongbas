@@ -56,7 +56,7 @@ export default function KioskPage({ electionId }) {
         if (el.encryptionMode === 'elgamal' || el.encryptionMode === 'elgamal-vector-v3') setPub((await J(`/elections/${encodeURIComponent(electionId)}/elgamal-pubkey`)).pubKey);
         setBf((await J(`/elections/${encodeURIComponent(electionId)}/blinding-factor`)).blindingFactor);
         const issued = await J('/credential/demo-admission/redeem', { method: 'POST',
-          body: JSON.stringify({ electionID: electionId, token: admissionToken }) });
+          body: JSON.stringify({ electionID: electionId, token: admissionToken, sharedSession: true }) });
         if (!issued.credential || !issued.nullifierMaterial) throw new Error('자격증명 nullifier 바인딩 재료가 누락됐습니다.');
         setCred(issued.credential);
         setNullifierMaterial(issued.nullifierMaterial);
