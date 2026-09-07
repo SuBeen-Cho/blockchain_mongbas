@@ -21,6 +21,7 @@ const path = require('path');
 require('dotenv').config({ path: path.join(__dirname, '../.env') });
 const { generateVectorBallot } = require('../src/lib/vectorElgamal');
 const { writeJsonEvidenceExclusive } = require('./evidence-contract');
+const { reconcileAmbiguousCast } = require('./commit-reconciliation');
 
 const args = {};
 process.argv.slice(2).forEach((a, i, arr) => {
@@ -270,10 +271,29 @@ async function castPreparedVote(prepared, index = prepared.index) {
       error: committed.body?.error || 'prepare-vector failed' };
   }
   const cast = await post('/api/vote/cast-vector', { ...prepared.castBody, ballotID: committed.body.ballotID }, prepared.headers, 180000);
-  const ok = cast.status >= 200 && cast.status < 300;
+  let ok = cast.status >= 200 && cast.status < 300;
+  let outcome = ok ? 'confirmed-committed' : 'confirmed-rejected';
+  let reconciliation = null;
+  const ambiguous = cast.status === 0 && /timeout/i.test(String(cast.body?.error || ''));
+  if (ambiguous) {
+    reconciliation = await reconcileAmbiguousCast({
+      electionID: prepared.castBody.electionID,
+      nullifierHash: prepared.castBody.nullifierHash,
+      ballotID: committed.body.ballotID,
+    }, {
+      lookup: hash => get(`/api/nullifier/${encodeURIComponent(hash)}`),
+      timeoutMs: Number(args.reconcileTimeoutMs || 120000),
+      intervalMs: Number(args.reconcileIntervalMs || 2000),
+    });
+    outcome = reconciliation.outcome;
+    ok = reconciliation.committed;
+  }
   const retryEvidence = cast.body?.benchmark;
   return { index, ok, status: cast.status, ms: Number(process.hrtime.bigint() - started) / 1e6,
-    prepareCommitted: true, castAttempted: true, castCommitted: ok,
+    prepareCommitted: true, castAttempted: true, castCommitted: ok, outcome,
+    responseConfirmed: cast.status >= 200 && cast.status < 300,
+    reconciliationAttempts: reconciliation?.attempts || 0,
+    reconciliationMs: reconciliation?.elapsedMs || 0,
     prepareMs: committed.ms, castMs: cast.ms,
     preparedVisibilityEndorsementRetries: retryEvidence?.preparedVisibilityEndorsementRetries,
     preparedVisibilityRetryDelayMs: retryEvidence?.preparedVisibilityRetryDelayMs,
@@ -390,6 +410,11 @@ async function runConcurrency(label, concurrency, idemixEnabled, repetition = 1)
     tps: +(ok.length / elapsedSec).toFixed(2),
     elapsedSec: +elapsedSec.toFixed(2),
     latency: stats(ok.map(r => r.ms)),
+    outcomes: results.reduce((counts, result) => {
+      const outcome = result.outcome || (result.ok ? 'confirmed-committed' : 'confirmed-rejected');
+      counts[outcome] = (counts[outcome] || 0) + 1;
+      return counts;
+    }, {}),
     errors,
     failedSamples: fail.slice(0, 20).map(({ index, status, ms, error }) => ({ index, status, ms: +ms.toFixed(1), error })),
     tally,
