@@ -320,6 +320,7 @@ router.post('/:id/seed-votes', requireDemoEndpoint, async (req, res) => {
   const PORT = process.env.PORT || 3000;
   const BASE = `http://127.0.0.1:${PORT}`;
   const { elgamalEncryptWithZKP } = require('../lib/elgamalVote');
+  const { generateVectorBallot } = require('../lib/vectorElgamal');
   const J = async (path, opts = {}) => {
     const { headers, ...rest } = opts;
     const r = await fetch(BASE + path, { headers: { 'Content-Type': 'application/json', ...(headers || {}) }, ...rest });
@@ -329,7 +330,7 @@ router.post('/:id/seed-votes', requireDemoEndpoint, async (req, res) => {
   };
   try {
     const election = await J(`/api/elections/${encodeURIComponent(id)}`);
-    if (election.encryptionMode !== 'elgamal') return res.status(400).json({ error: 'seed-votes는 ElGamal 모드 선거만 지원합니다.' });
+    if (!['elgamal', 'elgamal-vector-v3'].includes(election.encryptionMode)) return res.status(400).json({ error: 'seed-votes는 ElGamal 모드 선거만 지원합니다.' });
     if (election.status !== 'ACTIVE') return res.status(400).json({ error: '활성(ACTIVE) 선거만 투표 주입이 가능합니다.' });
     const cands = election.candidates;
     const pub = (await J(`/api/elections/${encodeURIComponent(id)}/elgamal-pubkey`)).pubKey;
@@ -337,12 +338,29 @@ router.post('/:id/seed-votes', requireDemoEndpoint, async (req, res) => {
     let ok = 0; const counts = {};
     for (let i = 0; i < count; i++) {
       const idx = dist && dist[i] != null ? dist[i] % cands.length : Math.floor(Math.random() * cands.length);
-      const voterId = `demo${String((i % 100) + 1).padStart(3, '0')}`;
-      const issued = await J('/api/credential/idemix', { method: 'POST', body: JSON.stringify({ enrollmentID: voterId, enrollmentSecret: `${voterId}pw`, electionID: id }) });
+      const admission = await J('/api/credential/demo-admission', { method: 'POST',
+        headers: { Authorization: `Bearer ${process.env.ADMIN_API_TOKEN || ''}` },
+        body: JSON.stringify({ electionID: id, ttlSeconds: 120 }) });
+      const issued = await J('/api/credential/demo-admission/redeem', { method: 'POST',
+        body: JSON.stringify({ electionID: id, token: admission.token }) });
       const cred = issued.credential;
       const nh = crypto.createHash('sha256').update(issued.nullifierMaterial + id + bf).digest('hex');
-      const v = elgamalEncryptWithZKP(pub, idx, cands.length);
-      await J('/api/vote', { method: 'POST', headers: { 'x-idemix-credential': cred }, body: JSON.stringify({ electionID: id, encryptedCandidateID: v.encrypted, nullifierHash: nh, ballotValidityProof: JSON.stringify(v.proof) }) });
+      if (election.encryptionMode === 'elgamal-vector-v3') {
+        const ballot = generateVectorBallot(pub, idx, cands.length);
+        const clientNonce = crypto.randomBytes(32).toString('hex');
+        const prepared = await J('/api/vote/prepare-vector', { method: 'POST', headers: { 'x-idemix-credential': cred },
+          body: JSON.stringify({ electionID: id, nullifierHash: nh,
+            clientNonceHash: crypto.createHash('sha256').update(clientNonce).digest('hex'),
+            encryptedCandidateVector: ballot.encryptedCandidateVector,
+            vectorBallotValidityProof: ballot.vectorBallotValidityProof }) });
+        await J('/api/vote/cast-vector', { method: 'POST', headers: { 'x-idemix-credential': cred },
+          body: JSON.stringify({ electionID: id, nullifierHash: nh, ballotID: prepared.ballotID,
+            encryptedCandidateVector: ballot.encryptedCandidateVector,
+            vectorBallotValidityProof: ballot.vectorBallotValidityProof }) });
+      } else {
+        const v = elgamalEncryptWithZKP(pub, idx, cands.length);
+        await J('/api/vote', { method: 'POST', headers: { 'x-idemix-credential': cred }, body: JSON.stringify({ electionID: id, encryptedCandidateID: v.encrypted, nullifierHash: nh, ballotValidityProof: JSON.stringify(v.proof) }) });
+      }
       ok++; counts[cands[idx]] = (counts[cands[idx]] || 0) + 1;
     }
     res.json({ message: `${ok}표 자동 주입 완료`, injected: ok, breakdown: counts });

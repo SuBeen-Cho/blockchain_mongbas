@@ -164,7 +164,7 @@ export default function ControlPage() {
       setStatus('CREATED'); setBusy('선거 활성화 중…'); addLog('선거 생성 커밋 확인');
       await J(`/elections/${id}/activate`, { method: 'POST' });
       setStatus('ACTIVE'); setBusy('세션 공용 QR 발급 중…'); addLog('선거 활성화 확인');
-      const issuedAdmission = await J('/credential/demo-admission', { method: 'POST', body: JSON.stringify({ electionID: id, ttlSeconds: 120 }) });
+      const issuedAdmission = await J('/credential/demo-admission', { method: 'POST', body: JSON.stringify({ electionID: id, ttlSeconds: 900 }) });
       setAdmission(issuedAdmission);
       addLog(`새 세션 시작: ${id}`);
     } catch (e) { addLog('오류: ' + e.message); setBusy(''); return; }
@@ -175,7 +175,7 @@ export default function ControlPage() {
     if (!eid || status !== 'ACTIVE') return;
     setBusy('새 세션 공용 QR 발급 중…');
     try {
-      const issued = await J('/credential/demo-admission', { method: 'POST', body: JSON.stringify({ electionID: eid, ttlSeconds: 120 }) });
+      const issued = await J('/credential/demo-admission', { method: 'POST', body: JSON.stringify({ electionID: eid, ttlSeconds: 900 }) });
       setAdmission(issued);
       addLog('새 세션 공용 QR 발급');
     } catch (e) { addLog('오류: ' + e.message); }
