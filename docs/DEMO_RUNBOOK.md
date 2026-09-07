@@ -23,7 +23,7 @@ MONGBAS_RUNTIME_DIR="${HOME}/.local/state/mongbas" \
 > 이 명령은 tailnet 내부 Serve만 구성한다. Funnel, `demo-tunnel.sh`와 일반 인터넷 공개는 별도 승인이 없으면 사용하지 않는다.
 > private Serve에서도 rate limit을 끄지 않는다. `live-count`, `live-votes`, `demo-events`는 관제판이 전송하는 관리자 bearer token이 있어야 조회된다. 관제판도 Serve HTTPS URL로 열어야 QR에 해당 origin이 들어간다.
 >
-> QR 시연 프로필에서는 `REQUIRE_DEMO_ADMISSION=true`를 반드시 사용한다. 관제판이 관리자 인증으로 120초짜리 일회용 admission을 발급하고, 폰은 URL fragment의 토큰을 즉시 지운 뒤 한 번만 교환한다. 이 admission은 실제 유권자 자격 증명이 아니며 eligibility 또는 ballot-stuffing 저항의 증거가 아니다. 승인된 단기 시험 외에는 인터넷 공개 터널로 노출하지 않는다.
+> QR 시연 프로필에서는 `REQUIRE_DEMO_ADMISSION=true`를 반드시 사용한다. 관제판이 관리자 인증으로 120초짜리 세션 공용 QR을 발급하고, 각 폰은 URL fragment의 토큰을 즉시 지운 뒤 서로 다른 credential을 발급받는다. 이 admission은 실제 유권자 자격 증명이 아니며 eligibility 또는 ballot-stuffing 저항의 증거가 아니다. 승인된 단기 시험 외에는 인터넷 공개 터널로 노출하지 않는다.
 
 별도 승인된 일회성 인터넷 실증에서는 Linux 서버에서 다음 evaluator를 사용한다. 실행 전 loopback binding, admission 강제, rate limit, 저장소 청결도를 검사하고 `trycloudflare.com` HTTPS와 보안 헤더를 확인한 뒤 private runtime에 SHA-256 증거를 남긴다. 종료 시 `Ctrl-C`로 tunnel을 정리한다.
 

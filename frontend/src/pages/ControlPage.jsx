@@ -163,7 +163,7 @@ export default function ControlPage() {
       await J('/elections', { method: 'POST', body: JSON.stringify({ electionID: id, title: '2026 모의 선거', candidates: CANDIDATES, encryptionMode: 'elgamal-vector-v3', endTime: now + 24 * 3600 }) });
       setStatus('CREATED'); setBusy('선거 활성화 중…'); addLog('선거 생성 커밋 확인');
       await J(`/elections/${id}/activate`, { method: 'POST' });
-      setStatus('ACTIVE'); setBusy('일회용 QR 발급 중…'); addLog('선거 활성화 확인');
+      setStatus('ACTIVE'); setBusy('세션 공용 QR 발급 중…'); addLog('선거 활성화 확인');
       const issuedAdmission = await J('/credential/demo-admission', { method: 'POST', body: JSON.stringify({ electionID: id, ttlSeconds: 120 }) });
       setAdmission(issuedAdmission);
       addLog(`새 세션 시작: ${id}`);
@@ -173,11 +173,11 @@ export default function ControlPage() {
 
   async function renewAdmission() {
     if (!eid || status !== 'ACTIVE') return;
-    setBusy('새 일회용 QR 발급 중…');
+    setBusy('새 세션 공용 QR 발급 중…');
     try {
       const issued = await J('/credential/demo-admission', { method: 'POST', body: JSON.stringify({ electionID: eid, ttlSeconds: 120 }) });
       setAdmission(issued);
-      addLog('새 일회용 QR 발급');
+      addLog('새 세션 공용 QR 발급');
     } catch (e) { addLog('오류: ' + e.message); }
     setBusy('');
   }
@@ -466,7 +466,7 @@ function QRCard({ qr, url, error, onRenew, disabled, expiresAt }) {
         style={{ width: '100%', marginTop: 12, padding: 11, border: `1.5px solid ${T.blue}`, background: disabled ? T.paper2 : '#fff', color: disabled ? T.sub : T.blue, fontSize: 13, fontWeight: 900, fontFamily: 'inherit', cursor: disabled ? 'not-allowed' : 'pointer' }}>
         다음 참가자용 새 QR 발급
       </button>
-      <div style={{ marginTop: 8, fontSize: 10.5, lineHeight: 1.5, color: T.sub }}>한 QR은 휴대폰 한 대에서만 사용할 수 있습니다. 다음 투표자 전에 새로 발급하세요.</div>
+      <div style={{ marginTop: 8, fontSize: 10.5, lineHeight: 1.5, color: T.sub }}>이 QR은 현재 세션의 여러 휴대폰에서 사용할 수 있습니다. 만료되면 QR을 갱신하세요.</div>
     </section>
   );
 }
