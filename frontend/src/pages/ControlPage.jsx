@@ -81,7 +81,7 @@ function computeTallyMath(pubKey, ballots, results, candidates) {
 
 export default function ControlPage() {
   const [adminToken, setAdminToken] = useState('');
-  const [eid, setEid] = useState(null);
+  const [eid, setEid] = useState(() => new URLSearchParams(window.location.search).get('e'));
   const [status, setStatus] = useState('-');
   const [view, setView] = useState('session');     // session | tally | verify
   const [live, setLive] = useState(0);
@@ -109,6 +109,22 @@ export default function ControlPage() {
   }
   useEffect(() => { const f = () => setNarrow(window.innerWidth < 860); window.addEventListener('resize', f); return () => window.removeEventListener('resize', f); }, []);
   const addLog = useCallback((m) => setLog((l) => [`${new Date().toLocaleTimeString()} ${m}`, ...l].slice(0, 10)), []);
+
+  // 새로고침 또는 공유된 관제 URL로 진입해도 기존 원장 세션을 복구한다.
+  useEffect(() => {
+    if (!eid || status !== '-') return;
+    J(`/elections/${encodeURIComponent(eid)}`)
+      .then(async (election) => {
+        setStatus(election.status || '-');
+        if (election.status === 'CLOSED') {
+          const closedTally = await J(`/elections/${encodeURIComponent(eid)}/tally`);
+          setResults(closedTally.results); setDecrypted(!!closedTally.decrypted);
+          try { const mk = await J(`/elections/${encodeURIComponent(eid)}/merkle`); setRootHash(mk.rootHash || ''); } catch { /* 아직 미구축 */ }
+          setView('tally');
+        }
+      })
+      .catch((error) => addLog('세션 복구 오류: ' + error.message));
+  }, [eid, status, addLog]);
 
   useEffect(() => {
     let cancelled = false;
@@ -162,6 +178,7 @@ export default function ControlPage() {
     setBusy('새 세션 생성 중…');
     const id = `DEMO_${Date.now()}`;
     setEid(id); setStatus('CREATING'); setLive(0); setVotes([]); setCastEvents([]); setShuffled(false);
+    const nextUrl = new URL(window.location.href); nextUrl.searchParams.set('e', id); window.history.replaceState(null, '', nextUrl);
     setAdmission(null); setResults(null); setDecrypted(false); setView('session');
     setVres(null); setVfail(''); setRootHash(''); setTallyMath(null); evRef.current = 0;
     addLog(`새 세션 생성 요청: ${id}`);
