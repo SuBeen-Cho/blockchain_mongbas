@@ -264,6 +264,30 @@ func TestActiveVectorReceiptRejectsBindingAndArtifactMismatch(t *testing.T) {
 	}
 }
 
+func TestDashboardSnapshotSeparatesActiveCastAndPaddingCounts(t *testing.T) {
+	election := &Election{ElectionID: "election-a", Status: "ACTIVE"}
+	records := []Nullifier{
+		{ElectionID: "election-a", NullifierHash: strings.Repeat("b", 64), EvictCount: 2},
+		{ElectionID: "election-a", NullifierHash: strings.Repeat("a", 64), EvictCount: 0},
+		{ElectionID: "election-a", NullifierHash: "DUMMY_election-a_A_0", IsPadding: true},
+	}
+	snapshot, err := buildDashboardSnapshot(election, records)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snapshot.ActiveBallots != 2 || snapshot.CastEventCount != 4 || snapshot.PaddingCount != 1 || len(snapshot.Ballots) != 2 {
+		t.Fatalf("dashboard counts were conflated: %+v", snapshot)
+	}
+	if snapshot.Ballots[0].NullifierHash != strings.Repeat("a", 64) {
+		t.Fatal("dashboard recovery order is not deterministic")
+	}
+
+	records[0].ElectionID = "other"
+	if _, err := buildDashboardSnapshot(election, records); err == nil {
+		t.Fatal("cross-election dashboard record was accepted")
+	}
+}
+
 func (stub *castHistoryStub) GetPrivateData(collection, key string) ([]byte, error) {
 	return stub.private[collection+"\x00"+key], nil
 }

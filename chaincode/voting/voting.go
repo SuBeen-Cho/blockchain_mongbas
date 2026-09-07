@@ -187,6 +187,52 @@ type Nullifier struct {
 	IsPadding bool `json:"isPadding,omitempty" metadata:",optional"`
 }
 
+const DashboardSnapshotMaxBallots = 1000
+
+// DashboardSnapshot is an administrator-only, bounded projection used to
+// restore the demonstration screen after an application restart. It reports
+// world-state facts only; CastEventCount is derived from each active key's
+// eviction counter and does not expose event linkage or panic metadata.
+type DashboardSnapshot struct {
+	Schema         string            `json:"schema"`
+	ElectionID     string            `json:"electionID"`
+	ElectionStatus string            `json:"electionStatus"`
+	ActiveBallots  int               `json:"activeBallots"`
+	CastEventCount int               `json:"castEventCount"`
+	PaddingCount   int               `json:"paddingCount"`
+	Truncated      bool              `json:"truncated"`
+	Ballots        []EncryptedBallot `json:"ballots"`
+}
+
+func buildDashboardSnapshot(election *Election, records []Nullifier) (*DashboardSnapshot, error) {
+	if election == nil {
+		return nil, fmt.Errorf("dashboard election is required")
+	}
+	snapshot := &DashboardSnapshot{
+		Schema: "mongbas-dashboard-snapshot/v1", ElectionID: election.ElectionID,
+		ElectionStatus: election.Status, Ballots: make([]EncryptedBallot, 0, len(records)),
+	}
+	for _, record := range records {
+		if record.ElectionID != election.ElectionID || record.EvictCount < 0 {
+			return nil, fmt.Errorf("dashboard nullifier binding is invalid")
+		}
+		if record.IsPadding {
+			snapshot.PaddingCount++
+			continue
+		}
+		snapshot.ActiveBallots++
+		snapshot.CastEventCount += record.EvictCount + 1
+		snapshot.Ballots = append(snapshot.Ballots, EncryptedBallot{
+			NullifierHash: record.NullifierHash, EncryptedCandidateID: record.EncryptedCandidateID,
+			CandidateCommitment: record.CandidateCommitment, BallotValidityProof: record.BallotValidityProof,
+			EncryptedCandidateVector:  record.EncryptedCandidateVector,
+			VectorBallotValidityProof: record.VectorBallotValidityProof, PreparedBallotID: record.PreparedBallotID,
+		})
+	}
+	sort.Slice(snapshot.Ballots, func(i, j int) bool { return snapshot.Ballots[i].NullifierHash < snapshot.Ballots[j].NullifierHash })
+	return snapshot, nil
+}
+
 const (
 	castHistoryPrivateRecordSchema = "mongbas-fabric-private-cast-event/v1"
 	castHistoryAcceptedEventName   = "MongbasCastAccepted"
@@ -3143,6 +3189,51 @@ func (c *VotingContract) GetElection(
 		return nil, fmt.Errorf("선거 역직렬화 실패: %w", err)
 	}
 	return &election, nil
+}
+
+// GetElectionDashboardSnapshot reconstructs the small demonstration view from
+// authoritative public world state. It is intentionally administrator-only
+// and refuses oversized elections; benchmark/export paths use their dedicated
+// paged collectors instead.
+func (c *VotingContract) GetElectionDashboardSnapshot(
+	ctx contractapi.TransactionContextInterface,
+	electionID string,
+) (*DashboardSnapshot, error) {
+	if err := requireElectionAdmin(ctx); err != nil {
+		return nil, err
+	}
+	if err := validateElectionID(electionID); err != nil {
+		return nil, err
+	}
+	election, err := c.GetElection(ctx, electionID)
+	if err != nil {
+		return nil, err
+	}
+	queryString := fmt.Sprintf(
+		`{"selector":{"docType":"nullifier","electionID":"%s"},"limit":%d,"use_index":["_design/indexElection","electionIndex"]}`,
+		electionID, DashboardSnapshotMaxBallots+1,
+	)
+	iterator, err := ctx.GetStub().GetQueryResult(queryString)
+	if err != nil {
+		return nil, fmt.Errorf("dashboard nullifier lookup failed: %w", err)
+	}
+	defer iterator.Close()
+	records := make([]Nullifier, 0, DashboardSnapshotMaxBallots+1)
+	for iterator.HasNext() {
+		entry, nextErr := iterator.Next()
+		if nextErr != nil {
+			return nil, fmt.Errorf("dashboard nullifier iteration failed: %w", nextErr)
+		}
+		var record Nullifier
+		if decodeErr := json.Unmarshal(entry.Value, &record); decodeErr != nil {
+			return nil, fmt.Errorf("dashboard nullifier decode failed: %w", decodeErr)
+		}
+		records = append(records, record)
+		if len(records) > DashboardSnapshotMaxBallots {
+			return nil, fmt.Errorf("dashboard snapshot exceeds bounded limit: %d", DashboardSnapshotMaxBallots)
+		}
+	}
+	return buildDashboardSnapshot(election, records)
 }
 
 // GetNullifier Nullifier 존재 여부를 조회합니다 (투표 여부 확인 또는 감사용).

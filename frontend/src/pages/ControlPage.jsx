@@ -86,6 +86,7 @@ export default function ControlPage() {
   const [live, setLive] = useState(0);
   const [votes, setVotes] = useState([]);          // 라이브 암호문 표
   const [castEvents, setCastEvents] = useState([]); // 식별자를 숨긴 누적 커밋 확인 피드
+  const [paddingCount, setPaddingCount] = useState(0);
   const [shuffled, setShuffled] = useState(false);
   const [results, setResults] = useState(null);
   const [decrypted, setDecrypted] = useState(false);
@@ -152,7 +153,23 @@ export default function ControlPage() {
           const c = await J(`/elections/${encodeURIComponent(eid)}/live-count`); setLive(c.totalVotes);
         }
         const lv = await J(`/elections/${encodeURIComponent(eid)}/live-votes`);
-        setVotes(lv.votes || []); setCastEvents(lv.castEvents || []); setShuffled(!!lv.shuffled);
+        let nextVotes = lv.votes || [];
+        let nextEvents = lv.castEvents || [];
+        if (nextVotes.length === 0 && nextEvents.length === 0) {
+          try {
+            const snapshot = await J(`/elections/${encodeURIComponent(eid)}/dashboard-snapshot`);
+            nextVotes = (snapshot.ballots || []).map((ballot, index) => ({
+              seq: index + 1, nh: ballot.nullifierHash,
+              c1: ballot.encryptedCandidateVector?.[0]?.c1 || ballot.encryptedCandidateID || '[encrypted]',
+              c2: ballot.encryptedCandidateVector?.[0]?.c2 || '', zkp: !!ballot.vectorBallotValidityProof,
+              recovered: true,
+            }));
+            nextEvents = Array.from({ length: snapshot.castEventCount || 0 }, (_, index) => ({ seq: index + 1, recovered: true }));
+            setLive(snapshot.activeBallots || 0);
+            setPaddingCount(snapshot.paddingCount || 0);
+          } catch { /* pre-upgrade runtime or oversized elections keep the in-memory view */ }
+        }
+        setVotes(nextVotes); setCastEvents(nextEvents); setShuffled(!!lv.shuffled);
         const ev = await J(`/elections/${encodeURIComponent(eid)}/demo-events?since=${evRef.current}`);
         if (ev.events && ev.events.length) {
           evRef.current = ev.lastSeq;
@@ -178,7 +195,7 @@ export default function ControlPage() {
   async function newSession() {
     setBusy('새 세션 생성 중…');
     const id = `DEMO_${Date.now()}`;
-    setEid(id); setStatus('CREATING'); setLive(0); setVotes([]); setCastEvents([]); setShuffled(false);
+    setEid(id); setStatus('CREATING'); setLive(0); setVotes([]); setCastEvents([]); setPaddingCount(0); setShuffled(false);
     const nextUrl = new URL(window.location.href); nextUrl.searchParams.set('e', id); window.history.replaceState(null, '', nextUrl);
     setAdmission(null); setResults(null); setDecrypted(false); setView('session');
     setVres(null); setVfail(''); setRootHash(''); setTallyMath(null); evRef.current = 0;
@@ -394,8 +411,9 @@ export default function ControlPage() {
         {eid && view === 'session' && (
           <>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(180px,1fr))', gap: 14, marginBottom: 18 }}>
-              <KPI label="실시간 투표수" value={live} unit="표" big />
+              <KPI label="현재 active ballot" value={live} unit="표" big />
               <KPI label="누적 커밋 확인" value={castEvents.length} unit="건" sub="최초 투표와 재투표 모두" />
+              <KPI label="Merkle padding/decoy" value={paddingCount} unit="개" sub="정상 tally와 별도" />
               <KPI label="후보" value={CANDIDATES.length} unit="명" sub="치킨·피자·떡볶이" />
               <KPI label="암호화" value="ElGamal" unit="+ZKP" sub="동형암호" small />
               <KPI label="검증 합의" value="2-of-3" unit="" sub="3개 기관" small />
@@ -528,7 +546,7 @@ function CastEventLog({ events, status }) {
         ) : events.slice().reverse().map((event) => (
           <div key={event.seq} style={{ display: 'flex', justifyContent: 'space-between', gap: 12, padding: '9px 14px', borderBottom: `1px solid ${T.line}`, fontSize: 12 }}>
             <span style={{ fontFamily: 'monospace', fontWeight: 900, color: T.blue }}>CAST #{String(event.seq).padStart(2, '0')}</span>
-            <span style={{ color: T.sub, fontWeight: 700 }}>{new Date(event.ts).toLocaleTimeString()} · COMMITTED</span>
+            <span style={{ color: T.sub, fontWeight: 700 }}>{event.recovered ? '원장 상태에서 합계 복구 · 순서 미복구' : `${new Date(event.ts).toLocaleTimeString()} · COMMITTED`}</span>
           </div>
         ))}
       </div>
@@ -591,7 +609,7 @@ function TallyView({ results, decrypted, total, max, busy, votes, shuffled, live
         </div>
         {decrypted && (
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 16 }}>
-            <span style={{ fontSize: 12.5, fontWeight: 900, padding: '6px 11px', background: T.paper2, color: T.blue }}>전체 {Math.max(live || 0, total)}표</span>
+            <span style={{ fontSize: 12.5, fontWeight: 900, padding: '6px 11px', background: T.paper2, color: T.blue }}>현재 active ballot {Math.max(live || 0, total)}개</span>
             <span style={{ fontSize: 12.5, fontWeight: 900, padding: '6px 11px', background: T.blue, color: '#fff' }}>정상 {total}표 집계</span>
             {panic > 0 && <span style={{ fontSize: 12.5, fontWeight: 900, padding: '6px 11px', background: T.ink, color: '#fff' }}>🟦 패닉 {panic}표 집계 제외 (연구 데모)</span>}
           </div>

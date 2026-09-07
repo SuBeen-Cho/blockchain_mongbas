@@ -288,6 +288,24 @@ router.get('/:id/live-votes', requireDemoEndpoint, requireAdmin, (req, res) => {
   res.json({ electionID: req.params.id, ...demoLive.listVotes(req.params.id) });
 });
 
+// Authoritative, bounded restart recovery for the demonstration dashboard.
+// Unlike /live-votes this projection comes from Fabric world state and does
+// not claim to reproduce event timestamps or public append order.
+router.get('/:id/dashboard-snapshot', requireDemoEndpoint, requireAdmin, async (req, res) => {
+  let gateway;
+  try {
+    const connection = await connectGateway();
+    ({ gateway } = connection);
+    const result = await connection.contract.evaluateTransaction('GetElectionDashboardSnapshot', req.params.id);
+    const snapshot = JSON.parse(Buffer.from(result).toString('utf8'));
+    res.json(snapshot);
+  } catch (err) {
+    sendApiError(res, err);
+  } finally {
+    gateway?.close();
+  }
+});
+
 // ── POST /:id/demo-event ───────────────────────────────────────
 // [부스 시연] 모바일 → 대시보드 이벤트 (예: 검증하기 누름). Body: { type, payload }
 router.post('/:id/legacy-demo-event-disabled', requireDemoEndpoint, (req, res) => {
