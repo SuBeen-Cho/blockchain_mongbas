@@ -12,6 +12,8 @@ require_cmd ss
 levels="${MONGBAS_CONCURRENCY_LEVELS:-1,5,10,25,50}"
 repeats="${MONGBAS_CONCURRENCY_REPEATS:-1}"
 port="${MONGBAS_CONCURRENCY_PORT:-3002}"
+maximum_voters="$(printf '%s' "${levels}" | tr ',' '\n' | sort -nr | head -1)"
+[[ "${maximum_voters}" =~ ^[0-9]+$ ]] && [ "${maximum_voters}" -ge 1 ] && [ "${maximum_voters}" -le 5000 ] || die "concurrency levels must be integers in 1..5000"
 [[ "${repeats}" =~ ^[0-9]+$ ]] && [ "${repeats}" -ge 1 ] && [ "${repeats}" -le 10 ] || die "repeats must be 1..10"
 [[ "${port}" =~ ^[0-9]+$ ]] && [ "${port}" -ge 1024 ] && [ "${port}" -le 65535 ] || die "port must be 1024..65535"
 if pgrep -af '[s]tate-growth-evaluation\.sh|[r]ate-evaluation\.sh|[e]lgamal-rate-bench\.js|[e]lgamal-concurrency-bench\.js' >/dev/null 2>&1; then
@@ -37,6 +39,7 @@ trap stop_benchmark_backend EXIT INT TERM
 (
   cd "${MONGBAS_REPO_DIR}/application"
   exec env PORT="${port}" DISABLE_RATE_LIMITS=true ENABLE_BENCH_ENDPOINTS=true \
+    BENCHMARK_DEMO_VOTER_COUNT="${maximum_voters}" \
     REQUIRE_DEMO_ADMISSION=false node src/app.js
 ) >"${out}/benchmark-backend.log" 2>&1 &
 backend_pid=$!

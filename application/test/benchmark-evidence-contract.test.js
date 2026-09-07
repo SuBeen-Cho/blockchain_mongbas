@@ -101,6 +101,7 @@ test('concurrency benchmark supports repeated isolated threshold measurements', 
   assert.match(wrapper, /MONGBAS_CONCURRENCY_REPEATS/);
   assert.match(wrapper, /DISABLE_RATE_LIMITS=true ENABLE_BENCH_ENDPOINTS=true/);
   assert.match(wrapper, /REQUIRE_DEMO_ADMISSION=false/);
+  assert.match(wrapper, /BENCHMARK_DEMO_VOTER_COUNT="\$\{maximum_voters\}"/);
   assert.doesNotMatch(wrapper, /MONGBAS_BENCH_URL/);
   assert.match(wrapper, /benchmark-exit-status\.txt/);
 });

@@ -72,10 +72,19 @@ if (registryFile) {
 // - demo(공용)는 동일 선거에서 항상 같은 nullifier를 만드므로 다중투표에 쓸 수 없다.
 // NODE_ENV와 무관하게 ENABLE_DEMO_CREDENTIALS=true일 때만 추가한다.
 if (ENABLE_DEMO_CREDENTIALS) {
+  const requestedBenchmarkVoters = Number(process.env.BENCHMARK_DEMO_VOTER_COUNT || 1000);
+  const benchmarkExpansionAllowed = process.env.NODE_ENV !== 'production' && process.env.ENABLE_BENCH_ENDPOINTS === 'true';
+  if (!Number.isInteger(requestedBenchmarkVoters) || requestedBenchmarkVoters < 1000 || requestedBenchmarkVoters > 5000) {
+    throw new Error('BENCHMARK_DEMO_VOTER_COUNT는 1000~5000 정수여야 합니다.');
+  }
+  if (requestedBenchmarkVoters !== 1000 && !benchmarkExpansionAllowed) {
+    throw new Error('데모 유권자 풀 확장은 비운영 benchmark endpoint 모드에서만 가능합니다.');
+  }
+  const demoVoterCount = benchmarkExpansionAllowed ? requestedBenchmarkVoters : 1000;
   for (let i = 1; i <= 5; i++) {
     VOTER_REGISTRY.set(`voter${i}`, { secret: `voter${i}pw`, eligible: true, demo: true });
   }
-  for (let i = 1; i <= 1000; i++) {
+  for (let i = 1; i <= demoVoterCount; i++) {
     const id = `demo${String(i).padStart(3, '0')}`;
     VOTER_REGISTRY.set(id, { secret: `${id}pw`, eligible: true, demo: true });
   }

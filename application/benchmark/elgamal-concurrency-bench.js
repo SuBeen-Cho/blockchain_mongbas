@@ -402,7 +402,7 @@ async function runConcurrency(label, concurrency, idemixEnabled, repetition = 1)
 // ── 메인 ────────────────────────────────────────────────────────
 async function main() {
   if (!ADMIN_API_TOKEN) throw new Error('ADMIN_API_TOKEN is required');
-  if (CONCURRENCIES.some(c => !Number.isInteger(c) || c < 1 || c > 1000)) throw new Error('concurrency must be an integer from 1 to 1000');
+  if (CONCURRENCIES.some(c => !Number.isInteger(c) || c < 1 || c > 5000)) throw new Error('concurrency must be an integer from 1 to 5000');
   if (!Number.isInteger(REPEATS) || REPEATS < 1 || REPEATS > 10) throw new Error('repeats must be an integer from 1 to 10');
   const health = await get('/health');
   if (health.status !== 200) throw new Error('API server not ready');
