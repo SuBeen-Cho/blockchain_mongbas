@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
-import { computeMerkleRootFromProof } from '../utils/crypto.js';
-import { displayReceiptCode, findUniqueReceiptMatch } from '../utils/receiptLookup.js';
+import { displayReceiptCode } from '../utils/receiptLookup.js';
+import { verifyMerkleReceipt } from '../utils/merkleVerification.js';
 
 /**
  * TrackPage — "내 표 추적" 검증 화면 (Phase 5)
@@ -9,15 +9,6 @@ import { displayReceiptCode, findUniqueReceiptMatch } from '../utils/receiptLook
  * 영수번호(추적번호) 하나로: 게시판에서 내 줄 찾기 → Merkle 봉인 일치 →
  *   집계 기여 확인. 번호를 변조하면 추적 실패(빨간 X).
  */
-const API = '/api';
-
-async function J(path, opts = {}) {
-  const r = await fetch(API + path, opts);
-  const t = await r.text(); let j; try { j = JSON.parse(t); } catch { j = {}; }
-  if (!r.ok) throw new Error(j.error || `${path} ${r.status}`);
-  return j;
-}
-
 export default function TrackPage({ electionId }) {
   const [eid, setEid] = useState(electionId || '');
   const [code, setCode] = useState('');
@@ -42,25 +33,11 @@ export default function TrackPage({ electionId }) {
     setBusy(true); setRes(null); setFail('');
     try {
       if (!eid) throw new Error('선거 ID를 입력하세요.');
-      const board = await J(`/elections/${encodeURIComponent(eid)}/bulletin-board`);
-      const ballots = board.encryptedBallots || [];
-      const match = findUniqueReceiptMatch(ballots, rawCode);
-      const idx = match.index;
-      if (idx < 0) {
-        setFail(`추적번호 "${rawCode}"에 해당하는 표를 게시판에서 찾을 수 없습니다. (조작·오타된 번호는 추적되지 않습니다)`);
-        setBusy(false); return;
-      }
-      const ballot = match.ballot;
-      const full = ballot.nullifierHash;
-      // Merkle 봉인 검증
-      const merkle = await J(`/elections/${encodeURIComponent(eid)}/merkle`);
-      const proofResp = await J(`/elections/${encodeURIComponent(eid)}/proof/${full}`);
-      const computedRoot = await computeMerkleRootFromProof(proofResp.leafHash, proofResp.proof);
-      const sealMatch = computedRoot === merkle.rootHash;
+      const verified = await verifyMerkleReceipt({ electionID: eid, receipt: rawCode });
+      const { full, index: idx, ballots, leafHash, chainRoot, computedRoot, sealMatch, tallyTotal, cipher } = verified;
       setRes({
         full, idx, total: ballots.length, ballots,
-        leafHash: proofResp.leafHash, chainRoot: merkle.rootHash, computedRoot, sealMatch,
-        tallyTotal: board.totalVotes, cipher: ballot.encryptedCandidateID,
+        leafHash, chainRoot, computedRoot, sealMatch, tallyTotal, cipher,
       });
     } catch (e) {
       setFail(tampered

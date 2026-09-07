@@ -1,8 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import QRCode from 'qrcode';
-import { computeMerkleRootFromProof } from '../utils/crypto.js';
 import { buildSecureKioskUrl, displayKioskUrl } from '../utils/kioskUrl.js';
-import { findUniqueReceiptMatch } from '../utils/receiptLookup.js';
+import { verifyMerkleReceipt } from '../utils/merkleVerification.js';
 
 /**
  * ControlPage — 발표자 관제판 (Editorial Cobalt 개편)
@@ -313,30 +312,9 @@ export default function ControlPage() {
     }
     setBusy('검증 중…'); setVres(null); setVfail('');
     try {
-      const normalized = String(rawCode || '').replace(/[^0-9a-fA-F]/g, '').toLowerCase();
-      let ballots = []; let idx = -1; let full = '';
-      // 휴대폰 이벤트는 인증된 전체 nullifier를 전달하므로 공개 게시판 게시와
-      // 독립적으로 원장의 Merkle proof를 직접 확인할 수 있다.
-      if (/^[0-9a-f]{64}$/.test(normalized)) {
-        full = normalized;
-        try {
-          const board = await J(`/elections/${encodeURIComponent(eid)}/bulletin-board`);
-          ballots = board.encryptedBallots || [];
-          idx = ballots.findIndex((ballot) => ballot.nullifierHash === full);
-        } catch { /* Merkle proof 검증에는 공개 게시판 projection이 필수 아님 */ }
-      } else {
-        const board = await J(`/elections/${encodeURIComponent(eid)}/bulletin-board`);
-        ballots = board.encryptedBallots || [];
-        const match = findUniqueReceiptMatch(ballots, rawCode);
-        idx = match.index;
-        if (idx < 0) { setVfail(`추적번호 "${rawCode}" 를 게시판에서 찾을 수 없습니다. ${tampered ? '(한 글자 변조 → 추적 실패)' : '(조작·오타 번호는 추적 불가)'}`); setBusy(''); return; }
-        full = match.ballot.nullifierHash;
-      }
-      const merkle = await J(`/elections/${encodeURIComponent(eid)}/merkle`);
-      const pr = await J(`/elections/${encodeURIComponent(eid)}/proof/${full}`);
-      const computedRoot = await computeMerkleRootFromProof(pr.leafHash, pr.proof);
-      const sealMatch = computedRoot === merkle.rootHash;
-	  setVres({ full, idx, total: ballots.length, ballots, leafHash: pr.leafHash, chainRoot: merkle.rootHash, computedRoot, sealMatch });
+      const verified = await verifyMerkleReceipt({ electionID: eid, receipt: rawCode });
+      const { full, index: idx, ballots, leafHash, chainRoot, computedRoot, sealMatch } = verified;
+	  setVres({ full, idx, total: ballots.length, ballots, leafHash, chainRoot, computedRoot, sealMatch });
       addLog(`검증: ${tr(full, 8)} → ${sealMatch ? '봉인 일치 ✓' : '불일치 ✗'}`);
     } catch (e) {
       setVfail(tampered

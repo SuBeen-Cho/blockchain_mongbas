@@ -4,6 +4,7 @@
 
 import { useState, useRef, useEffect } from 'react';
 import { computeMerkleRootFromProof, computeDeniableLookupToken, verifyBulletinBoard, verifyChaumPedersen } from '../utils/crypto.js';
+import { verifyMerkleNullifier } from '../utils/merkleVerification.js';
 import HashDisplay from '../components/HashDisplay.jsx';
 import Alert from '../components/Alert.jsx';
 import MerkleTreeDiagram from '../components/verify-animations/MerkleTreeDiagram.jsx';
@@ -60,6 +61,24 @@ export default function VerifyPage() {
       let hash = nullifierHash;
       if (!hash) throw new Error(mode === 'deniable' ? 'Deniable 검증 receipt가 필요합니다.' : '투표 완료 시 받은 nullifierHash가 필요합니다.');
       setVerifySteps(s => [...s, 'nullifier_done']);
+
+      if (mode !== 'deniable') {
+        setVerifySteps(s => [...s, 'proof']);
+        const verified = await verifyMerkleNullifier({ electionID, nullifierHash: hash });
+        setVerifySteps(s => [...s, 'proof_done', 'compute', 'compute_done', 'compare']);
+        if (!verified.sealMatch) throw new Error('Merkle proof 검증 실패: root 불일치');
+        setVerifySteps(s => [...s, 'compare_done']);
+        setResult({
+          nullifierHash: verified.full,
+          leafHash: verified.leafHash,
+          proof: verified.proof,
+          localVerification: {
+            ok: true, computedRoot: verified.computedRoot,
+            chainRoot: verified.chainRoot, leafHash: verified.leafHash,
+          },
+        });
+        return;
+      }
 
       // Step 2: Merkle Proof 수신
       setVerifySteps(s => [...s, 'proof']);
