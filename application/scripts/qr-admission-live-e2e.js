@@ -74,11 +74,14 @@ async function main() {
 
   let initialCount = 0;
   let initialRows = 0;
+  let initialCastCount = 0;
   if (reuseElection) {
     initialCount = requireStatus('read initial live count',
       await request(`/api/elections/${electionID}/live-count`, { admin: true }), 200).totalVotes;
-    initialRows = requireStatus('read initial live votes',
-      await request(`/api/elections/${electionID}/live-votes`, { admin: true }), 200).votes.length;
+    const initialLiveVotes = requireStatus('read initial live votes',
+      await request(`/api/elections/${electionID}/live-votes`, { admin: true }), 200);
+    initialRows = initialLiveVotes.votes.length;
+    initialCastCount = initialLiveVotes.castCount || 0;
   } else {
     const now = Math.floor(Date.now() / 1000);
     requireStatus('create election', await request('/api/elections', {
@@ -156,7 +159,9 @@ async function main() {
   // The authoritative history appends both casts, while the display-only live
   // view keeps one active row per nullifier and marks that row as replaced.
   const expectedRows = initialRows + 1;
+  const expectedCastCount = initialCastCount + (revoteSameCredential ? 2 : 1);
   if (liveCount.totalVotes !== initialCount + 1 || liveVotes.votes?.length !== expectedRows ||
+      liveVotes.castCount !== expectedCastCount || liveVotes.castEvents?.length !== expectedCastCount ||
       (revoteSameCredential && !liveVotes.votes.some(vote => vote.revoted === true)) ||
       !events.events?.some(event => event.type === 'verify') || !ledgerLookup.credVerifyLevel?.startsWith('chaincode-')) {
     throw new Error('dashboard or Fabric post-cast evidence is incomplete');
@@ -176,7 +181,8 @@ async function main() {
       verdict: 'credential-possession-allows-cast; revote-is-observable-under-exclusive-window',
     } : null,
     dashboard: { totalVotes: liveCount.totalVotes, encryptedRows: liveVotes.votes.length,
-      replacementRowMarked: revoteSameCredential, verificationEvent: true } }, null, 2)}\n`);
+      committedCastEvents: liveVotes.castCount, replacementRowMarked: revoteSameCredential,
+      verificationEvent: true } }, null, 2)}\n`);
 }
 
 main().catch(error => {

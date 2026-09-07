@@ -3,16 +3,18 @@
 /**
  * lib/demoLive.js — 부스 시연용 인메모리 라이브 채널 (선거별)
  *
- *  ① 라이브 암호문 목록   : 투표가 들어올 때마다 {무효화 해시, ElGamal 암호문(c1,c2), ZKP결과} 누적
+ *  ① 현재 유효 암호문     : 무효화 해시별 최신 ElGamal 암호문과 ZKP 결과 유지
  *                          → 대시보드가 폴링해 "암호화된 투표" 표를 새로고침 없이 실시간 갱신
- *  ② 셔플                : 개표(게시판 공개) 시 도착순서를 섞어 시간 상관(timing) 제거를 시각화
- *  ③ 이벤트 버스         : 모바일 ↔ 대시보드 (검증하기 누르면 대시보드가 검증 뷰로 전환 등)
+ *  ② 커밋 확인 피드       : 성공한 모든 최초 투표/재투표를 식별자 없이 append-only로 표시
+ *  ③ 셔플                 : 개표(게시판 공개) 시 도착순서를 섞어 시간 상관(timing) 제거를 시각화
+ *  ④ 이벤트 버스          : 모바일 ↔ 대시보드 (검증하기 누르면 대시보드가 검증 뷰로 전환 등)
  *
  *  ※ 백엔드 재시작 시 초기화 — 시연 규모(세션당 수~수십 표)에 충분.
  *    실제 표/집계/게시판의 권위 있는 상태와 보안성은 원장·bundle 검증으로 별도 확인.
  */
 
 const votesMap = new Map();   // electionID -> [{ seq, nh, c1, c2, zkp, ts, revoted }]  (도착 순서)
+const castEventsMap = new Map(); // electionID -> [{ seq, ts }] (표시용 커밋 확인 피드)
 const orderMap = new Map();   // electionID -> number[] | null  (셔플된 표시 순서)
 const eventsMap = new Map();  // electionID -> [{ seq, type, payload, ts }]
 let evSeq = 0;
@@ -31,6 +33,11 @@ function recordVote(electionID, { nullifierHash, ciphertext, zkpValid }) {
   }
   // 셔플 이후 새 표가 들어오면 셔플 무효화(다시 도착순서로) — 보통 개표 후엔 투표 안 들어옴
   orderMap.set(electionID, null);
+  let castEvents = castEventsMap.get(electionID);
+  if (!castEvents) { castEvents = []; castEventsMap.set(electionID, castEvents); }
+  // 공개 피드에서는 동일 투표자의 재투표 여부를 연결할 수 없도록 nullifier,
+  // ciphertext, supersession/revote 정보를 의도적으로 포함하지 않는다.
+  castEvents.push({ seq: castEvents.length + 1, ts: now() });
   pushEvent(electionID, 'vote', { nullifierHash });
 }
 
@@ -41,6 +48,8 @@ function listVotes(electionID) {
   return {
     shuffled: !!order,
     count: arr.length,
+    castCount: (castEventsMap.get(electionID) || []).length,
+    castEvents: (castEventsMap.get(electionID) || []).map((event) => ({ ...event })),
     votes: view.map((v) => ({ seq: v.seq, nh: v.nh, c1: v.c1, c2: v.c2, zkp: v.zkp, ts: v.ts, revoted: !!v.revoted })),
   };
 }
@@ -58,6 +67,7 @@ function shuffle(electionID) {
 
 function reset(electionID) {
   votesMap.set(electionID, []);
+  castEventsMap.set(electionID, []);
   orderMap.set(electionID, null);
   eventsMap.set(electionID, []);
 }

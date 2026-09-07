@@ -194,7 +194,9 @@ const server = http.createServer(async (req, res) => {
   const liveVotesMatch = url.match(/^\/api\/elections\/(.+?)\/live-votes$/);
   if (liveVotesMatch && method === 'GET') {
     const id = decodeURIComponent(liveVotesMatch[1]);
-    return json(res, { votes: votes[id] || [], shuffled: false });
+    const current = votes[id] || [];
+    return json(res, { votes: current, count: current.length, castCount: current.length,
+      castEvents: current.map((_, index) => ({ seq: index + 1, ts: Date.now() })), shuffled: false });
   }
 
   const demoEventsMatch = url.match(/^\/api\/elections\/([^/?]+)\/demo-events(?:\?since=(\d+))?$/);

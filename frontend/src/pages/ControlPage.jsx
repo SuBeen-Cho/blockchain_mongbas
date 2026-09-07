@@ -86,6 +86,7 @@ export default function ControlPage() {
   const [view, setView] = useState('session');     // session | tally | verify
   const [live, setLive] = useState(0);
   const [votes, setVotes] = useState([]);          // 라이브 암호문 표
+  const [castEvents, setCastEvents] = useState([]); // 식별자를 숨긴 누적 커밋 확인 피드
   const [shuffled, setShuffled] = useState(false);
   const [results, setResults] = useState(null);
   const [decrypted, setDecrypted] = useState(false);
@@ -136,7 +137,7 @@ export default function ControlPage() {
           const c = await J(`/elections/${encodeURIComponent(eid)}/live-count`); setLive(c.totalVotes);
         }
         const lv = await J(`/elections/${encodeURIComponent(eid)}/live-votes`);
-        setVotes(lv.votes || []); setShuffled(!!lv.shuffled);
+        setVotes(lv.votes || []); setCastEvents(lv.castEvents || []); setShuffled(!!lv.shuffled);
         const ev = await J(`/elections/${encodeURIComponent(eid)}/demo-events?since=${evRef.current}`);
         if (ev.events && ev.events.length) {
           evRef.current = ev.lastSeq;
@@ -160,7 +161,7 @@ export default function ControlPage() {
   async function newSession() {
     setBusy('새 세션 생성 중…');
     const id = `DEMO_${Date.now()}`;
-    setEid(id); setStatus('CREATING'); setLive(0); setVotes([]); setShuffled(false);
+    setEid(id); setStatus('CREATING'); setLive(0); setVotes([]); setCastEvents([]); setShuffled(false);
     setAdmission(null); setResults(null); setDecrypted(false); setView('session');
     setVres(null); setVfail(''); setRootHash(''); setTallyMath(null); evRef.current = 0;
     addLog(`새 세션 생성 요청: ${id}`);
@@ -347,12 +348,16 @@ export default function ControlPage() {
           <>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(180px,1fr))', gap: 14, marginBottom: 18 }}>
               <KPI label="실시간 투표수" value={live} unit="표" big />
+              <KPI label="누적 커밋 확인" value={castEvents.length} unit="건" sub="최초 투표와 재투표 모두" />
               <KPI label="후보" value={CANDIDATES.length} unit="명" sub="치킨·피자·떡볶이" />
               <KPI label="암호화" value="ElGamal" unit="+ZKP" sub="동형암호" small />
               <KPI label="검증 합의" value="2-of-3" unit="" sub="3개 기관" small />
             </div>
             <div style={{ display: 'grid', gridTemplateColumns: narrow ? '1fr' : 'minmax(0,1.6fr) minmax(0,1fr)', gap: 18, alignItems: 'start' }}>
-              <VoteTable votes={votes} shuffled={shuffled} status={status} />
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
+                <VoteTable votes={votes} shuffled={shuffled} status={status} />
+                <CastEventLog events={castEvents} status={status} />
+              </div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
                 <QRCard qr={qr} url={kioskUrl} error={kioskUrlError} onRenew={renewAdmission} disabled={dis || status !== 'ACTIVE'} expiresAt={admission?.expiresAt} />
                 <LogCard log={log} />
@@ -423,8 +428,8 @@ function VoteTable({ votes, shuffled, status }) {
     <section style={{ ...box, padding: 0, overflow: 'hidden' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '16px 18px', borderBottom: `1.5px solid ${T.line}` }}>
         <div>
-          <div style={{ fontSize: 16, fontWeight: 900, letterSpacing: '-0.03em' }}>🔒 암호화된 투표 — 공개 원장 실시간</div>
-          <div style={{ fontSize: 12, color: T.sub, fontWeight: 700, marginTop: 2 }}>서버는 암호문만 받습니다 · 누가 뭘 찍었는지 모름</div>
+          <div style={{ fontSize: 16, fontWeight: 900, letterSpacing: '-0.03em' }}>🔒 현재 유효 암호문</div>
+          <div style={{ fontSize: 12, color: T.sub, fontWeight: 700, marginTop: 2 }}>재투표 시 최신 표로 교체 · 집계에는 유권자별 마지막 표만 반영</div>
         </div>
         {shuffled
           ? <span style={{ fontSize: 11.5, fontWeight: 900, background: T.blue, color: '#fff', padding: '6px 11px' }}>🔀 셔플됨 · 시간 상관 제거</span>
@@ -442,7 +447,7 @@ function VoteTable({ votes, shuffled, status }) {
           <tbody>
             {votes.length === 0 && (
               <tr><td colSpan={4} style={{ padding: 28, textAlign: 'center', color: T.sub, fontWeight: 700 }}>
-                {status === 'ACTIVE' ? '폰으로 투표하거나 [투표 +10] 을 누르면 여기 암호문이 실시간으로 쌓입니다' : '세션을 시작하세요'}
+                {status === 'ACTIVE' ? '폰으로 투표하거나 커스텀 표를 주입하면 현재 유효 암호문이 표시됩니다' : '세션을 시작하세요'}
               </td></tr>
             )}
             {votes.slice().reverse().map((v, ri) => (
@@ -455,6 +460,33 @@ function VoteTable({ votes, shuffled, status }) {
             ))}
           </tbody>
         </table>
+      </div>
+    </section>
+  );
+}
+function CastEventLog({ events, status }) {
+  return (
+    <section style={{ ...box, padding: 0, overflow: 'hidden' }}>
+      <div style={{ padding: '14px 18px', borderBottom: `1.5px solid ${T.line}` }}>
+        <div style={{ fontSize: 16, fontWeight: 900, letterSpacing: '-0.03em' }}>⛓ 누적 원장 커밋 확인</div>
+        <div style={{ fontSize: 12, color: T.sub, fontWeight: 700, marginTop: 2 }}>
+          최초 투표와 재투표를 모두 누적 · 재투표 연결정보와 무효화 해시는 숨김
+        </div>
+      </div>
+      <div style={{ maxHeight: 210, overflowY: 'auto' }}>
+        {events.length === 0 ? (
+          <div style={{ padding: 24, textAlign: 'center', color: T.sub, fontSize: 12, fontWeight: 700 }}>
+            {status === 'ACTIVE' ? '원장 커밋이 확인되면 여기에 순서대로 표시됩니다' : '누적 기록이 없습니다'}
+          </div>
+        ) : events.slice().reverse().map((event) => (
+          <div key={event.seq} style={{ display: 'flex', justifyContent: 'space-between', gap: 12, padding: '9px 14px', borderBottom: `1px solid ${T.line}`, fontSize: 12 }}>
+            <span style={{ fontFamily: 'monospace', fontWeight: 900, color: T.blue }}>CAST #{String(event.seq).padStart(2, '0')}</span>
+            <span style={{ color: T.sub, fontWeight: 700 }}>{new Date(event.ts).toLocaleTimeString()} · COMMITTED</span>
+          </div>
+        ))}
+      </div>
+      <div style={{ padding: '9px 14px', background: T.paper2, color: T.sub, fontSize: 10.5, fontWeight: 700, lineHeight: 1.45 }}>
+        이 목록은 Fabric 커밋 성공 뒤 갱신되는 시연용 피드입니다. 권위 있는 불변 이력은 cast-event export와 bundle 검증으로 확인합니다.
       </div>
     </section>
   );
