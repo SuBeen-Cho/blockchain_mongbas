@@ -240,15 +240,24 @@ export default function ControlPage() {
       setBusy('Merkle 게시판 공개 중…');
       try {
         await J(`/elections/${encodeURIComponent(eid)}/merkle`, { method: 'POST' });
-        await J(`/elections/${encodeURIComponent(eid)}/publish-audit`, { method: 'POST' });
-        try { const mk = await J(`/elections/${encodeURIComponent(eid)}/merkle`); setRootHash(mk.rootHash || ''); } catch { /* noop */ }
-        // 집계 과정 실제 계산값 (공개 데이터로 클라이언트 계산)
+        const mk = await J(`/elections/${encodeURIComponent(eid)}/merkle`); setRootHash(mk.rootHash || '');
+        addLog('Merkle 봉인 생성 완료 · 포함 증명 검증 준비됨');
+        // 감사 게시판 공개는 별도 원장 트랜잭션이다. 이 단계가 실패해도 이미
+        // 커밋된 Merkle root/proof 검증까지 막지 않는다.
+        let bulletinPublished = false;
         try {
+          await J(`/elections/${encodeURIComponent(eid)}/publish-audit`, { method: 'POST' });
+          bulletinPublished = true;
+          addLog('감사 게시판 공개 완료 (표시 순서 셔플)');
+        } catch (publishError) {
+          addLog(`감사 게시판 공개 경고: ${publishError.message} · Merkle 검증은 계속 가능`);
+        }
+        // 집계 과정 실제 계산값 (공개 데이터로 클라이언트 계산)
+        if (bulletinPublished) try {
           const bb = await J(`/elections/${encodeURIComponent(eid)}/bulletin-board`);
           const pk = await J(`/elections/${encodeURIComponent(eid)}/elgamal-pubkey`);
           setTallyMath(computeTallyMath(pk.pubKey, bb.encryptedBallots || [], t.results, CANDIDATES));
         } catch { /* noop */ }
-        addLog('Merkle 트리 + 게시판 공개 (셔플 적용 · 검증 준비됨)');
         if (pendingVerifyRef.current) await runVerify(pendingVerifyRef.current);
       } catch (e) { addLog('게시판 경고: ' + e.message); }
     } catch (e) { addLog('오류: ' + e.message); }
@@ -260,18 +269,30 @@ export default function ControlPage() {
     if (!eid) return;
     setBusy('검증 중…'); setVres(null); setVfail('');
     try {
-      const board = await J(`/elections/${encodeURIComponent(eid)}/bulletin-board`);
-      const ballots = board.encryptedBallots || [];
-      const match = findUniqueReceiptMatch(ballots, rawCode);
-      const idx = match.index;
-      if (idx < 0) { setVfail(`추적번호 "${rawCode}" 를 게시판에서 찾을 수 없습니다. ${tampered ? '(한 글자 변조 → 추적 실패)' : '(조작·오타 번호는 추적 불가)'}`); setBusy(''); return; }
-      const full = match.ballot.nullifierHash;
+      const normalized = String(rawCode || '').replace(/[^0-9a-fA-F]/g, '').toLowerCase();
+      let ballots = []; let idx = -1; let full = '';
+      // 휴대폰 이벤트는 인증된 전체 nullifier를 전달하므로 공개 게시판 게시와
+      // 독립적으로 원장의 Merkle proof를 직접 확인할 수 있다.
+      if (/^[0-9a-f]{64}$/.test(normalized)) {
+        full = normalized;
+        try {
+          const board = await J(`/elections/${encodeURIComponent(eid)}/bulletin-board`);
+          ballots = board.encryptedBallots || [];
+          idx = ballots.findIndex((ballot) => ballot.nullifierHash === full);
+        } catch { /* Merkle proof 검증에는 공개 게시판 projection이 필수 아님 */ }
+      } else {
+        const board = await J(`/elections/${encodeURIComponent(eid)}/bulletin-board`);
+        ballots = board.encryptedBallots || [];
+        const match = findUniqueReceiptMatch(ballots, rawCode);
+        idx = match.index;
+        if (idx < 0) { setVfail(`추적번호 "${rawCode}" 를 게시판에서 찾을 수 없습니다. ${tampered ? '(한 글자 변조 → 추적 실패)' : '(조작·오타 번호는 추적 불가)'}`); setBusy(''); return; }
+        full = match.ballot.nullifierHash;
+      }
       const merkle = await J(`/elections/${encodeURIComponent(eid)}/merkle`);
       const pr = await J(`/elections/${encodeURIComponent(eid)}/proof/${full}`);
       const computedRoot = await computeMerkleRootFromProof(pr.leafHash, pr.proof);
       const sealMatch = computedRoot === merkle.rootHash;
-	  const selectedCiphertext = match.ballot.encryptedCandidateID || JSON.stringify(match.ballot.encryptedCandidateVector || []);
-	  setVres({ full, idx, total: ballots.length, ballots, leafHash: pr.leafHash, chainRoot: merkle.rootHash, computedRoot, sealMatch, cipher: selectedCiphertext });
+	  setVres({ full, idx, total: ballots.length, ballots, leafHash: pr.leafHash, chainRoot: merkle.rootHash, computedRoot, sealMatch });
       addLog(`검증: ${tr(full, 8)} → ${sealMatch ? '봉인 일치 ✓' : '불일치 ✗'}`);
     } catch (e) { setVfail(e.message); }
     setBusy('');
@@ -623,7 +644,7 @@ function VerifyView({ code, setCode, run, tamper, res, fail, busy, status, rootH
 
       {res && (
         <>
-          <section style={{ ...box, padding: 0, overflow: 'hidden' }}>
+          {res.ballots.length > 0 && <section style={{ ...box, padding: 0, overflow: 'hidden' }}>
             <div style={{ ...over, padding: '14px 18px', borderBottom: `1.5px solid ${T.line}` }}>공개 게시판 — 내 줄 하이라이트 ({res.idx + 1}/{res.total})</div>
             <div style={{ maxHeight: 240, overflowY: 'auto', fontFamily: 'monospace', fontSize: 12.5 }}>
               {res.ballots.map((b, i) => (
@@ -632,7 +653,10 @@ function VerifyView({ code, setCode, run, tamper, res, fail, busy, status, rootH
                 </div>
               ))}
             </div>
-          </section>
+          </section>}
+          {res.ballots.length === 0 && <section style={{ ...box, color: T.sub, fontSize: 12.5, fontWeight: 700 }}>
+            공개 게시판 projection은 아직 게시되지 않았지만, 원장에 저장된 leaf·경로·Root를 이용한 포함 증명은 아래에서 독립 검증했습니다.
+          </section>}
           <section style={{ ...box, background: res.sealMatch ? T.blue : T.ink, color: '#fff', border: 'none' }}>
             <div style={{ fontSize: 18, fontWeight: 900, letterSpacing: '-0.03em' }}>{res.sealMatch ? '✓ 포함 증명 일치 — 공개 게시판 Root 재계산 성공' : '✗ 포함 증명 불일치'}</div>
             <div style={{ marginTop: 12, display: 'grid', gridTemplateColumns: '1fr', gap: 6, fontFamily: 'monospace', fontSize: 12 }}>
