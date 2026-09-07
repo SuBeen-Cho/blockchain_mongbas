@@ -65,6 +65,17 @@ tailscale serve status
 
 기존 `scripts/demo-tunnel.sh`/`demo-up.sh`는 Cloudflare Quick Tunnel을 사용하는 공개 인터넷 호환 경로이므로 기본적으로 fail closed한다. 그 경로는 `MONGBAS_ALLOW_PUBLIC_TUNNEL=true`가 명시되어야만 시작되며, 이 플래그는 외부 공개 승인을 대체하지 않는다. 데모 스크립트는 자신이 기동하고 PID와 실행 경로를 모두 확인한 프로세스만 중지하며, 이미 실행 중인 `:3000` 서비스를 소유권 확인 없이 교체하지 않는다.
 
+승인된 일회성 공개 실증은 다음 evaluator를 사용한다. 두 경로는 실제 서버의 보호된 절대경로를 지정한다. `cloudflared`는 root 실행을 거부하며, 감지된 origin의 CORS 반영과 backend 재시작·외부 HTTPS 점검 후 종료 시 원래 환경을 복구한다.
+
+```bash
+MONGBAS_RUNTIME_DIR="${HOME}/.local/state/mongbas" \
+MONGBAS_BACKEND_ENV="/absolute/protected/runtime/backend.env" \
+MONGBAS_ADMISSION_STATE="/absolute/protected/runtime/admission/state.json" \
+  ./deploy/linux/quick-tunnel-evaluation.sh ENABLE_PUBLIC_QUICK_TUNNEL
+```
+
+Quick Tunnel은 임시 공개 주소 검증 전용이다. 장기 운영은 tailnet-only Serve 또는 별도 승인된 Cloudflare Named Tunnel의 고정 hostname과 access policy로 구성하며, 임시 tunnel 결과를 장기 가용성 증거로 사용하지 않는다.
+
 실제 배포나 Serve 설정 전에 읽기 전용 QR 사전점검을 실행한다. 이 명령은 secret 값을 source/출력하지 않고 설정 여부만 검사하며, systemd, Docker, Tailscale 및 Fabric 상태를 변경하지 않는다.
 
 ```bash

@@ -29,10 +29,14 @@ MONGBAS_RUNTIME_DIR="${HOME}/.local/state/mongbas" \
 
 ```bash
 MONGBAS_RUNTIME_DIR="${HOME}/.local/state/mongbas" \
+MONGBAS_BACKEND_ENV="/absolute/protected/runtime/backend.env" \
+MONGBAS_ADMISSION_STATE="/absolute/protected/runtime/admission/state.json" \
   ./deploy/linux/quick-tunnel-evaluation.sh ENABLE_PUBLIC_QUICK_TUNNEL
 ```
 
-Quick Tunnel URL은 임시이며 누구나 접근할 수 있다. QR fragment의 admission token이나 관리자 token을 로그·채팅·공개 Git에 복사하지 않고, 실증이 끝난 즉시 tunnel을 종료한다.
+이 evaluator는 일반 사용자 권한으로 `cloudflared`를 실행하고, 감지한 임시 origin을 CORS/QR 설정에 원자적으로 반영한 뒤 backend를 재시작해 외부 HTTPS를 검사한다. 보호된 환경파일을 갱신하고 복구할 때만 `sudo`를 요청하며 비밀번호를 저장하지 않는다. 종료 시 원래 환경파일과 backend를 복구한다.
+
+Quick Tunnel URL은 임시이며 누구나 접근할 수 있다. QR fragment의 admission token이나 관리자 token을 로그·채팅·공개 Git에 복사하지 않고, 실증이 끝난 즉시 tunnel을 종료한다. 반복 발표나 고정 주소가 필요하면 Cloudflare Named Tunnel 또는 tailnet-only Tailscale Serve를 사용한다. Named Tunnel은 Cloudflare 계정·고정 hostname·access policy가 필요한 별도 운영 배포이며 Quick Tunnel 실험 증거와 동일시하지 않는다.
 
 화면 3개:
 - **관제판(노트북)**: `http://localhost:3000/?app=control` (원격 실증 시 Serve HTTPS URL + `/?app=control`)
