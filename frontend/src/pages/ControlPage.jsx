@@ -161,8 +161,10 @@ export default function ControlPage() {
             if (e.type === 'verify') {
               const code = e.payload?.code || e.payload?.nullifier || '';
               pendingVerifyRef.current = code; setVcode(code); setView('verify');
-              if (status === 'CLOSED') runVerify(code);
-              else setVfail('휴대폰의 검증 요청을 받았습니다. 개표를 종료하고 Merkle 게시판이 공개되면 자동으로 검증합니다.');
+              setVres(null);
+              setVfail(status === 'CLOSED'
+                ? '휴대폰의 검증 요청을 받았습니다. 아래 [추적하기]를 눌러 직접 검증하세요.'
+                : '휴대폰의 검증 요청을 받았습니다. 개표를 종료한 뒤 [추적하기]를 눌러 직접 검증하세요.');
             }
           }
         }
@@ -228,7 +230,6 @@ export default function ControlPage() {
         const closedTally = await J(`/elections/${encodeURIComponent(eid)}/tally`);
         setResults(closedTally.results); setDecrypted(!!closedTally.decrypted);
         try { const mk = await J(`/elections/${encodeURIComponent(eid)}/merkle`); setRootHash(mk.rootHash || ''); } catch { /* 아직 미구축 */ }
-        if (pendingVerifyRef.current) await runVerify(pendingVerifyRef.current);
       } catch (e) { addLog('집계 결과 조회 오류: ' + e.message); }
       setBusy(''); return;
     }
@@ -295,7 +296,9 @@ export default function ControlPage() {
           const pk = await J(`/elections/${encodeURIComponent(eid)}/elgamal-pubkey`);
           setTallyMath(computeTallyMath(pk.pubKey, bb.encryptedBallots || [], t.results, CANDIDATES));
         } catch { /* noop */ }
-        if (pendingVerifyRef.current) await runVerify(pendingVerifyRef.current);
+        if (pendingVerifyRef.current) {
+          setVfail('Merkle 봉인이 준비됐습니다. 검증 화면에서 [추적하기]를 눌러 직접 검증하세요.');
+        }
       } catch (e) { addLog('게시판 경고: ' + e.message); }
     } catch (e) { addLog('오류: ' + e.message); }
     setBusy('');
@@ -304,6 +307,10 @@ export default function ControlPage() {
   // 실제 검증: 추적번호 → 게시판 매칭 → Merkle 봉인 재계산
   async function runVerify(rawCode, tampered = false) {
     if (!eid) return;
+    if (status !== 'CLOSED') {
+      setVfail('아직 개표 전입니다. 먼저 [개표]에서 선거를 종료한 뒤 추적하세요.');
+      return;
+    }
     setBusy('검증 중…'); setVres(null); setVfail('');
     try {
       const normalized = String(rawCode || '').replace(/[^0-9a-fA-F]/g, '').toLowerCase();
@@ -331,7 +338,11 @@ export default function ControlPage() {
       const sealMatch = computedRoot === merkle.rootHash;
 	  setVres({ full, idx, total: ballots.length, ballots, leafHash: pr.leafHash, chainRoot: merkle.rootHash, computedRoot, sealMatch });
       addLog(`검증: ${tr(full, 8)} → ${sealMatch ? '봉인 일치 ✓' : '불일치 ✗'}`);
-    } catch (e) { setVfail(e.message); }
+    } catch (e) {
+      setVfail(tampered
+        ? '한 글자를 바꾼 추적번호는 원장의 Merkle leaf와 일치하지 않아 포함 증명이 거부됐습니다. (변조 탐지 성공)'
+        : e.message);
+    }
     setBusy('');
   }
   function tamper() {
@@ -673,7 +684,7 @@ function VerifyView({ code, setCode, run, tamper, res, fail, busy, status, rootH
           <input value={code} onChange={(e) => setCode(e.target.value)} placeholder="예: 7F3A-90 또는 무효화 해시"
             style={{ flex: '1 1 240px', height: 46, padding: '0 14px', fontSize: 15, fontWeight: 800, fontFamily: 'monospace', border: `1.5px solid ${T.line}`, color: T.ink, outline: 'none' }} />
           <SBtn onClick={run} disabled={busy} solid>추적하기</SBtn>
-          <SBtn onClick={tamper} disabled={busy || !res}>번호 한 글자 바꿔보기</SBtn>
+          <SBtn onClick={tamper} disabled={busy || !code}>번호 한 글자 바꿔보기</SBtn>
         </div>
         {status !== 'CLOSED' && <div style={{ marginTop: 10, fontSize: 12.5, color: T.sub, fontWeight: 700 }}>※ 게시판은 개표(종료) 후 공개됩니다. 먼저 [개표]를 진행하세요.</div>}
         {fail && <div style={{ marginTop: 14, padding: 14, background: '#fff', border: `1.5px solid ${T.ink}`, color: T.ink, fontWeight: 800, fontSize: 13.5 }}>✗ {fail}</div>}
