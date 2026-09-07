@@ -205,7 +205,16 @@ export default function ControlPage() {
   // 개표 = 즉시 종료 + 집계 + 게시판 공개 → 개표 뷰
   async function tallyNow() {
     if (!eid) return;
-    if (status === 'CLOSED') { setView('tally'); return; }
+    if (status === 'CLOSED') {
+      setView('tally'); setBusy('집계 결과 불러오는 중…');
+      try {
+        const closedTally = await J(`/elections/${encodeURIComponent(eid)}/tally`);
+        setResults(closedTally.results); setDecrypted(!!closedTally.decrypted);
+        try { const mk = await J(`/elections/${encodeURIComponent(eid)}/merkle`); setRootHash(mk.rootHash || ''); } catch { /* 아직 미구축 */ }
+        if (pendingVerifyRef.current) await runVerify(pendingVerifyRef.current);
+      } catch (e) { addLog('집계 결과 조회 오류: ' + e.message); }
+      setBusy(''); return;
+    }
     setView('tally'); setBusy('선거 종료 중…');
     try {
       // 직전 투표 커밋과의 MVCC 충돌 대비 — 충돌 시 잠깐 대기 후 재시도
@@ -218,23 +227,34 @@ export default function ControlPage() {
         }
       }
       setStatus('CLOSED'); addLog('선거 종료 — 2개 기관 partial decryption 시작');
-      setBusy('2-of-3 partial decryption 중…');
-      for (const idx of ['1', '2']) {
-        let submitted = false;
-        for (let attempt = 0; attempt < 30 && !submitted; attempt++) {
-          try {
-            await J(`/elections/${encodeURIComponent(eid)}/partial-decryptions`, { method: 'POST', body: JSON.stringify({ shareIndex: idx }) });
-            submitted = true;
-          } catch (error) {
-            if (attempt === 29) throw error;
-            await new Promise((resolve) => setTimeout(resolve, 2000));
+      // 0표(패닉표만 존재하는 경우 포함)는 CloseElection이 즉시 decrypted
+      // 결과를 확정한다. 이때 존재하지 않는 대기 암호문에 partial share를
+      // 반복 제출하면 화면이 영원히 집계 중처럼 보이므로 먼저 tally를 읽는다.
+      let t = await J(`/elections/${encodeURIComponent(eid)}/tally`);
+      if (!t.decrypted) {
+        setBusy('2-of-3 partial decryption 중…');
+        for (const idx of ['1', '2']) {
+          let submitted = false;
+          for (let attempt = 0; attempt < 30 && !submitted; attempt++) {
+            try {
+              await J(`/elections/${encodeURIComponent(eid)}/partial-decryptions`, { method: 'POST', body: JSON.stringify({ shareIndex: idx }) });
+              submitted = true;
+            } catch (error) {
+              // 직전 요청의 커밋 결과가 응답보다 먼저 확정된 경우를 복구한다.
+              const reconciled = await J(`/elections/${encodeURIComponent(eid)}/tally`).catch(() => null);
+              if (reconciled?.decrypted) { t = reconciled; submitted = true; break; }
+              if (attempt === 29) throw error;
+              await new Promise((resolve) => setTimeout(resolve, 2000));
+            }
           }
+          addLog(`기관 ${idx}/2 증명된 partial decryption 제출`);
+          if (t.decrypted) break;
         }
-        addLog(`기관 ${idx}/2 증명된 partial decryption 제출`);
+      } else {
+        addLog('유효표 0건 — 추가 partial decryption 없이 0표 집계 확정');
       }
       setBusy('복호화 확인 중…');
-      let t = null;
-      for (let i = 0; i < 12; i++) { t = await J(`/elections/${encodeURIComponent(eid)}/tally`); if (t.decrypted) break; await new Promise((r) => setTimeout(r, 800)); }
+      for (let i = 0; i < 12 && !t.decrypted; i++) { t = await J(`/elections/${encodeURIComponent(eid)}/tally`); if (t.decrypted) break; await new Promise((r) => setTimeout(r, 800)); }
       setResults(t.results); setDecrypted(!!t.decrypted);
       addLog(t.decrypted ? '복호화 완료' : '복호화 대기');
       setBusy('Merkle 게시판 공개 중…');
