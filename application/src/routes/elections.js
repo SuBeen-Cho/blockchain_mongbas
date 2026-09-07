@@ -26,6 +26,7 @@ const { isCanonicalToken, serializeFixedProof } = require('../lib/deniableProof'
 const { collectPagedBulletin } = require('../lib/pagedBulletin');
 const { closeAndAggregateElection } = require('../lib/closeElection');
 const { electionVisibilityRetry } = require('../lib/electionVisibilityRetry');
+const { classifyApiError, sendApiError } = require('../lib/apiError');
 
 const router = express.Router();
 
@@ -48,14 +49,7 @@ router.use(requireValidElectionID);
 
 // ── 체인코드 에러 메시지 살균 ─────────────────────────────────
 function sanitizeError(err) {
-  const msg = err.message || '';
-  // 사용자에게 안전한 에러만 반환, 내부 상태 노출 방지
-  if (msg.includes('존재하지 않')) return '해당 리소스를 찾을 수 없습니다.';
-  if (msg.includes('권한'))       return '권한이 없습니다.';
-  if (msg.includes('상태'))       return '현재 상태에서 수행할 수 없는 작업입니다.';
-  if (msg.includes('이미'))       return '이미 처리된 요청입니다.';
-  if (msg.includes('형식') || msg.includes('파싱')) return '입력 형식이 올바르지 않습니다.';
-  return '요청을 처리할 수 없습니다.';
+  return classifyApiError(err).error;
 }
 
 function hashWithLengthPrefix(...fields) {
@@ -514,14 +508,17 @@ router.post('/:id/activate', async (req, res) => {
 // CloseElection 이후에 호출해야 합니다.
 router.post('/:id/merkle', async (req, res) => {
   const { id } = req.params;
-  const { gateway, contract } = await connectGateway();
+  let gateway;
   try {
+    const connection = await connectGateway();
+    ({ gateway } = connection);
+    const { contract } = connection;
     const result = await contract.submitTransaction('BuildMerkleTree', id);
     res.json(JSON.parse(Buffer.from(result).toString('utf8')));
   } catch (err) {
-    res.status(500).json({ error: sanitizeError(err) });
+    sendApiError(res, err);
   } finally {
-    gateway.close();
+    gateway?.close();
   }
 });
 
@@ -529,14 +526,17 @@ router.post('/:id/merkle', async (req, res) => {
 // Merkle Root 정보 조회
 router.get('/:id/merkle', async (req, res) => {
   const { id } = req.params;
-  const { gateway, contract } = await connectGateway();
+  let gateway;
   try {
+    const connection = await connectGateway();
+    ({ gateway } = connection);
+    const { contract } = connection;
     const result = await contract.evaluateTransaction('GetMerkleRoot', id);
     res.json(JSON.parse(Buffer.from(result).toString('utf8')));
   } catch (err) {
-    res.status(404).json({ error: sanitizeError(err) });
+    sendApiError(res, err, 404);
   } finally {
-    gateway.close();
+    gateway?.close();
   }
 });
 
@@ -545,8 +545,11 @@ router.get('/:id/merkle', async (req, res) => {
 // nullifier: 서명된 자격증명 결합값으로 클라이언트가 계산
 router.get('/:id/proof/:nullifier', async (req, res) => {
   const { id, nullifier } = req.params;
-  const { gateway, contract } = await connectGateway();
+  let gateway;
   try {
+    const connection = await connectGateway();
+    ({ gateway } = connection);
+    const { contract } = connection;
     const result = await contract.evaluateTransaction('GetMerkleProof', id, nullifier);
     const proof = JSON.parse(Buffer.from(result).toString('utf8'));
     let nullifierRecord = null;
@@ -566,9 +569,9 @@ router.get('/:id/proof/:nullifier', async (req, res) => {
       proof,
     });
   } catch (err) {
-    res.status(404).json({ error: sanitizeError(err) });
+    sendApiError(res, err, 404);
   } finally {
-    gateway.close();
+    gateway?.close();
   }
 });
 
@@ -586,8 +589,11 @@ router.post('/:id/proof', async (req, res) => {
     return res.status(400).json({ error: 'lookupToken은 64자 소문자 SHA-256 hex여야 합니다.' });
   }
 
-  const { gateway, contract } = await connectGateway();
+  let gateway;
   try {
+    const connection = await connectGateway();
+    ({ gateway } = connection);
+    const { contract } = connection;
     const result = await contract.evaluateTransaction(
       'GetMerkleProofWithLookup', id, lookupToken
     );
@@ -595,9 +601,9 @@ router.post('/:id/proof', async (req, res) => {
     const serialized = serializeFixedProof(id, proof);
     res.status(200).type('application/json').send(serialized);
   } catch (err) {
-    res.status(400).json({ error: sanitizeError(err) });
+    sendApiError(res, err, 400);
   } finally {
-    gateway.close();
+    gateway?.close();
   }
 });
 
@@ -765,8 +771,11 @@ router.get('/:id/vote-counted/:nullifier', requireValidElectionID, async (req, r
 // ── POST /:id/publish-audit ───────────────────────────────────
 // [PAPER-6] 감사 데이터 공개 게시 (Universal Verifiability)
 router.post('/:id/publish-audit', requireValidElectionID, async (req, res) => {
-  const { gateway, contract } = await connectGateway();
+  let gateway;
   try {
+    const connection = await connectGateway();
+    ({ gateway } = connection);
+    const { contract } = connection;
     const result = await contract.submitTransaction('PublishAuditData', req.params.id);
     const bb = JSON.parse(Buffer.from(result).toString('utf8'));
     // [부스 시연] 게시판 공개 = 셔플 시점 → 라이브 표도 도착순서를 섞어 시간 상관(timing) 제거 시각화
@@ -778,24 +787,27 @@ router.post('/:id/publish-audit', requireValidElectionID, async (req, res) => {
       keyPublished: true,
     });
   } catch (err) {
-    res.status(500).json({ error: sanitizeError(err) });
+    sendApiError(res, err);
   } finally {
-    gateway.close();
+    gateway?.close();
   }
 });
 
 // ── GET /:id/bulletin-board ──────────────────────────────────
 // [PAPER-6] 공개 감사 데이터 조회 (인증 불필요)
 router.get('/:id/bulletin-board', requireValidElectionID, async (req, res) => {
-  const { gateway, contract } = await connectGateway();
+  let gateway;
   try {
+    const connection = await connectGateway();
+    ({ gateway } = connection);
+    const { contract } = connection;
     const result = await contract.evaluateTransaction('GetBulletinBoard', req.params.id);
     const bb = JSON.parse(Buffer.from(result).toString('utf8'));
     res.json(bb);
   } catch (err) {
-    res.status(500).json({ error: sanitizeError(err) });
+    sendApiError(res, err);
   } finally {
-    gateway.close();
+    gateway?.close();
   }
 });
 
