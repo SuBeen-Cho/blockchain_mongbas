@@ -101,6 +101,7 @@ export default function ControlPage() {
   const [tallyMath, setTallyMath] = useState(null); // 개표 집계 과정 실제 계산값
   const [narrow, setNarrow] = useState(typeof window !== 'undefined' && window.innerWidth < 860);
   const pollRef = useRef(null); const evRef = useRef(0);
+  const pendingVerifyRef = useRef('');
   let kioskUrl = ''; let kioskUrlError = '';
   if (eid && admission?.token) {
     try { kioskUrl = kioskURL(eid, admission.token); } catch (error) { kioskUrlError = error.message; }
@@ -140,7 +141,12 @@ export default function ControlPage() {
         if (ev.events && ev.events.length) {
           evRef.current = ev.lastSeq;
           for (const e of ev.events) {
-            if (e.type === 'verify') { setVcode(e.payload?.code || e.payload?.nullifier || ''); setView('verify'); runVerify(e.payload?.code || e.payload?.nullifier || ''); }
+            if (e.type === 'verify') {
+              const code = e.payload?.code || e.payload?.nullifier || '';
+              pendingVerifyRef.current = code; setVcode(code); setView('verify');
+              if (status === 'CLOSED') runVerify(code);
+              else setVfail('휴대폰의 검증 요청을 받았습니다. 개표를 종료하고 Merkle 게시판이 공개되면 자동으로 검증합니다.');
+            }
           }
         }
       } catch { /* noop */ }
@@ -242,6 +248,7 @@ export default function ControlPage() {
           setTallyMath(computeTallyMath(pk.pubKey, bb.encryptedBallots || [], t.results, CANDIDATES));
         } catch { /* noop */ }
         addLog('Merkle 트리 + 게시판 공개 (셔플 적용 · 검증 준비됨)');
+        if (pendingVerifyRef.current) await runVerify(pendingVerifyRef.current);
       } catch (e) { addLog('게시판 경고: ' + e.message); }
     } catch (e) { addLog('오류: ' + e.message); }
     setBusy('');
