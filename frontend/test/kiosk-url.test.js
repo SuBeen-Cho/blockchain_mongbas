@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
-import { browserCryptoReady, buildSecureKioskUrl, consumeKioskAdmission, displayKioskUrl } from '../src/utils/kioskUrl.js';
+import { browserCryptoReady, buildSecureKioskUrl, clearKioskAdmission, consumeKioskAdmission, displayKioskUrl } from '../src/utils/kioskUrl.js';
 
 test('QR URL encodes only election ID on an exact HTTPS origin', () => {
   assert.equal(
@@ -17,12 +17,17 @@ test('QR URL encodes only election ID on an exact HTTPS origin', () => {
 
 test('QR admission is read only from an exact fragment and immediately cleared', () => {
   let replacement = '';
+  const retained = new Map();
   const scope = {
     location: { hash: `#a=${'b'.repeat(43)}`, pathname: '/', search: '?app=kiosk&e=demo' },
     history: { replaceState(_state, _title, value) { replacement = value; } },
+    sessionStorage: { setItem(k, v) { retained.set(k, v); }, getItem(k) { return retained.get(k); }, removeItem(k) { retained.delete(k); } },
   };
   assert.equal(consumeKioskAdmission(scope), 'b'.repeat(43));
   assert.equal(replacement, '/?app=kiosk&e=demo');
+  assert.equal(consumeKioskAdmission({ ...scope, location: { ...scope.location, hash: '' } }), 'b'.repeat(43));
+  clearKioskAdmission(scope);
+  assert.equal(consumeKioskAdmission({ ...scope, location: { ...scope.location, hash: '' } }), '');
   replacement = '';
   assert.equal(consumeKioskAdmission({ ...scope, location: { ...scope.location, hash: '#a=bad&x=1' } }), '');
   assert.equal(replacement, '/?app=kiosk&e=demo');

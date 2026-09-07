@@ -11,6 +11,7 @@ function isLoopback(hostname) {
 }
 
 const ADMISSION_RE = /^[A-Za-z0-9_-]{43}$/;
+const SESSION_ADMISSION_KEY = 'mongbas.kioskAdmission.v1';
 
 export function buildSecureKioskUrl(electionID, currentOrigin, configuredOrigin = '', admissionToken = '') {
   if (typeof electionID !== 'string' || electionID.length === 0) throw new Error('선거 ID가 필요합니다.');
@@ -26,8 +27,18 @@ export function consumeKioskAdmission(scope = window) {
   const fragment = scope.location.hash || '';
   const match = /^#a=([A-Za-z0-9_-]{43})$/.exec(fragment);
   if (fragment) scope.history.replaceState(null, '', `${scope.location.pathname}${scope.location.search}`);
-  if (!match) return '';
-  return match[1];
+  if (match) {
+    try { scope.sessionStorage?.setItem(SESSION_ADMISSION_KEY, match[1]); } catch { /* private storage unavailable */ }
+    return match[1];
+  }
+  try {
+    const retained = scope.sessionStorage?.getItem(SESSION_ADMISSION_KEY) || '';
+    return ADMISSION_RE.test(retained) ? retained : '';
+  } catch { return ''; }
+}
+
+export function clearKioskAdmission(scope = window) {
+  try { scope.sessionStorage?.removeItem(SESSION_ADMISSION_KEY); } catch { /* private storage unavailable */ }
 }
 
 export function displayKioskUrl(value) {

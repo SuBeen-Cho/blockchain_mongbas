@@ -6,7 +6,7 @@ import {
   generateBallotValidityProof,
   generateVectorBallotV3,
 } from '../utils/crypto.js';
-import { browserCryptoReady, consumeKioskAdmission } from '../utils/kioskUrl.js';
+import { browserCryptoReady, clearKioskAdmission, consumeKioskAdmission } from '../utils/kioskUrl.js';
 import { displayReceiptCode } from '../utils/receiptLookup.js';
 
 /**
@@ -58,6 +58,7 @@ export default function KioskPage({ electionId }) {
         const issued = await J('/credential/demo-admission/redeem', { method: 'POST',
           body: JSON.stringify({ electionID: electionId, token: admissionToken, sharedSession: true }) });
         if (!issued.credential || !issued.nullifierMaterial) throw new Error('자격증명 nullifier 바인딩 재료가 누락됐습니다.');
+        clearKioskAdmission(window);
         setCred(issued.credential);
         setNullifierMaterial(issued.nullifierMaterial);
         setPhase('choose');
