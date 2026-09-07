@@ -6,10 +6,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"math/big"
+	"sort"
 	"strings"
 	"testing"
 
 	bn256 "github.com/ethereum/go-ethereum/crypto/bn256/cloudflare"
+	"github.com/hyperledger/fabric-chaincode-go/shim"
+	"github.com/hyperledger/fabric-protos-go/ledger/queryresult"
 )
 
 func TestSingleVectorBallotBulletinProofsSerializeAsArray(t *testing.T) {
@@ -197,6 +200,37 @@ type exactReceiptStub struct {
 	keys  []string
 }
 
+type auditRangeIterator struct {
+	entries []*queryresult.KV
+	index   int
+}
+
+func (iterator *auditRangeIterator) HasNext() bool { return iterator.index < len(iterator.entries) }
+func (iterator *auditRangeIterator) Next() (*queryresult.KV, error) {
+	entry := iterator.entries[iterator.index]
+	iterator.index++
+	return entry, nil
+}
+func (iterator *auditRangeIterator) Close() error { return nil }
+
+type auditIndexStub struct{ state map[string][]byte }
+
+func (stub *auditIndexStub) GetState(key string) ([]byte, error) { return stub.state[key], nil }
+func (stub *auditIndexStub) GetStateByRange(startKey, endKey string) (shim.StateQueryIteratorInterface, error) {
+	keys := make([]string, 0)
+	for key := range stub.state {
+		if key >= startKey && key < endKey {
+			keys = append(keys, key)
+		}
+	}
+	sort.Strings(keys)
+	entries := make([]*queryresult.KV, len(keys))
+	for index, key := range keys {
+		entries[index] = &queryresult.KV{Key: key, Value: stub.state[key]}
+	}
+	return &auditRangeIterator{entries: entries}, nil
+}
+
 func (stub *exactReceiptStub) GetState(key string) ([]byte, error) {
 	stub.keys = append(stub.keys, key)
 	return stub.state, nil
@@ -285,6 +319,35 @@ func TestDashboardSnapshotSeparatesActiveCastAndPaddingCounts(t *testing.T) {
 	records[0].ElectionID = "other"
 	if _, err := buildDashboardSnapshot(election, records); err == nil {
 		t.Fatal("cross-election dashboard record was accepted")
+	}
+}
+
+func TestAuditedVectorEvidenceUsesElectionScopedIndex(t *testing.T) {
+	electionID := "election-a"
+	ballotID := strings.Repeat("d", 64)
+	artifactHash := strings.Repeat("e", 64)
+	receiptBytes, _ := json.Marshal(VectorBallotReceipt{
+		Schema: "mongbas-vector-ballot-receipt/v1", ElectionID: electionID,
+		BallotID: ballotID, ArtifactHash: artifactHash, Status: "audited",
+	})
+	disclosureBytes, _ := json.Marshal(VectorAuditDisclosure{
+		Schema: "mongbas-vector-audit-disclosure/v1", ElectionID: electionID,
+		BallotID: ballotID, ArtifactHash: artifactHash, Status: "audited",
+	})
+	stub := &auditIndexStub{state: map[string][]byte{
+		vectorAuditIndexVersionKey(electionID):                    []byte(vectorAuditIndexVersion),
+		vectorAuditIndexPrefix(electionID) + ballotID:             []byte(ballotID),
+		"VECTOR_PREP_" + ballotID:                                 receiptBytes,
+		"VECTOR_AUDIT_" + ballotID:                                disclosureBytes,
+		"VECTOR_PREP_" + strings.Repeat("f", 64):                  []byte("not-json-and-must-not-be-scanned"),
+		vectorAuditIndexPrefix("other") + strings.Repeat("a", 64): []byte(strings.Repeat("a", 64)),
+	}}
+	receipts, disclosures, err := loadAuditedVectorEvidence(stub, electionID)
+	if err != nil {
+		t.Fatalf("scoped audit evidence rejected: %v", err)
+	}
+	if len(receipts) != 1 || len(disclosures) != 1 || receipts[0].BallotID != ballotID {
+		t.Fatalf("unexpected scoped audit evidence: receipts=%+v disclosures=%+v", receipts, disclosures)
 	}
 }
 

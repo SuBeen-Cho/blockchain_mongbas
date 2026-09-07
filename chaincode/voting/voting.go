@@ -725,6 +725,88 @@ type vectorReceiptStateReader interface {
 	GetState(key string) ([]byte, error)
 }
 
+type vectorAuditStateReader interface {
+	vectorReceiptStateReader
+	GetStateByRange(startKey, endKey string) (shim.StateQueryIteratorInterface, error)
+}
+
+const vectorAuditIndexVersion = "mongbas-vector-audit-index/v1"
+
+func vectorAuditIndexVersionKey(electionID string) string {
+	return "VECTOR_AUDIT_INDEX_VERSION_" + electionID
+}
+
+func vectorAuditIndexPrefix(electionID string) string {
+	return "VECTOR_AUDIT_BY_ELECTION_" + electionID + "_"
+}
+
+func loadAuditedVectorEvidence(
+	stub vectorAuditStateReader,
+	electionID string,
+) ([]VectorBallotReceipt, []VectorAuditDisclosure, error) {
+	marker, err := stub.GetState(vectorAuditIndexVersionKey(electionID))
+	if err != nil {
+		return nil, nil, fmt.Errorf("vector audit index version lookup failed: %w", err)
+	}
+	indexed := string(marker) == vectorAuditIndexVersion
+	start, end := "VECTOR_PREP_", "VECTOR_PREP_\uffff"
+	if indexed {
+		start = vectorAuditIndexPrefix(electionID)
+		end = start + "\uffff"
+	}
+	iterator, err := stub.GetStateByRange(start, end)
+	if err != nil {
+		return nil, nil, fmt.Errorf("vector audit receipt lookup failed: %w", err)
+	}
+	defer iterator.Close()
+	receipts := make([]VectorBallotReceipt, 0)
+	disclosures := make([]VectorAuditDisclosure, 0)
+	seen := make(map[string]struct{})
+	for iterator.HasNext() {
+		entry, nextErr := iterator.Next()
+		if nextErr != nil {
+			return nil, nil, fmt.Errorf("vector audit receipt iteration failed: %w", nextErr)
+		}
+		encoded := entry.Value
+		if indexed {
+			ballotID := string(entry.Value)
+			if !isCanonicalSHA256Hex(ballotID) {
+				return nil, nil, fmt.Errorf("vector audit index identifier invalid")
+			}
+			encoded, err = stub.GetState("VECTOR_PREP_" + ballotID)
+			if err != nil || encoded == nil {
+				return nil, nil, fmt.Errorf("audited vector receipt missing: %s", ballotID)
+			}
+		}
+		var receipt VectorBallotReceipt
+		if err := json.Unmarshal(encoded, &receipt); err != nil {
+			return nil, nil, fmt.Errorf("vector audit receipt decode failed: %w", err)
+		}
+		if receipt.ElectionID != electionID || receipt.Status != "audited" {
+			if indexed {
+				return nil, nil, fmt.Errorf("vector audit index binding invalid: %s", receipt.BallotID)
+			}
+			continue
+		}
+		if _, duplicate := seen[receipt.BallotID]; duplicate || len(receipts) >= BulletinIndexMaxDisclosures {
+			return nil, nil, fmt.Errorf("vector audit evidence duplicate or bounded limit exceeded")
+		}
+		seen[receipt.BallotID] = struct{}{}
+		disclosureBytes, disclosureErr := stub.GetState("VECTOR_AUDIT_" + receipt.BallotID)
+		if disclosureErr != nil || disclosureBytes == nil {
+			return nil, nil, fmt.Errorf("audited vector disclosure missing: %s", receipt.BallotID)
+		}
+		var disclosure VectorAuditDisclosure
+		if json.Unmarshal(disclosureBytes, &disclosure) != nil || disclosure.BallotID != receipt.BallotID ||
+			disclosure.ElectionID != electionID || disclosure.ArtifactHash != receipt.ArtifactHash || disclosure.Status != "audited" {
+			return nil, nil, fmt.Errorf("audited vector disclosure mismatch: %s", receipt.BallotID)
+		}
+		receipts = append(receipts, receipt)
+		disclosures = append(disclosures, disclosure)
+	}
+	return receipts, disclosures, nil
+}
+
 func loadActiveVectorReceipts(
 	state vectorReceiptStateReader,
 	electionID string,
@@ -1562,6 +1644,11 @@ func (c *VotingContract) CreateElection(
 	}
 	if err := ctx.GetStub().PutState(electionID, b); err != nil {
 		return fmt.Errorf("선거 원장 저장 실패: %w", err)
+	}
+	if encryptionMode == "elgamal-vector-v3" {
+		if err := ctx.GetStub().PutState(vectorAuditIndexVersionKey(electionID), []byte(vectorAuditIndexVersion)); err != nil {
+			return fmt.Errorf("vector audit index version 저장 실패: %w", err)
+		}
 	}
 	if dkg != nil {
 		publicTranscript, marshalErr := json.Marshal(dkg)
@@ -2571,6 +2658,13 @@ func (c *VotingContract) AuditVectorBallot(
 	}
 	if err := ctx.GetStub().PutState("VECTOR_AUDIT_"+ballotID, disclosureBytes); err != nil {
 		return nil, fmt.Errorf("vector ballot audit disclosure 저장 실패: %w", err)
+	}
+	if marker, markerErr := ctx.GetStub().GetState(vectorAuditIndexVersionKey(electionID)); markerErr != nil {
+		return nil, fmt.Errorf("vector audit index version 조회 실패: %w", markerErr)
+	} else if string(marker) == vectorAuditIndexVersion {
+		if putErr := ctx.GetStub().PutState(vectorAuditIndexPrefix(electionID)+ballotID, []byte(ballotID)); putErr != nil {
+			return nil, fmt.Errorf("vector audit index 저장 실패: %w", putErr)
+		}
 	}
 	return &disclosure, nil
 }
@@ -5427,41 +5521,12 @@ func (c *VotingContract) PublishAuditData(
 		if err != nil {
 			return nil, err
 		}
-		// Audited (spoiled) ballots are not part of the active ballot set. Keep
-		// discovering those legacy records separately; cast receipt correctness
-		// no longer depends on this Fabric-capped global iterator.
-		receiptIterator, err := ctx.GetStub().GetStateByRange("VECTOR_PREP_", "VECTOR_PREP_\uffff")
-		if err != nil {
-			return nil, fmt.Errorf("vector receipt 조회 실패: %w", err)
+		auditedReceipts, auditedDisclosures, auditErr := loadAuditedVectorEvidence(ctx.GetStub(), electionID)
+		if auditErr != nil {
+			return nil, auditErr
 		}
-		defer receiptIterator.Close()
-		for receiptIterator.HasNext() {
-			entry, err := receiptIterator.Next()
-			if err != nil {
-				return nil, fmt.Errorf("vector receipt 순회 실패: %w", err)
-			}
-			var receipt VectorBallotReceipt
-			if err := json.Unmarshal(entry.Value, &receipt); err != nil {
-				return nil, fmt.Errorf("vector receipt 파싱 실패: %w", err)
-			}
-			if receipt.ElectionID != electionID {
-				continue
-			}
-			switch receipt.Status {
-			case "audited":
-				disclosureBytes, err := ctx.GetStub().GetState("VECTOR_AUDIT_" + receipt.BallotID)
-				if err != nil || disclosureBytes == nil {
-					return nil, fmt.Errorf("audited vector disclosure 누락: %s", receipt.BallotID)
-				}
-				var disclosure VectorAuditDisclosure
-				if err := json.Unmarshal(disclosureBytes, &disclosure); err != nil || disclosure.BallotID != receipt.BallotID ||
-					disclosure.ElectionID != electionID || disclosure.ArtifactHash != receipt.ArtifactHash || disclosure.Status != "audited" {
-					return nil, fmt.Errorf("audited vector disclosure 불일치: %s", receipt.BallotID)
-				}
-				vectorReceipts = append(vectorReceipts, receipt)
-				vectorDisclosures = append(vectorDisclosures, disclosure)
-			}
-		}
+		vectorReceipts = append(vectorReceipts, auditedReceipts...)
+		vectorDisclosures = append(vectorDisclosures, auditedDisclosures...)
 		sort.Slice(vectorReceipts, func(i, j int) bool { return vectorReceipts[i].BallotID < vectorReceipts[j].BallotID })
 		sort.Slice(vectorDisclosures, func(i, j int) bool { return vectorDisclosures[i].BallotID < vectorDisclosures[j].BallotID })
 	}
@@ -5670,38 +5735,12 @@ func (c *VotingContract) hydrateBulletinBoard(
 	if err != nil {
 		return fmt.Errorf("BulletinBoard active vector receipts invalid: %w", err)
 	}
-	receipts, err := ctx.GetStub().GetStateByRange("VECTOR_PREP_", "VECTOR_PREP_￿")
-	if err != nil {
-		return fmt.Errorf("BulletinBoard vector receipt lookup failed: %w", err)
+	auditedReceipts, auditedDisclosures, auditErr := loadAuditedVectorEvidence(ctx.GetStub(), bb.ElectionID)
+	if auditErr != nil {
+		return fmt.Errorf("BulletinBoard audited vector evidence invalid: %w", auditErr)
 	}
-	defer receipts.Close()
-	for receipts.HasNext() {
-		entry, err := receipts.Next()
-		if err != nil {
-			return fmt.Errorf("BulletinBoard vector receipt iteration failed: %w", err)
-		}
-		var receipt VectorBallotReceipt
-		if err := json.Unmarshal(entry.Value, &receipt); err != nil {
-			return fmt.Errorf("BulletinBoard vector receipt decode failed: %w", err)
-		}
-		if receipt.ElectionID != bb.ElectionID {
-			continue
-		}
-		if receipt.Status == "audited" {
-			disclosureBytes, err := ctx.GetStub().GetState("VECTOR_AUDIT_" + receipt.BallotID)
-			if err != nil || disclosureBytes == nil {
-				return fmt.Errorf("BulletinBoard audited disclosure missing: %s", receipt.BallotID)
-			}
-			var disclosure VectorAuditDisclosure
-			if err := json.Unmarshal(disclosureBytes, &disclosure); err != nil ||
-				disclosure.BallotID != receipt.BallotID || disclosure.ElectionID != bb.ElectionID ||
-				disclosure.ArtifactHash != receipt.ArtifactHash || disclosure.Status != "audited" {
-				return fmt.Errorf("BulletinBoard audit disclosure is invalid: %s", receipt.BallotID)
-			}
-			bb.VectorBallotReceipts = append(bb.VectorBallotReceipts, receipt)
-			bb.VectorAuditDisclosures = append(bb.VectorAuditDisclosures, disclosure)
-		}
-	}
+	bb.VectorBallotReceipts = append(bb.VectorBallotReceipts, auditedReceipts...)
+	bb.VectorAuditDisclosures = append(bb.VectorAuditDisclosures, auditedDisclosures...)
 	sort.Slice(bb.VectorBallotReceipts, func(i, j int) bool {
 		return bb.VectorBallotReceipts[i].BallotID < bb.VectorBallotReceipts[j].BallotID
 	})
