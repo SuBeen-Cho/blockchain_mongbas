@@ -153,17 +153,21 @@ export default function ControlPage() {
 
   async function newSession() {
     setBusy('새 세션 생성 중…');
+    const id = `DEMO_${Date.now()}`;
+    setEid(id); setStatus('CREATING'); setLive(0); setVotes([]); setShuffled(false);
+    setAdmission(null); setResults(null); setDecrypted(false); setView('session');
+    setVres(null); setVfail(''); setRootHash(''); setTallyMath(null); evRef.current = 0;
+    addLog(`새 세션 생성 요청: ${id}`);
     try {
-      const id = `DEMO_${Date.now()}`;
       const now = Math.floor(Date.now() / 1000);
       await J('/elections', { method: 'POST', body: JSON.stringify({ electionID: id, title: '2026 모의 선거', candidates: CANDIDATES, encryptionMode: 'elgamal-vector-v3', endTime: now + 24 * 3600 }) });
+      setStatus('CREATED'); setBusy('선거 활성화 중…'); addLog('선거 생성 커밋 확인');
       await J(`/elections/${id}/activate`, { method: 'POST' });
+      setStatus('ACTIVE'); setBusy('일회용 QR 발급 중…'); addLog('선거 활성화 확인');
       const issuedAdmission = await J('/credential/demo-admission', { method: 'POST', body: JSON.stringify({ electionID: id, ttlSeconds: 120 }) });
       setAdmission(issuedAdmission);
-      setEid(id); setStatus('ACTIVE'); setLive(0); setVotes([]); setShuffled(false);
-      setResults(null); setDecrypted(false); setView('session'); setVres(null); setVfail(''); setRootHash(''); setTallyMath(null); evRef.current = 0;
       addLog(`새 세션 시작: ${id}`);
-    } catch (e) { addLog('오류: ' + e.message); }
+    } catch (e) { addLog('오류: ' + e.message); setBusy(''); return; }
     setBusy('');
   }
 

@@ -25,6 +25,7 @@ const { requireAdmin } = require('../middleware/admin');
 const { isCanonicalToken, serializeFixedProof } = require('../lib/deniableProof');
 const { collectPagedBulletin } = require('../lib/pagedBulletin');
 const { closeAndAggregateElection } = require('../lib/closeElection');
+const { electionVisibilityRetry } = require('../lib/electionVisibilityRetry');
 
 const router = express.Router();
 
@@ -476,7 +477,11 @@ router.post('/:id/activate', async (req, res) => {
   const { id } = req.params;
   const { gateway, contract } = await connectGateway();
   try {
-    await contract.submitTransaction('ActivateElection', id);
+    await submitTransactionAndWait(contract, 'ActivateElection', [id], {
+      // A successful CreateElection commit can still take a bounded interval
+      // to become visible on every endorsing peer under saturation.
+      endorsementRetry: electionVisibilityRetry(),
+    });
     res.json({ message: `선거 ${id}가 활성화되었습니다.` });
   } catch (err) {
     console.error('[elections] ActivateElection error:', err.message, err.details || '');
