@@ -36,7 +36,7 @@ if [ -z "${E2E_BASE_URL:-}" ]; then
   ss -H -ltn "sport = :${port}" | grep -q . && die "vector audit-or-cast port ${port} is already in use"
   (
     cd "${MONGBAS_REPO_DIR}/application"
-    exec env PORT="${port}" DISABLE_RATE_LIMITS=true node src/app.js
+    exec env PORT="${port}" DISABLE_RATE_LIMITS=true REQUIRE_DEMO_ADMISSION="false" node src/app.js
   ) >"${out}/evaluation-backend.log" 2>&1 &
   backend_pid=$!
 fi
@@ -45,7 +45,8 @@ ready=0
 for _ in $(seq 1 60); do
   if curl --silent --fail --max-time 10 "${base_url}/health" | node -e '
     const v=JSON.parse(require("fs").readFileSync(0,"utf8"));
-    process.exit(v.status === "ok" && v.benchmark?.rateLimitsDisabled === true && v.idemix?.enabled === true ? 0 : 1);
+    process.exit(v.status === "ok" && v.benchmark?.rateLimitsDisabled === true &&
+      v.demo?.admissionRequired === false && v.idemix?.enabled === true ? 0 : 1);
   ' >/dev/null 2>&1; then ready=1; break; fi
   [ -z "${backend_pid}" ] || kill -0 "${backend_pid}" 2>/dev/null || break
   sleep 1
