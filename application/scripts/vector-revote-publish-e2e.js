@@ -26,14 +26,14 @@ async function request(path, options = {}) {
   return body;
 }
 
-async function cast(credential, publicKey, nullifierHash, candidateIndex) {
+async function cast(context, credential, publicKey, nullifierHash, candidateIndex, credentialType = 'real') {
   const ballot = generateVectorBallot(publicKey, candidateIndex, candidates.length);
   const common = {
-    electionID,
+    electionID: context,
     nullifierHash,
     encryptedCandidateVector: ballot.encryptedCandidateVector,
     vectorBallotValidityProof: ballot.vectorBallotValidityProof,
-    credentialType: 'real',
+    credentialType,
   };
   const prepared = await request('/api/vote/prepare-vector', {
     method: 'POST',
@@ -64,7 +64,7 @@ async function main() {
 
   const casts = [];
   for (const candidateIndex of [0, 1, 2]) {
-    casts.push(await cast(issued.credential, pubKey, nullifierHash, candidateIndex));
+    casts.push(await cast(electionID, issued.credential, pubKey, nullifierHash, candidateIndex));
   }
   if (casts[0].isRevote === true || casts[1].isRevote !== true || casts[2].isRevote !== true ||
       casts[1].evictCount !== 1 || casts[2].evictCount !== 2) {
@@ -100,6 +100,36 @@ async function main() {
     throw new Error(`bulletin board mismatch: ${JSON.stringify(board)}`);
   }
 
+  // Preserve the approved semantics: a later panic ballot using the same
+  // credential/nullifier replaces the earlier normal ballot and is excluded
+  // from the normal tally. This is a mechanism check, not coercion resistance.
+  const panicElectionID = `${electionID}-panic`;
+  await request('/api/elections', { method: 'POST', body: JSON.stringify({
+    electionID: panicElectionID, title: 'Same-credential panic semantics', candidates,
+    startTime: now - 5, endTime: now + 3600, encryptionMode: 'elgamal-vector-v3',
+  }) });
+  await request(`/api/elections/${encodeURIComponent(panicElectionID)}/activate`, { method: 'POST', body: '{}' });
+  const { pubKey: panicPublicKey } = await request(`/api/elections/${encodeURIComponent(panicElectionID)}/elgamal-pubkey`);
+  const { blindingFactor: panicBlindingFactor } = await request(`/api/elections/${encodeURIComponent(panicElectionID)}/blinding-factor`);
+  const panicIssued = await request('/api/credential/idemix', { method: 'POST', body: JSON.stringify({
+    enrollmentID: 'demo002', enrollmentSecret: 'demo002pw', electionID: panicElectionID,
+  }) });
+  const panicNullifier = sha256(panicIssued.nullifierMaterial + panicElectionID + panicBlindingFactor);
+  const normalCast = await cast(panicElectionID, panicIssued.credential, panicPublicKey, panicNullifier, 0, 'real');
+  const panicCast = await cast(panicElectionID, panicIssued.credential, panicPublicKey, panicNullifier, 1, 'panic');
+  if (normalCast.isRevote === true || panicCast.isRevote !== true || panicCast.evictCount !== 1) {
+    throw new Error(`same-credential panic replacement mismatch: ${JSON.stringify({ normalCast, panicCast })}`);
+  }
+  const panicSnapshot = await request(`/api/elections/${encodeURIComponent(panicElectionID)}/dashboard-snapshot`);
+  if (panicSnapshot.activeBallots !== 1 || panicSnapshot.castEventCount !== 2) {
+    throw new Error(`panic dashboard accounting mismatch: ${JSON.stringify(panicSnapshot)}`);
+  }
+  await request(`/api/elections/${encodeURIComponent(panicElectionID)}/close`, { method: 'POST' });
+  const panicTally = await request(`/api/elections/${encodeURIComponent(panicElectionID)}/tally`);
+  if (panicTally.totalVotes !== 0 || Object.values(panicTally.results || {}).some(value => value !== 0)) {
+    throw new Error(`approved panic exclusion semantics changed: ${JSON.stringify(panicTally)}`);
+  }
+
   process.stdout.write(`${JSON.stringify({
     schema: 'mongbas-vector-revote-publish-e2e/v1', electionID,
     attemptedCasts: 3, committedCastEvents: snapshot.castEventCount,
@@ -107,6 +137,11 @@ async function main() {
     receiptMismatchAbsent: true, publishSucceeded: true,
     publishedBallots: board.encryptedBallots.length,
     publishedActiveReceipts: board.vectorBallotReceipts.length,
+    panicSemantics: {
+      electionID: panicElectionID, sameCredential: true, committedCastEvents: 2,
+      activeBallots: 1, normalTallyTotal: panicTally.totalVotes,
+      meaning: 'latest panic replacement excludes the prior normal ballot from the normal tally',
+    },
     publishResponse: published,
     claimBoundary: 'Linux Fabric regression for bounded active-receipt lookup; not a coercion-resistance proof',
   }, null, 2)}\n`);
