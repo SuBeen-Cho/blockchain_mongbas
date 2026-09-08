@@ -31,7 +31,7 @@ test('100k state-growth wrapper monitors disk, memory, OOM and Fabric health wit
   assert.match(source, /abort-reason\.txt/);
   assert.match(source, /MONGBAS_ABORT_ON_VOTE_FAILURE_FILE/);
   assert.match(source, /MONGBAS_RATE_MAX_IN_FLIGHT="\$\{max_in_flight\}"/);
-  assert.match(source, /MONGBAS_STATE_GROWTH_MAX_IN_FLIGHT:-25/);
+  assert.match(source, /MONGBAS_STATE_GROWTH_MAX_IN_FLIGHT:-40/);
   assert.match(source, /vote-failure-detected/);
   assert.match(source, /sleep 1/);
   assert.doesNotMatch(source, /docker compose down|docker volume rm|network\.sh (?:down|clean)/);
