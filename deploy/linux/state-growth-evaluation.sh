@@ -21,7 +21,7 @@ if [ -z "${rate}" ]; then
 fi
 [[ "${rate}" =~ ^[0-9]+$ ]] && [ "${rate}" -ge 1 ] && [ "${rate}" -le 200 ] || die "rate must be 1..200"
 [ $((ballots % rate)) -eq 0 ] || die "ballots must be exactly divisible by rate"
-max_in_flight="${MONGBAS_STATE_GROWTH_MAX_IN_FLIGHT:-100}"
+max_in_flight="${MONGBAS_STATE_GROWTH_MAX_IN_FLIGHT:-25}"
 [[ "${max_in_flight}" =~ ^[0-9]+$ ]] && [ "${max_in_flight}" -ge 1 ] && \
   [ "${max_in_flight}" -le 250 ] || die "state-growth max in flight must be 1..250"
 duration=$((ballots / rate))

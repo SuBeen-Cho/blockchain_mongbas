@@ -86,6 +86,14 @@ test('prepared-vector retry accepts a pre-submit endorsement timeout but rejects
   ), false);
 });
 
+test('prepared-vector retry accepts failed private-data dissemination before submit', () => {
+  const dissemination = Object.assign(new Error('failed to collect enough transaction endorsements'), {
+    code: 10,
+    details: [{ message: 'error in simulation: failed to distribute private collection: Failed disseminating 2 out of 3 private dissemination plans' }],
+  });
+  assert.equal(isRetriablePreparedVectorEndorsementError(dissemination), true);
+});
+
 test('prepared-vector cast retries endorsement visibility lag before submit', async () => {
   const calls = [];
   let endorsements = 0;

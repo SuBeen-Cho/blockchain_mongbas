@@ -35,7 +35,8 @@ function isRetriablePreparedVectorEndorsementError(error) {
   const text = errorText(error);
   return isPreparedVectorVisibilityLag(error) ||
     ((code === 10 || code === 4) &&
-      /endorsement timeout expired while collecting (?:first endorsement|endorsements)/i.test(text));
+      (/endorsement timeout expired while collecting (?:first endorsement|endorsements)/i.test(text) ||
+       /failed disseminating [0-9]+ out of [0-9]+ private dissemination plans/i.test(text)));
 }
 
 function preparedVectorVisibilityRetry({

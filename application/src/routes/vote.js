@@ -303,7 +303,13 @@ router.post('/prepare-vector', async (req, res) => {
     const connection = await connectGateway();
     gateway = connection.gateway;
     const result = await submitTransactionAndWait(connection.contract, 'PrepareVectorBallot',
-      [electionID, nullifierHash, clientNonceHash], { transientData });
+      [electionID, nullifierHash, clientNonceHash], {
+        transientData,
+        // A failed endorsement cannot have reached submit(). Retrying only the
+        // narrowly classified timeout/PDC dissemination cases is therefore
+        // idempotent; credential, proof and commit failures remain final.
+        endorsementRetry: castPreparedVisibilityRetry,
+      });
     res.json(JSON.parse(Buffer.from(result).toString('utf8')));
   } catch (err) {
     if (err.code === 'FABRIC_QUEUE_FULL' || err.code === 'FABRIC_QUEUE_TIMEOUT') {

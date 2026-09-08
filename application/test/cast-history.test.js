@@ -26,3 +26,9 @@ test('all HTTP cast paths require the history-producing chaincode transactions',
   assert.doesNotMatch(source, /submitTransactionAndWait\([^\n]+, 'CastPreparedVectorBallot'/);
   assert.match(source, /createCastHistoryTransient\(\)/);
 });
+
+test('vector prepare and cast share the bounded pre-submit endorsement retry policy', () => {
+  const source = fs.readFileSync(path.join(__dirname, '../src/routes/vote.js'), 'utf8');
+  assert.match(source, /'PrepareVectorBallot',[\s\S]*?endorsementRetry: castPreparedVisibilityRetry/);
+  assert.match(source, /'CastPreparedVectorBallotWithHistory',[\s\S]*?endorsementRetry: castPreparedVisibilityRetry/);
+});
