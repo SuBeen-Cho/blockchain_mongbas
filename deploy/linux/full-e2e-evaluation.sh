@@ -41,7 +41,10 @@ git -C "${MONGBAS_REPO_DIR}" rev-parse HEAD >"${out}/git-commit.txt"
 
 (
   cd "${MONGBAS_REPO_DIR}/application"
-  exec env PORT="${port}" DISABLE_RATE_LIMITS=true ENABLE_DEMO_ENDPOINTS="${demo_endpoints}" node src/app.js
+  # This isolated integration client exercises the credential API directly.
+  # Never inherit the operator-facing QR admission gate from backend.env.
+  exec env PORT="${port}" DISABLE_RATE_LIMITS=true ENABLE_DEMO_ENDPOINTS="${demo_endpoints}" \
+    REQUIRE_DEMO_ADMISSION="false" node src/app.js
 ) >"${out}/evaluation-backend.log" 2>&1 &
 backend_pid=$!
 
@@ -50,7 +53,8 @@ for _ in $(seq 1 60); do
   if curl --silent --fail --max-time 10 "${base_url}/health" | EXPECT_DEMO="${demo_endpoints}" node -e '
     const v=JSON.parse(require("fs").readFileSync(0,"utf8"));
     process.exit(v.status === "ok" && v.benchmark?.rateLimitsDisabled === true &&
-      v.demo?.endpointsEnabled === (process.env.EXPECT_DEMO === "true") && v.idemix?.enabled === true ? 0 : 1);
+      v.demo?.endpointsEnabled === (process.env.EXPECT_DEMO === "true") &&
+      v.demo?.admissionRequired === false && v.idemix?.enabled === true ? 0 : 1);
   ' >/dev/null 2>&1; then ready=1; break; fi
   kill -0 "${backend_pid}" 2>/dev/null || break
   sleep 1
