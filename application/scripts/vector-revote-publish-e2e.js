@@ -91,7 +91,9 @@ async function main() {
 
   const published = await request(`/api/elections/${encodeURIComponent(electionID)}/publish-audit`, { method: 'POST' });
   const board = await request(`/api/elections/${encodeURIComponent(electionID)}/bulletin-board`);
-  if (!Array.isArray(board.ballots) || board.ballots.length !== 1 || board.electionID !== electionID) {
+  if (!Array.isArray(board.encryptedBallots) || board.encryptedBallots.length !== 1 ||
+      !Array.isArray(board.vectorBallotReceipts) || board.vectorBallotReceipts.length !== 1 ||
+      board.electionID !== electionID) {
     throw new Error(`bulletin board mismatch: ${JSON.stringify(board)}`);
   }
 
@@ -100,7 +102,9 @@ async function main() {
     attemptedCasts: 3, committedCastEvents: snapshot.castEventCount,
     activeBallots: snapshot.activeBallots, finalCandidate: 'C', tally: tally.results,
     receiptMismatchAbsent: true, publishSucceeded: true,
-    publishedBallots: board.ballots.length, publishResponse: published,
+    publishedBallots: board.encryptedBallots.length,
+    publishedActiveReceipts: board.vectorBallotReceipts.length,
+    publishResponse: published,
     claimBoundary: 'Linux Fabric regression for bounded active-receipt lookup; not a coercion-resistance proof',
   }, null, 2)}\n`);
 }
