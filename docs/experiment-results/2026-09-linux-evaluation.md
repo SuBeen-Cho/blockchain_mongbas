@@ -229,3 +229,25 @@ TPS는 단순 HTTP 성공 횟수가 아니라 측정 구간의 commit된 voter o
 실행기는 [`post-fix-tps-evaluation.sh`](../../deploy/linux/post-fix-tps-evaluation.sh)입니다. 실행 결과가 나오기 전에는 이 계획을 측정 완료로 표현하지 않습니다.
 
 수정 전 기준선은 같은 60초 offered-rate를 각 5회 반복한 결과입니다. 다만 후속 실험은 100,000표가 원장에 더 누적된 뒤 실행되므로, 전후 차이를 재시도 로직만의 인과적 효과로 해석하지 않습니다. 코드 commit, 누적 ledger 크기와 실행 시각을 함께 기록합니다.
+
+## 8. 9월 8일 비파괴 안정화 재검증
+
+기존 원장과 Docker volume을 유지한 채 chaincode 정의를 sequence 24에서 25로 한 번만 올렸습니다. 업그레이드 전후 volume 목록의 SHA-256은 같았고, 세 조직의 승인, 네 CouchDB의 election index, 새 chaincode 컨테이너와 backend health를 확인했습니다. 이전 실행 파일은 rollback tag로 보존했습니다.
+
+업그레이드 후 실제 Linux Fabric에서 동일 credential로 vector-v3 표를 세 번 연속 제출했습니다. 결과는 다음과 같습니다.
+
+| 확인 항목 | 결과 |
+|---|---:|
+| 시도·commit된 cast event | 3/3 |
+| 현재 active ballot | 1 |
+| 최종 선택 | C |
+| 정상 tally | A=0, B=0, C=1 |
+| 감사 게시 | 성공 |
+| 게시된 active ballot/receipt | 1/1 |
+| 과거 `receipts=0 ballots=1` 오류 | 재발하지 않음 |
+
+별도 election에서는 같은 credential로 정상표를 낸 뒤 panic 표로 교체했습니다. 원장 회계는 cast event 2개와 active ballot 1개를 유지했고, 정상 tally는 0이었습니다. 즉 이번 수정은 “최신 panic 표가 같은 credential의 이전 정상표를 대체하고 정상 집계에서 제외된다”는 기존 의미를 바꾸지 않았습니다. 이 동작 시험은 완전한 강압 저항성을 증명하지 않습니다.
+
+감사 게시 transaction은 대형 배열 대신 compact manifest를 반환하므로 API가 배열 길이를 읽어 `ballotsPublished=0`으로 표시하던 문제도 발견했습니다. API가 commit된 paged bulletin index의 ballot·receipt·disclosure count를 읽도록 수정했고, 실제 게시판과 응답이 모두 1개로 일치하는지 재검증했습니다.
+
+최신 feature commit 기준 회귀 결과는 application 203/203, frontend 16/16 및 production build, verifier 134/134, chaincode `go test ./...` 통과입니다. 격리 production-like backend의 CORS, CSP, 인증, parser 제한과 보안 헤더 시험도 통과했고, 배포 dependency 감사에서는 high/critical 0건이었습니다. 실제 휴대폰 HTTPS 조작과 수정 후 100,000건·반복 TPS 측정은 아직 이 시점의 완료 항목이 아닙니다.
