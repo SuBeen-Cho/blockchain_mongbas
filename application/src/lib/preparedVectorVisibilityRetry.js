@@ -30,6 +30,14 @@ function isPreparedVectorVisibilityLag(error) {
   return Number(error?.code) === 10 && errorText(error).includes(MISSING_PREPARED_BALLOT);
 }
 
+function isRetriablePreparedVectorEndorsementError(error) {
+  const code = Number(error?.code);
+  const text = errorText(error);
+  return isPreparedVectorVisibilityLag(error) ||
+    ((code === 10 || code === 4) &&
+      /endorsement timeout expired while collecting (?:first endorsement|endorsements)/i.test(text));
+}
+
 function preparedVectorVisibilityRetry({
   delaysMs = DEFAULT_DELAYS_MS,
   sleep = delayMs => new Promise(resolve => setTimeout(resolve, delayMs)),
@@ -42,7 +50,9 @@ function preparedVectorVisibilityRetry({
   return Object.freeze({
     maxRetries: delaysMs.length,
     delayMs: retryIndex => delaysMs[retryIndex],
-    shouldRetry: isPreparedVectorVisibilityLag,
+    // These failures occur before submit(), so a fresh proposal is safe. Commit
+    // failures and ambiguous post-submit timeouts remain non-retriable here.
+    shouldRetry: isRetriablePreparedVectorEndorsementError,
     sleep,
   });
 }
@@ -50,5 +60,6 @@ function preparedVectorVisibilityRetry({
 module.exports = {
   DEFAULT_DELAYS_MS,
   isPreparedVectorVisibilityLag,
+  isRetriablePreparedVectorEndorsementError,
   preparedVectorVisibilityRetry,
 };

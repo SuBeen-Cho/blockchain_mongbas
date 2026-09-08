@@ -21,6 +21,9 @@ if [ -z "${rate}" ]; then
 fi
 [[ "${rate}" =~ ^[0-9]+$ ]] && [ "${rate}" -ge 1 ] && [ "${rate}" -le 200 ] || die "rate must be 1..200"
 [ $((ballots % rate)) -eq 0 ] || die "ballots must be exactly divisible by rate"
+max_in_flight="${MONGBAS_STATE_GROWTH_MAX_IN_FLIGHT:-100}"
+[[ "${max_in_flight}" =~ ^[0-9]+$ ]] && [ "${max_in_flight}" -ge 1 ] && \
+  [ "${max_in_flight}" -le 250 ] || die "state-growth max in flight must be 1..250"
 duration=$((ballots / rate))
 [ "${duration}" -ge 5 ] && [ "${duration}" -le 3600 ] || die "derived duration must be 5..3600 seconds"
 
@@ -113,6 +116,7 @@ stop_workload() {
 trap 'stop_workload' EXIT INT TERM
 
 setsid env MONGBAS_RATE_RESULT_ROOT="${out}/workload-results" MONGBAS_RATE_LEVELS="${rate}" \
+  MONGBAS_RATE_MAX_IN_FLIGHT="${max_in_flight}" \
   MONGBAS_ABORT_ON_VOTE_FAILURE_FILE="${failure_marker}" \
   MONGBAS_RATE_DURATION_SECONDS="${duration}" MONGBAS_RATE_REPEATS=1 \
   "${LINUX_DEPLOY_DIR}/rate-evaluation.sh" >"${out}/workload.stdout.log" 2>"${out}/workload.stderr.log" &

@@ -13,9 +13,11 @@ rates="${MONGBAS_RATE_LEVELS:-1,5,10,25,50}"
 duration="${MONGBAS_RATE_DURATION_SECONDS:-60}"
 repeats="${MONGBAS_RATE_REPEATS:-1}"
 port="${MONGBAS_RATE_PORT:-3002}"
+max_in_flight="${MONGBAS_RATE_MAX_IN_FLIGHT:-250}"
 [[ "${duration}" =~ ^[0-9]+$ ]] && [ "${duration}" -ge 5 ] && [ "${duration}" -le 3600 ] || die "duration must be 5..3600 seconds"
 [[ "${repeats}" =~ ^[0-9]+$ ]] && [ "${repeats}" -ge 1 ] && [ "${repeats}" -le 20 ] || die "repeats must be 1..20"
 [[ "${port}" =~ ^[0-9]+$ ]] && [ "${port}" -ge 1024 ] && [ "${port}" -le 65535 ] || die "port must be 1024..65535"
+[[ "${max_in_flight}" =~ ^[0-9]+$ ]] && [ "${max_in_flight}" -ge 1 ] && [ "${max_in_flight}" -le 1000 ] || die "max in flight must be 1..1000"
 
 run_id="$(timestamp_utc)"
 out_root="${MONGBAS_RATE_RESULT_ROOT:-${MONGBAS_RESULT_DIR}}"
@@ -68,6 +70,7 @@ done
 set +e
 node "${MONGBAS_REPO_DIR}/application/benchmark/elgamal-rate-bench.js" \
   --url "http://127.0.0.1:${port}" --rates "${rates}" --duration "${duration}" --repeats "${repeats}" \
+  --maxInFlight "${max_in_flight}" \
   --out "${out}/rate-report.json" >"${out}/rate-benchmark.log" 2>&1
 benchmark_status=$?
 set -e

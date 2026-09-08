@@ -5,6 +5,7 @@ const assert = require('node:assert/strict');
 const { submitTransactionAndWait } = require('../src/lib/submitTransaction');
 const {
   isPreparedVectorVisibilityLag,
+  isRetriablePreparedVectorEndorsementError,
   preparedVectorVisibilityRetry,
 } = require('../src/lib/preparedVectorVisibilityRetry');
 
@@ -69,6 +70,20 @@ test('prepared-vector visibility lag is recognized only from an ABORTED endorsem
   assert.equal(isPreparedVectorVisibilityLag(transient), true);
   assert.equal(isPreparedVectorVisibilityLag(Object.assign(new Error('준비된 vector ballot을 찾을 수 없습니다'), { code: 11 })), false);
   assert.equal(isPreparedVectorVisibilityLag(Object.assign(new Error('증명이 잘못되었습니다'), { code: 10 })), false);
+});
+
+test('prepared-vector retry accepts a pre-submit endorsement timeout but rejects unrelated failures', () => {
+  const timeout = Object.assign(new Error('failed to collect enough transaction endorsements'), {
+    code: 10,
+    details: [{ message: 'endorsement timeout expired while collecting first endorsement' }],
+  });
+  assert.equal(isRetriablePreparedVectorEndorsementError(timeout), true);
+  assert.equal(isRetriablePreparedVectorEndorsementError(
+    Object.assign(new Error('context deadline exceeded after submit'), { code: 4 }),
+  ), false);
+  assert.equal(isRetriablePreparedVectorEndorsementError(
+    Object.assign(new Error('증명이 잘못되었습니다'), { code: 10 }),
+  ), false);
 });
 
 test('prepared-vector cast retries endorsement visibility lag before submit', async () => {
