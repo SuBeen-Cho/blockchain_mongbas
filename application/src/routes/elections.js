@@ -796,12 +796,19 @@ router.post('/:id/publish-audit', requireValidElectionID, async (req, res) => {
     const { contract } = connection;
     const result = await contract.submitTransaction('PublishAuditData', req.params.id);
     const bb = JSON.parse(Buffer.from(result).toString('utf8'));
+    // PublishAuditData deliberately returns the compact manifest; large arrays
+    // are reconstructed from immutable paged indexes. Report those committed
+    // counts instead of incorrectly treating the compact arrays as empty data.
+    const indexResult = await contract.evaluateTransaction('GetBulletinBoardIndex', req.params.id);
+    const index = JSON.parse(Buffer.from(indexResult).toString('utf8'));
     // [부스 시연] 게시판 공개 = 셔플 시점 → 라이브 표도 도착순서를 섞어 시간 상관(timing) 제거 시각화
     try { demoLive.shuffle(req.params.id); demoLive.pushEvent(req.params.id, 'tally-published', {}); } catch (_) { /* 무시 */ }
     res.json({
       message: '감사 데이터 게시 완료',
       electionID: bb.electionID,
-      ballotsPublished: bb.encryptedBallots?.length || 0,
+      ballotsPublished: index.ballotCount,
+      receiptsPublished: index.receiptCount,
+      disclosuresPublished: index.disclosureCount,
       keyPublished: true,
     });
   } catch (err) {

@@ -36,4 +36,7 @@ test('revote-publish regression is isolated and preserves commit accounting evid
   assert.match(scenario, /attemptedCasts: 3/);
   assert.match(scenario, /snapshot\.activeBallots !== 1 \|\| snapshot\.castEventCount !== 3/);
   assert.match(scenario, /publishSucceeded: true/);
+  const routes = fs.readFileSync(path.join(__dirname, '../src/routes/elections.js'), 'utf8');
+  assert.match(routes, /GetBulletinBoardIndex/);
+  assert.match(routes, /ballotsPublished: index\.ballotCount/);
 });

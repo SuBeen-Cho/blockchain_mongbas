@@ -90,6 +90,9 @@ async function main() {
   if (verification.isValid !== true) throw new Error(`ElGamal verification failed: ${JSON.stringify(verification)}`);
 
   const published = await request(`/api/elections/${encodeURIComponent(electionID)}/publish-audit`, { method: 'POST' });
+  if (published.ballotsPublished !== 1 || published.receiptsPublished !== 1) {
+    throw new Error(`publish response count mismatch: ${JSON.stringify(published)}`);
+  }
   const board = await request(`/api/elections/${encodeURIComponent(electionID)}/bulletin-board`);
   if (!Array.isArray(board.encryptedBallots) || board.encryptedBallots.length !== 1 ||
       !Array.isArray(board.vectorBallotReceipts) || board.vectorBallotReceipts.length !== 1 ||
