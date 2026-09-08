@@ -35,6 +35,7 @@ const REPEATS = Number(args.repeats || 1);
 const MAX_IN_FLIGHT = Number(args.maxInFlight || 250);
 const MAX_VOTERS = 1000;
 const OUT = args.out || path.join(__dirname, `../benchmark-reports/elgamal-rate-${new Date().toISOString().replace(/[:.]/g, '')}.json`);
+const FAILURE_MARKER = process.env.MONGBAS_ABORT_ON_VOTE_FAILURE_FILE || '';
 
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
@@ -44,6 +45,24 @@ function validateConfig() {
   if (!Number.isInteger(REPEATS) || REPEATS < 1 || REPEATS > 20) throw new Error('repeats must be an integer from 1 to 20');
   if (!Number.isInteger(MAX_IN_FLIGHT) || MAX_IN_FLIGHT < 1 || MAX_IN_FLIGHT > 1000) throw new Error('maxInFlight must be an integer from 1 to 1000');
   if (!RATES.length || RATES.some(rate => !Number.isFinite(rate) || rate <= 0 || rate > 200)) throw new Error('rates must be numbers in (0, 200]');
+  if (FAILURE_MARKER && !path.isAbsolute(FAILURE_MARKER)) throw new Error('vote failure marker path must be absolute');
+}
+
+function preserveFirstFailure(result, index) {
+  if (!FAILURE_MARKER || fs.existsSync(FAILURE_MARKER)) return;
+  const temporary = `${FAILURE_MARKER}.${process.pid}.tmp`;
+  const evidence = {
+    schema: 'mongbas-vote-failure/v1',
+    detectedAt: new Date().toISOString(),
+    index,
+    status: result?.status ?? null,
+    error: String(result?.error || '').slice(0, 500),
+    prepareCommitted: result?.prepareCommitted === true,
+    castAttempted: result?.castAttempted === true,
+    castCommitted: result?.castCommitted === true,
+  };
+  fs.writeFileSync(temporary, `${JSON.stringify(evidence, null, 2)}\n`, { mode: 0o600, flag: 'wx' });
+  fs.renameSync(temporary, FAILURE_MARKER);
 }
 
 async function prepareBatch(label, count) {
@@ -65,8 +84,10 @@ async function submitAtFixedRate(batch, rate) {
   const active = new Set();
   const results = [];
   let maximumInFlight = 0;
+  let firstFailure = null;
 
   for (let index = 0; index < batch.prepared.length; index += 1) {
+    if (firstFailure) break;
     const due = origin + BigInt(index) * intervalNs;
     const remainingMs = Number(due - process.hrtime.bigint()) / 1e6;
     if (remainingMs > 1) await sleep(remainingMs);
@@ -78,12 +99,21 @@ async function submitAtFixedRate(batch, rate) {
       .then(result => {
         result.scheduleLagMs = Number(process.hrtime.bigint() - scheduledNs) / 1e6 - result.ms;
         results.push(result);
+        if (!result.ok && !firstFailure) {
+          firstFailure = { result, index };
+          preserveFirstFailure(result, index);
+        }
       })
       .finally(() => active.delete(promise));
     active.add(promise);
     maximumInFlight = Math.max(maximumInFlight, active.size);
   }
   await Promise.all(active);
+  if (firstFailure) {
+    const error = new Error(`vote failed at index=${firstFailure.index}; submission stopped and partial evidence retained`);
+    error.partialResults = results;
+    throw error;
+  }
   const finished = process.hrtime.bigint();
   return { results, maximumInFlight, origin, elapsedMs: Number(finished - origin) / 1e6 };
 }

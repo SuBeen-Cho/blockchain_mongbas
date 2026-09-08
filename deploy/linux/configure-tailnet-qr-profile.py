@@ -138,6 +138,7 @@ def main():
             os.fsync(temporary_fd)
         finally:
             os.close(temporary_fd)
+        os.chown(temporary, source_stat.st_uid, source_stat.st_gid)
         os.replace(temporary, env_path)
         fsync_directory(parent)
     finally:

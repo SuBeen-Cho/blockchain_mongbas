@@ -39,5 +39,15 @@ test('Quick Tunnel evaluator atomically applies and rolls back the detected orig
   assert.match(source, /MONGBAS_ADMISSION_STATE/);
   assert.match(source, /configure-tailnet-qr-profile\.py/);
   assert.match(source, /systemctl restart mongbas-backend\.service/);
-  assert.match(source, /install -m 0600/);
+  assert.match(source, /stat -c %u/);
+  assert.match(source, /stat -c %g/);
+  assert.match(source, /install -o "\$\{backend_env_uid\}" -g "\$\{backend_env_gid\}" -m 0600/);
+});
+
+test('profile configurator preserves the protected environment owner across atomic replacement', () => {
+  const configurator = fs.readFileSync(
+    path.join(__dirname, '../../deploy/linux/configure-tailnet-qr-profile.py'),
+    'utf8',
+  );
+  assert.match(configurator, /os\.chown\(temporary, source_stat\.st_uid, source_stat\.st_gid\)/);
 });

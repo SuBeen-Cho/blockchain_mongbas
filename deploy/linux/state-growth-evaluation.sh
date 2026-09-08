@@ -99,6 +99,7 @@ snapshot() {
 snapshot "${out}/storage-before.tsv" || die "pre-run storage snapshot failed"
 docker ps --no-trunc --size >"${out}/containers-before.txt"
 workload_pid=""
+failure_marker="${out}/vote-failure.json"
 stop_workload() {
   if [ -n "${workload_pid}" ] && kill -0 "${workload_pid}" 2>/dev/null; then
     kill -TERM -- "-${workload_pid}" 2>/dev/null || true
@@ -112,6 +113,7 @@ stop_workload() {
 trap 'stop_workload' EXIT INT TERM
 
 setsid env MONGBAS_RATE_RESULT_ROOT="${out}/workload-results" MONGBAS_RATE_LEVELS="${rate}" \
+  MONGBAS_ABORT_ON_VOTE_FAILURE_FILE="${failure_marker}" \
   MONGBAS_RATE_DURATION_SECONDS="${duration}" MONGBAS_RATE_REPEATS=1 \
   "${LINUX_DEPLOY_DIR}/rate-evaluation.sh" >"${out}/workload.stdout.log" 2>"${out}/workload.stderr.log" &
 workload_pid=$!
@@ -119,9 +121,21 @@ disk_abort=0
 abort_reason=""
 health_seen=0
 health_grace_deadline=$((SECONDS + 120))
+next_safety_check=0
 baseline_oom_kills="$(awk '$1 == "oom_kill" { print $2 }' /proc/vmstat)"
 [[ "${baseline_oom_kills}" =~ ^[0-9]+$ ]] || die "could not read the kernel oom_kill counter"
 while kill -0 "${workload_pid}" 2>/dev/null; do
+  if [ -s "${failure_marker}" ]; then
+    abort_reason="vote-failure-detected"
+    printf '%s\n' "${abort_reason}" >"${out}/abort-reason.txt"
+    stop_workload
+    break
+  fi
+  if [ "${SECONDS}" -lt "${next_safety_check}" ]; then
+    sleep 1
+    continue
+  fi
+  next_safety_check=$((SECONDS + disk_sample_seconds))
   observed_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   current_available_bytes="$(df -B1 --output=avail "${MONGBAS_RUNTIME_DIR}" | awk 'NR == 2 { gsub(/[[:space:]]/, "", $0); print }')"
   [[ "${current_available_bytes}" =~ ^[0-9]+$ ]] || die "could not measure available bytes while workload is running"
@@ -167,7 +181,7 @@ while kill -0 "${workload_pid}" 2>/dev/null; do
     stop_workload
     break
   fi
-  sleep "${disk_sample_seconds}"
+  sleep 1
 done
 set +e
 wait "${workload_pid}"

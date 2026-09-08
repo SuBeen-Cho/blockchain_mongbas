@@ -35,6 +35,8 @@ tunnel_pid=""
 passed=false
 profile_applied=false
 profile_backup="${backend_env}.quick-tunnel-${stamp}.bak"
+backend_env_uid="$(stat -c %u "${backend_env}")"
+backend_env_gid="$(stat -c %g "${backend_env}")"
 
 finish() {
   status=$?
@@ -43,7 +45,8 @@ finish() {
     wait "${tunnel_pid}" 2>/dev/null || true
   fi
   if [ "${profile_applied}" = true ] && [ -f "${profile_backup}" ]; then
-    sudo install -m 0600 "${profile_backup}" "${backend_env}" || true
+    sudo install -o "${backend_env_uid}" -g "${backend_env_gid}" -m 0600 \
+      "${profile_backup}" "${backend_env}" || true
     sudo systemctl restart mongbas-backend.service || true
   fi
   printf 'status=%s\nexitCode=%s\nfinishedUtc=%s\n' \

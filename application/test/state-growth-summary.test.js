@@ -29,6 +29,9 @@ test('100k state-growth wrapper monitors disk, memory, OOM and Fabric health wit
   assert.match(source, /health_seen/);
   assert.match(source, /container-not-running/);
   assert.match(source, /abort-reason\.txt/);
+  assert.match(source, /MONGBAS_ABORT_ON_VOTE_FAILURE_FILE/);
+  assert.match(source, /vote-failure-detected/);
+  assert.match(source, /sleep 1/);
   assert.doesNotMatch(source, /docker compose down|docker volume rm|network\.sh (?:down|clean)/);
   assert.match(rateSource, /REQUIRE_DEMO_ADMISSION=false/);
 });
