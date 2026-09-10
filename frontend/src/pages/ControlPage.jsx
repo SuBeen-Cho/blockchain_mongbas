@@ -413,7 +413,6 @@ export default function ControlPage() {
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(180px,1fr))', gap: 14, marginBottom: 18 }}>
               <KPI label="현재 active ballot" value={live} unit="표" big />
               <KPI label="누적 커밋 확인" value={castEvents.length} unit="건" sub="최초 투표와 재투표 모두" />
-              <KPI label="Merkle padding/decoy" value={paddingCount} unit="개" sub="정상 tally와 별도" />
               <KPI label="후보" value={CANDIDATES.length} unit="명" sub="치킨·피자·떡볶이" />
               <KPI label="암호화" value="ElGamal" unit="+ZKP" sub="동형암호" small />
               <KPI label="검증 합의" value="2-of-3" unit="" sub="3개 기관" small />
