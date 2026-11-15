@@ -93,7 +93,10 @@ test('global rate-limit bypass is restricted to exact authenticated dashboard re
   assert.equal(skipAuthenticatedDashboardRead(request('GET', '/api/elections/election-a/live-count/extra')), false);
 
   const app = fs.readFileSync(path.join(__dirname, '../src/app.js'), 'utf8');
-  assert.match(app, /rateLimit\(\{[\s\S]{0,300}skip:\s*skipAuthenticatedDashboardRead/);
+  // The only other global exemption is the booth seed-votes loopback call,
+  // gated by demo mode and a per-process key (see internalDemoCall.js).
+  assert.match(app, /rateLimit\(\{[\s\S]{0,300}skip:\s*\(req\)\s*=>\s*skipAuthenticatedDashboardRead\(req\)\s*\|\|\s*skipInternalDemo\(req\)/);
+  assert.match(app, /const skipInternalDemo = \(req\) => demoEndpointsEnabled\(\) && isInternalDemoCall\(req\);/);
   assert.match(app, /dashboardReadLimiter\s*=\s*rateLimit\(\{[\s\S]{0,300}max:\s*900,[\s\S]{0,200}skip:\s*\(req\)\s*=>\s*!skipAuthenticatedDashboardRead\(req\)/);
   assert.match(app, /app\.use\(dashboardReadLimiter\)/);
 });

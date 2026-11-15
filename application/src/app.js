@@ -31,6 +31,7 @@ const { guardElectionAdminRoutes, validateAdminConfiguration, skipAuthenticatedD
 const { fabricConcurrencyGate } = require('./lib/fabricConcurrencyGate');
 const { demoEndpointsEnabled } = require('./lib/demoFeatures');
 const { validateRuntimeSecurity, apiRequestShapeGuard } = require('./lib/runtimeSecurity');
+const { isInternalDemoCall } = require('./lib/internalDemoCall');
 
 const app  = express();
 app.disable('x-powered-by');
@@ -91,11 +92,14 @@ app.use(express.json({ limit: '1mb' }));
 const FRONTEND_DIST = path.join(__dirname, '../../frontend/dist');
 app.use(express.static(FRONTEND_DIST));
 
-// Rate Limiting — 전역 (15분당 300회)
+// Rate Limiting — 전역 (15분당 GLOBAL_RATE_LIMIT_MAX회, 기본 300)
+// seed-votes의 loopback 내부 호출은 프로세스별 비밀 키로만 예외 처리한다.
+const RATE_LIMITS = runtimeSecurity.rateLimits;
+const skipInternalDemo = (req) => demoEndpointsEnabled() && isInternalDemoCall(req);
 const globalLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 300,
-  skip: skipAuthenticatedDashboardRead,
+  max: RATE_LIMITS.global,
+  skip: (req) => skipAuthenticatedDashboardRead(req) || skipInternalDemo(req),
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: '요청이 너무 많습니다. 잠시 후 다시 시도하세요.' },
@@ -120,14 +124,16 @@ if (!DISABLE_RATE_LIMITS) {
 // ── 민감 엔드포인트 Rate Limiting ─────────────────────────────────
 const voteLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 30,
+  max: RATE_LIMITS.vote,
+  skip: skipInternalDemo,
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: '투표 요청이 너무 많습니다. 잠시 후 다시 시도하세요.' },
 });
 const credentialLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 50,
+  max: RATE_LIMITS.credential,
+  skip: skipInternalDemo,
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: 'Credential 발급 요청이 너무 많습니다.' },
@@ -159,6 +165,7 @@ app.get('/health', (_req, res) => {
     benchmark: {
       authEndpointEnabled: runtimeSecurity.benchEndpoints,
       rateLimitsDisabled: DISABLE_RATE_LIMITS,
+      rateLimitMax15m: DISABLE_RATE_LIMITS ? null : RATE_LIMITS,
       preparedVisibilityRetryTelemetry: runtimeSecurity.benchEndpoints && DISABLE_RATE_LIMITS,
       demoCredentialsEnabled: process.env.ENABLE_DEMO_CREDENTIALS === 'true',
     },

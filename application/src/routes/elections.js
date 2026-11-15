@@ -17,6 +17,7 @@
 const crypto = require('crypto');
 const express = require('express');
 const { connectGateway, connectGatewayForShareIndex } = require('../gateway');
+const { internalDemoHeaders } = require('../lib/internalDemoCall');
 const { submitTransactionAndWait } = require('../lib/submitTransaction');
 const liveCount = require('../lib/liveCount');  // [부스 시연] 라이브 투표 카운터
 const demoLive  = require('../lib/demoLive');   // [부스 시연] 라이브 암호문 표 + 셔플 + 이벤트 버스
@@ -324,7 +325,7 @@ router.get('/:id/demo-events', requireDemoEndpoint, requireAdmin, (req, res) => 
 // ── POST /api/elections/:id/seed-votes ─────────────────────────
 // [부스 시연] 서버에서 ElGamal 투표 N개를 자동 주입 (게시판/집계 채우기).
 // Body: { count: number, dist?: number[] }  dist 미지정 시 무작위 후보.
-// 내부 HTTP로 자격증명 발급 + /api/vote 경로를 그대로 재사용한다(DISABLE_RATE_LIMITS 권장).
+// 내부 HTTP로 자격증명 발급 + /api/vote 경로를 그대로 재사용한다. 내부 호출은 프로세스별 키로 rate limit에서 제외된다.
 router.post('/:id/seed-votes', requireDemoEndpoint, async (req, res) => {
   const { id } = req.params;
   const count = Math.min(Math.max(parseInt(req.body.count, 10) || 5, 1), 50);
@@ -335,7 +336,8 @@ router.post('/:id/seed-votes', requireDemoEndpoint, async (req, res) => {
   const { generateVectorBallot } = require('../lib/vectorElgamal');
   const J = async (path, opts = {}) => {
     const { headers, ...rest } = opts;
-    const r = await fetch(BASE + path, { headers: { 'Content-Type': 'application/json', ...(headers || {}) }, ...rest });
+    // 내부 loopback 호출은 휴대폰들과 rate-limit 예산을 공유하지 않는다.
+    const r = await fetch(BASE + path, { headers: { 'Content-Type': 'application/json', ...internalDemoHeaders(), ...(headers || {}) }, ...rest });
     const t = await r.text(); let j; try { j = JSON.parse(t); } catch { j = {}; }
     if (!r.ok) throw new Error(`${path} ${r.status} ${t.slice(0, 120)}`);
     return j;

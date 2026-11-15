@@ -17,6 +17,31 @@ function parseTrustProxyHops(value = '0') {
   return hops;
 }
 
+// Per-IP request budgets over a 15-minute window. Defaults keep the previous
+// hard-coded values; booth profiles raise them after measuring capacity.
+const RATE_LIMIT_DEFAULTS = Object.freeze({ global: 300, vote: 30, credential: 50 });
+const RATE_LIMIT_ENV = Object.freeze({
+  global: 'GLOBAL_RATE_LIMIT_MAX',
+  vote: 'VOTE_RATE_LIMIT_MAX',
+  credential: 'CREDENTIAL_RATE_LIMIT_MAX',
+});
+const RATE_LIMIT_CEILING = 100000;
+
+function parseRateLimits(env = process.env) {
+  const limits = {};
+  for (const [key, name] of Object.entries(RATE_LIMIT_ENV)) {
+    const raw = env[name];
+    if (raw === undefined || raw === '') { limits[key] = RATE_LIMIT_DEFAULTS[key]; continue; }
+    if (!/^[0-9]+$/.test(String(raw))) throw new Error(`${name} must be an integer from 1 to ${RATE_LIMIT_CEILING}`);
+    const value = Number(raw);
+    if (!Number.isSafeInteger(value) || value < 1 || value > RATE_LIMIT_CEILING) {
+      throw new Error(`${name} must be an integer from 1 to ${RATE_LIMIT_CEILING}`);
+    }
+    limits[key] = value;
+  }
+  return limits;
+}
+
 function validateRuntimeSecurity(env = process.env) {
   const production = env.NODE_ENV === 'production';
   const unsafeProductionFlags = [
@@ -64,6 +89,7 @@ function validateRuntimeSecurity(env = process.env) {
     benchEndpoints: !production && env.ENABLE_BENCH_ENDPOINTS === 'true',
     hsts: production || env.ENABLE_HSTS === 'true',
     demoAdmissionRequired: !production && env.REQUIRE_DEMO_ADMISSION === 'true',
+    rateLimits: parseRateLimits(env),
   };
 }
 
@@ -83,4 +109,4 @@ function apiRequestShapeGuard(allowedOrigins) {
   };
 }
 
-module.exports = { parseListenHost, parseTrustProxyHops, validateRuntimeSecurity, apiRequestShapeGuard };
+module.exports = { parseListenHost, parseTrustProxyHops, parseRateLimits, RATE_LIMIT_DEFAULTS, validateRuntimeSecurity, apiRequestShapeGuard };
