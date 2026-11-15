@@ -150,9 +150,13 @@ type Election struct {
 	// sufficient to verify partial decryptions but reveal no trustee secret.
 	ThresholdPublicShares []ThresholdPublicShare `json:"thresholdPublicShares,omitempty" metadata:",optional"`
 	KeyCeremonyMode       string                 `json:"keyCeremonyMode,omitempty" metadata:",optional"`
-	DKGCeremonyID         string                 `json:"dkgCeremonyID,omitempty" metadata:",optional"`
-	DKGTranscriptHash     string                 `json:"dkgTranscriptHash,omitempty" metadata:",optional"`
-	DKGApprovals          []string               `json:"dkgApprovals,omitempty" metadata:",optional"`
+	// PanicPolicy "deniable-slot-v1": the tally aggregates a per-nullifier counted
+	// slot updated under a disjunctive proof, so panic casts never erase a prior
+	// normal vote and are indistinguishable from revotes. Empty = legacy policy.
+	PanicPolicy       string   `json:"panicPolicy,omitempty" metadata:",optional"`
+	DKGCeremonyID     string   `json:"dkgCeremonyID,omitempty" metadata:",optional"`
+	DKGTranscriptHash string   `json:"dkgTranscriptHash,omitempty" metadata:",optional"`
+	DKGApprovals      []string `json:"dkgApprovals,omitempty" metadata:",optional"`
 }
 
 // Nullifier 기반 중복 투표 방지 표식 (공개 원장, 선거 내 연결 가능)
@@ -185,6 +189,9 @@ type Nullifier struct {
 	// A future coercion-resistance design must replace the publicly linkable
 	// DUMMY_IDX mechanism with indistinguishable, proof-carrying padding ballots.
 	IsPadding bool `json:"isPadding,omitempty" metadata:",optional"`
+	// deniable-slot-v1 only: the vector the tally aggregates for this nullifier.
+	CountedVector    []ElGamalCiphertext `json:"countedVector,omitempty" metadata:",optional"`
+	CountedSlotChain []CountedSlotStep   `json:"countedSlotChain,omitempty" metadata:",optional"`
 }
 
 const DashboardSnapshotMaxBallots = 1000
@@ -227,6 +234,7 @@ func buildDashboardSnapshot(election *Election, records []Nullifier) (*Dashboard
 			CandidateCommitment: record.CandidateCommitment, BallotValidityProof: record.BallotValidityProof,
 			EncryptedCandidateVector:  record.EncryptedCandidateVector,
 			VectorBallotValidityProof: record.VectorBallotValidityProof, PreparedBallotID: record.PreparedBallotID,
+			CountedVector: record.CountedVector, CountedSlotChain: record.CountedSlotChain,
 		})
 	}
 	sort.Slice(snapshot.Ballots, func(i, j int) bool { return snapshot.Ballots[i].NullifierHash < snapshot.Ballots[j].NullifierHash })
@@ -1535,6 +1543,19 @@ func (c *VotingContract) CreateElection(
 			}
 		}
 	}
+	panicPolicy := ""
+	if transient != nil {
+		if raw, ok := transient["panicPolicy"]; ok {
+			policy := strings.TrimSpace(string(raw))
+			if policy != "" && policy != PanicPolicyDeniableSlot {
+				return fmt.Errorf("지원하지 않는 panicPolicy: %s", policy)
+			}
+			if policy == PanicPolicyDeniableSlot && encryptionMode != "elgamal-vector-v3" {
+				return fmt.Errorf("deniable-slot panicPolicy는 elgamal-vector-v3 선거에서만 사용할 수 있습니다")
+			}
+			panicPolicy = policy
+		}
+	}
 
 	var elgamalPubKey *ElGamalPublicKey
 	var thresholdPublicShares []ThresholdPublicShare
@@ -1631,6 +1652,7 @@ func (c *VotingContract) CreateElection(
 		ElGamalPubKey:         elgamalPubKey,
 		ThresholdPublicShares: thresholdPublicShares,
 		KeyCeremonyMode:       keyCeremonyMode,
+		PanicPolicy:           panicPolicy,
 	}
 	if dkg != nil {
 		election.DKGCeremonyID = dkg.CeremonyID
@@ -2176,6 +2198,11 @@ func (c *VotingContract) castVoteInternal(
 	// host/DB operator는 평문을 읽을 수 있으므로 untappable channel은 아니다.
 	if ctBytes, ok := transient["credentialType"]; ok {
 		ct := strings.TrimSpace(string(ctBytes))
+		if ct == "panic" && election.PanicPolicy == PanicPolicyDeniableSlot {
+			// The device chooses the branch inside the counted-slot proof; an
+			// explicit panic marker would reveal it to peers and operators.
+			return fmt.Errorf("deniable-slot 선거는 credentialType 패닉 표시를 받지 않습니다")
+		}
 		if ct == "panic" {
 			vp.CredentialType = "panic"
 		} else {
@@ -2403,6 +2430,16 @@ func (c *VotingContract) castVoteInternal(
 			return 0
 		}(),
 		CredVerifyLevel: getCredVerifyLevel(ctx),
+	}
+	if election.PanicPolicy == PanicPolicyDeniableSlot {
+		if len(encryptedCandVector) != len(election.Candidates) {
+			return fmt.Errorf("deniable-slot 선거는 vector-v3 투표만 허용합니다")
+		}
+		slot, chain, slotErr := applyDeniableSlot(election, nullifierHash, encryptedCandVector, publicVectorBallotValidityProof, existing, transient)
+		if slotErr != nil {
+			return slotErr
+		}
+		nullifier.CountedVector, nullifier.CountedSlotChain = slot, chain
 	}
 	nBytes, err := json.Marshal(nullifier)
 	if err != nil {
@@ -3044,7 +3081,7 @@ func (c *VotingContract) tallyVotesInternal(
 		if vpErr != nil {
 			return nil, fmt.Errorf("PDC 투표 조회 실패 (nullifier=%s): %w", nullifier.NullifierHash, vpErr)
 		}
-		if vpBytes != nil {
+		if vpBytes != nil && election.PanicPolicy != PanicPolicyDeniableSlot {
 			var vpCheck VotePrivate
 			if json.Unmarshal(vpBytes, &vpCheck) == nil && vpCheck.CredentialType == "panic" {
 				continue
@@ -3068,10 +3105,19 @@ func (c *VotingContract) tallyVotesInternal(
 				nullifier.VectorBallotValidityProof == nil {
 				return nil, fmt.Errorf("vector-v3 원장 투표 검증 실패 (nullifier=%s)", nullifier.NullifierHash)
 			}
+			aggregated := nullifier.EncryptedCandidateVector
+			if election.PanicPolicy == PanicPolicyDeniableSlot {
+				// Only the proof-carrying counted slot is tallied; the visible
+				// ballot may be a panic vote that must not count.
+				if len(nullifier.CountedVector) != len(election.Candidates) || len(nullifier.CountedSlotChain) == 0 {
+					return nil, fmt.Errorf("deniable-slot counted slot 누락 (nullifier=%s)", nullifier.NullifierHash)
+				}
+				aggregated = nullifier.CountedVector
+			}
 			// CastVote endorsement가 one-hot ZKP를 이미 검증했고 원장은 불변이다.
 			// 집계 tx는 proof 존재와 군 원소를 재검사하며, 모든 ZKP 재연산은
 			// election bundle standalone verifier의 독립 검증 단계에서 수행한다.
-			for i, ciphertext := range nullifier.EncryptedCandidateVector {
+			for i, ciphertext := range aggregated {
 				c1i, ok1 := parseSubgroupElement(ciphertext.C1)
 				c2i, ok2 := parseSubgroupElement(ciphertext.C2)
 				if !ok1 || !ok2 {
@@ -4639,7 +4685,10 @@ func (c *VotingContract) applyVectorPartialDecryption(
 			tally.Results[candidate] = int(count)
 			countSum += int(count)
 		}
-		if countSum != tally.TotalVotes {
+		// deniable-slot: a counted slot is one-hot or the zero vector (panic-only
+		// voter), so the decrypted sum may be below the number of slots.
+		if (election.PanicPolicy != PanicPolicyDeniableSlot && countSum != tally.TotalVotes) ||
+			(election.PanicPolicy == PanicPolicyDeniableSlot && countSum > tally.TotalVotes) {
 			return nil, fmt.Errorf("vector-v3 one-hot 집계 불변식 실패: counts=%d total=%d", countSum, tally.TotalVotes)
 		}
 		tally.Decrypted, status.IsDecrypted = true, true
@@ -5104,7 +5153,8 @@ func verifyVectorTallyPublic(election *Election, tally *VoteTally) (string, erro
 			}
 			resultSum += count
 		}
-		if resultSum != tally.TotalVotes {
+		if (election.PanicPolicy != PanicPolicyDeniableSlot && resultSum != tally.TotalVotes) ||
+			(election.PanicPolicy == PanicPolicyDeniableSlot && resultSum > tally.TotalVotes) {
 			valid = false
 		}
 	}
@@ -5149,6 +5199,7 @@ type BulletinBoard struct {
 	EncAggC1                 string                    `json:"encAggC1,omitempty" metadata:",optional"`
 	EncAggC2                 string                    `json:"encAggC2,omitempty" metadata:",optional"`
 	EncAggVector             []ElGamalCiphertext       `json:"encAggVector,omitempty" metadata:",optional"`
+	PanicPolicy              string                    `json:"panicPolicy,omitempty" metadata:",optional"`
 	VectorBallotReceipts     []VectorBallotReceipt     `json:"vectorBallotReceipts,omitempty" metadata:",optional"`
 	VectorAuditDisclosures   []VectorAuditDisclosure   `json:"vectorAuditDisclosures,omitempty" metadata:",optional"`
 }
@@ -5383,6 +5434,10 @@ type EncryptedBallot struct {
 	EncryptedCandidateVector  []ElGamalCiphertext        `json:"encryptedCandidateVector,omitempty" metadata:",optional"`
 	VectorBallotValidityProof *VectorBallotValidityProof `json:"vectorBallotValidityProof,omitempty" metadata:",optional"`
 	PreparedBallotID          string                     `json:"preparedBallotID,omitempty" metadata:",optional"`
+	// deniable-slot-v1: the tallied slot and its disjunctive proof are public so
+	// anyone can recompute the aggregate without knowing which casts were panic.
+	CountedVector    []ElGamalCiphertext `json:"countedVector,omitempty" metadata:",optional"`
+	CountedSlotChain []CountedSlotStep   `json:"countedSlotChain,omitempty" metadata:",optional"`
 }
 
 // PublicVerificationResult 공개 검증 결과
@@ -5511,6 +5566,8 @@ func (c *VotingContract) PublishAuditData(
 			EncryptedCandidateVector:  nul.EncryptedCandidateVector,
 			VectorBallotValidityProof: nul.VectorBallotValidityProof,
 			PreparedBallotID:          nul.PreparedBallotID,
+			CountedVector:             nul.CountedVector,
+			CountedSlotChain:          nul.CountedSlotChain,
 		})
 	}
 
@@ -5577,6 +5634,7 @@ func (c *VotingContract) PublishAuditData(
 		EncAggC1:                 tally.EncAggC1,
 		EncAggC2:                 tally.EncAggC2,
 		EncAggVector:             tally.EncAggVector,
+		PanicPolicy:              election.PanicPolicy,
 		VectorBallotReceipts:     vectorReceipts,
 		VectorAuditDisclosures:   vectorDisclosures,
 	}
@@ -5708,6 +5766,7 @@ func (c *VotingContract) hydrateBulletinBoard(
 			CandidateCommitment: nul.CandidateCommitment, BallotValidityProof: nul.BallotValidityProof,
 			EncryptedCandidateVector:  nul.EncryptedCandidateVector,
 			VectorBallotValidityProof: nul.VectorBallotValidityProof, PreparedBallotID: nul.PreparedBallotID,
+			CountedVector: nul.CountedVector, CountedSlotChain: nul.CountedSlotChain,
 		})
 	}
 	if len(ballots) != bb.TotalVotes {
@@ -5928,6 +5987,7 @@ func (c *VotingContract) GetBulletinBoardPage(
 				CandidateCommitment: nul.CandidateCommitment, BallotValidityProof: nul.BallotValidityProof,
 				EncryptedCandidateVector:  nul.EncryptedCandidateVector,
 				VectorBallotValidityProof: nul.VectorBallotValidityProof, PreparedBallotID: nul.PreparedBallotID,
+				CountedVector: nul.CountedVector, CountedSlotChain: nul.CountedSlotChain,
 			})
 		case "receipts":
 			encoded, stateErr := ctx.GetStub().GetState("VECTOR_PREP_" + identifier)

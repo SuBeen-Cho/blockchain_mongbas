@@ -365,7 +365,8 @@ router.post('/audit-vector', async (req, res) => {
 // Casts only the exact bytes previously committed under ballotID.
 router.post('/cast-vector', async (req, res) => {
   const { electionID, ballotID, nullifierHash, encryptedCandidateVector, vectorBallotValidityProof,
-          credentialType, normalPWHash, panicPWHash, normalLookupToken, panicLookupToken, panicCandidateID } = req.body;
+          credentialType, normalPWHash, panicPWHash, normalLookupToken, panicLookupToken, panicCandidateID,
+          countedSlot } = req.body;
   if (!electionID || !ballotID || !nullifierHash || !Array.isArray(encryptedCandidateVector) || !vectorBallotValidityProof) {
     return res.status(400).json({ error: 'prepared vector-v3 cast 필드가 누락되었습니다.' });
   }
@@ -390,6 +391,15 @@ router.post('/cast-vector', async (req, res) => {
   if ((normalLookupToken && panicLookupToken) || (normalPWHash && panicPWHash)) {
     transientData.voterPW = Buffer.from(JSON.stringify({ normalPWHash, panicPWHash, normalLookupToken, panicLookupToken,
       panicCandidateID: panicCandidateID || '' }));
+  }
+  // deniable-slot-v1: the device-built counted slot and its disjunctive proof.
+  // The server only forwards it; the chaincode verifies it.
+  if (countedSlot !== undefined) {
+    if (!countedSlot || typeof countedSlot !== 'object' || !Array.isArray(countedSlot.vector) || !countedSlot.proof ||
+        countedSlot.vector.length !== encryptedCandidateVector.length) {
+      return res.status(400).json({ error: 'countedSlot 형식이 올바르지 않습니다.' });
+    }
+    transientData.countedSlot = Buffer.from(JSON.stringify({ vector: countedSlot.vector, proof: countedSlot.proof }));
   }
   const retryObservation = { count: 0, totalDelayMs: 0 };
   let releaseFabricSlot;

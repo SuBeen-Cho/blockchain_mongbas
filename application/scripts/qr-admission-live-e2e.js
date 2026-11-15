@@ -5,6 +5,9 @@ const crypto = require('node:crypto');
 const dns = require('node:dns');
 const net = require('node:net');
 const { generateVectorBallot } = require('../src/lib/vectorElgamal');
+// deniable-slot-v1 elections (booth dashboard default) need the device-built counted slot.
+const loadCountedSlot = () => import(require('node:url').pathToFileURL(
+  require('node:path').join(__dirname, '../../frontend/src/utils/countedSlot.js')).href);
 
 const baseURL = String(process.env.E2E_BASE_URL || 'http://127.0.0.1:3000').replace(/\/$/, '');
 const edgeIP = String(process.env.E2E_EDGE_IP || '');
@@ -128,8 +131,18 @@ async function main() {
     body: JSON.stringify({ ...common, clientNonceHash: sha256(crypto.randomBytes(32)) }),
   }), 200);
   if (!prepared?.ballotID) throw new Error('prepared ballot identifier is missing');
+  const deniable = election.panicPolicy === 'deniable-slot-v1';
+  const countedSlotFor = async (visible) => {
+    if (!deniable) return {};
+    const { buildCountedSlot } = await loadCountedSlot();
+    let previous = null;
+    const lookup = await request(`/api/nullifier/${nullifierHash}`);
+    if (lookup.status === 200) previous = lookup.body?.countedVector || null;
+    return { countedSlot: await buildCountedSlot({ pubKey: publicKey, electionID, nullifierHash, visible, previous, branch: 'normal' }) };
+  };
   const cast = requireStatus('cast vector ballot', await request('/api/vote/cast-vector', {
-    credential: issued.credential, method: 'POST', body: JSON.stringify({ ...common, ballotID: prepared.ballotID }),
+    credential: issued.credential, method: 'POST',
+    body: JSON.stringify({ ...common, ballotID: prepared.ballotID, ...(await countedSlotFor(common.encryptedCandidateVector)) }),
   }), 200);
 
   let revote = null;
@@ -142,7 +155,8 @@ async function main() {
         body: JSON.stringify({ ...replacementCommon, clientNonceHash: sha256(crypto.randomBytes(32)) }) }), 200);
     revote = requireStatus('cast replacement vector ballot', await request('/api/vote/cast-vector', {
       credential: issued.credential, method: 'POST',
-      body: JSON.stringify({ ...replacementCommon, ballotID: replacementPrepared.ballotID }),
+      body: JSON.stringify({ ...replacementCommon, ballotID: replacementPrepared.ballotID,
+        ...(await countedSlotFor(replacementCommon.encryptedCandidateVector)) }),
     }), 200);
     if (revote.isRevote !== true || !Number.isSafeInteger(revote.evictCount) || revote.evictCount < 1) {
       throw new Error('same-credential replacement was not classified as a revote');

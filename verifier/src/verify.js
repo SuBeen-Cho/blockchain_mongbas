@@ -33,6 +33,8 @@ const HOMOMORPHIC_BASE = 10000n;
 const ALGORITHM = 'mongbas-exp-elgamal-scalar-v1';
 const THRESHOLD_ALGORITHM = 'mongbas-exp-elgamal-threshold-v2';
 const VECTOR_THRESHOLD_ALGORITHM = 'mongbas-exp-elgamal-vector-threshold-v3';
+const DENIABLE_SLOT_POLICY = 'deniable-slot-v1';
+const DENIABLE_BUNDLE_SCHEMA = 'mongbas-election-bundle/v6';
 
 function requireExactKeys(value, expected, label) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error(`${label}: expected object`);
@@ -49,7 +51,7 @@ function requireCanonicalBase64(value, label) {
   return Buffer.from(value, 'base64');
 }
 
-function validateBundleEnvelope(bundle, schema, tallyAlgorithm, topLevelKeys, { vector = false } = {}) {
+function validateBundleEnvelope(bundle, schema, tallyAlgorithm, topLevelKeys, { vector = false, deniable = false } = {}) {
   requireExactKeys(bundle, topLevelKeys, 'bundle');
   if (bundle.schema !== schema) throw new Error('schema identifier mismatch');
   requireExactKeys(bundle.algorithms, ['canonicalization', 'hash', 'signature', 'tally'], 'algorithms');
@@ -58,7 +60,8 @@ function validateBundleEnvelope(bundle, schema, tallyAlgorithm, topLevelKeys, { 
     throw new Error('algorithm suite mismatch or downgrade');
   }
 
-  requireExactKeys(bundle.configuration, ['electionID', 'candidates', 'signatureThreshold', 'organizations'], 'configuration');
+  requireExactKeys(bundle.configuration, ['electionID', 'candidates', 'signatureThreshold', 'organizations', ...(deniable ? ['panicPolicy'] : [])], 'configuration');
+  if (deniable && bundle.configuration.panicPolicy !== DENIABLE_SLOT_POLICY) throw new Error('configuration.panicPolicy invalid');
   if (!/^[A-Za-z0-9_.-]{1,256}$/.test(bundle.configuration.electionID)) throw new Error('configuration.electionID invalid');
   const candidates = bundle.configuration.candidates;
   if (!Array.isArray(candidates) || candidates.length < 2 || candidates.length > MAX_CANDIDATES ||
@@ -393,6 +396,45 @@ function verifyVectorBallotProof(publicKeyY, ballot, candidateCount) {
       publicModPowP(publicKeyY, z) !== (a2 * publicModPowP(result2, e)) % P) throw new Error('one-hot sum proof failed');
 }
 
+// deniable-slot-v1: next re-encrypts EITHER the visible vector OR the previous
+// counted slot (disjunctive Chaum-Pedersen). Byte-compatible with the chaincode
+// and frontend/src/utils/countedSlot.js.
+function verifyCountedSlotStep(y, electionID, nullifierHash, visible, previous, next, proof) {
+  const n = visible.length;
+  if (!Array.isArray(next) || next.length !== n || !Array.isArray(previous) || previous.length !== n) throw new Error('counted slot dimensions');
+  requireExactKeys(proof, ['schema', 'c', 'z'], 'countedSlotProof');
+  if (proof.schema !== DENIABLE_SLOT_POLICY || !Array.isArray(proof.c) || proof.c.length !== 2 || !Array.isArray(proof.z) || proof.z.length !== 2 ||
+      proof.z.some((row) => !Array.isArray(row) || row.length !== n)) throw new Error('countedSlotProof shape');
+  const slotElement = (value, label) => (value === '1' ? 1n : parseHex(value, label, { subgroup: true }));
+  const cs = proof.c.map((value, j) => parseHex(value, `countedSlotProof.c[${j}]`, { scalar: true }));
+  const nextParsed = next.map((ct, k) => ({ a: parseHex(ct?.c1, `countedVector[${k}].c1`, { subgroup: true }), b: parseHex(ct?.c2, `countedVector[${k}].c2`, { subgroup: true }) }));
+  const parts = ['mongbas-deniable-slot-v1', electionID, nullifierHash];
+  for (const group of [visible, previous, next]) for (const ct of group) parts.push(BigInt(`0x${ct.c1}`).toString(16), BigInt(`0x${ct.c2}`).toString(16));
+  [visible, previous].forEach((base, j) => {
+    base.forEach((ct, k) => {
+      const a = (nextParsed[k].a * modInverse(slotElement(ct.c1, 'slot base c1'), P)) % P;
+      const b = (nextParsed[k].b * modInverse(slotElement(ct.c2, 'slot base c2'), P)) % P;
+      const z = parseHex(proof.z[j][k], `countedSlotProof.z[${j}][${k}]`, { scalar: true });
+      const negC = Q - cs[j];
+      parts.push(((modPow(G, z, P) * modPow(a, negC, P)) % P).toString(16), ((modPow(y, z, P) * modPow(b, negC, P)) % P).toString(16));
+    });
+  });
+  const expected = BigInt(`0x${sha256Hex(parts.join('|'))}`) % Q;
+  if ((cs[0] + cs[1]) % Q !== expected) throw new Error('counted slot proof failed');
+}
+
+function verifyCountedSlotChain(y, electionID, ballot, candidateCount) {
+  const chain = ballot.countedSlotChain;
+  if (!Array.isArray(chain) || chain.length === 0 || chain.length > 1000) throw new Error('countedSlotChain missing or too long');
+  let previous = Array.from({ length: candidateCount }, () => ({ c1: '1', c2: '1' }));
+  chain.forEach((step, index) => {
+    requireExactKeys(step, ['encryptedCandidateVector', 'vectorBallotValidityProof', 'countedVector', 'countedSlotProof'], `countedSlotChain[${index}]`);
+    verifyVectorBallotProof(y, { ciphertextVector: step.encryptedCandidateVector, validityProof: step.vectorBallotValidityProof }, candidateCount);
+    verifyCountedSlotStep(y, electionID, ballot.nullifierHash, step.encryptedCandidateVector, previous, step.countedVector, step.countedSlotProof);
+    previous = step.countedVector;
+  });
+}
+
 function verifyVectorThresholdDecryptions(publicKeyY, aggregates, results, candidates, publicShares, partials) {
   if (!Array.isArray(aggregates) || aggregates.length !== candidates.length || !Array.isArray(partials) || partials.length < 2) throw new Error('invalid vector aggregates/partials');
   const configured = validateTrusteePublicShares(publicShares);
@@ -631,11 +673,14 @@ function verifyDKGKeyCeremony(bundle) {
 function prepareVectorBundle(bundle) {
   const errors = [];
   const check = (label, fn) => { try { return fn(); } catch (error) { errors.push(`${label}: ${error.message}`); return undefined; } };
-  const dkgV5 = bundle?.schema === 'mongbas-election-bundle/v5';
-  check('bundle envelope', () => validateBundleEnvelope(bundle, dkgV5 ? 'mongbas-election-bundle/v5' : 'mongbas-election-bundle/v4', VECTOR_THRESHOLD_ALGORITHM,
+  const deniable = bundle?.schema === DENIABLE_BUNDLE_SCHEMA;
+  // v6 = vector-v3 with deniable counted slots; DKG is optional there.
+  const dkgV5 = bundle?.schema === 'mongbas-election-bundle/v5' || (deniable && bundle?.keyCeremony !== undefined);
+  const schemaName = deniable ? DENIABLE_BUNDLE_SCHEMA : dkgV5 ? 'mongbas-election-bundle/v5' : 'mongbas-election-bundle/v4';
+  check('bundle envelope', () => validateBundleEnvelope(bundle, schemaName, VECTOR_THRESHOLD_ALGORITHM,
     ['schema', 'algorithms', 'configuration', 'provenance', 'publicKey', 'trusteePublicShares', 'ballots', 'bulletinBoard',
       'aggregateCiphertextVector', 'tally', 'vectorPartialDecryptions', 'vectorBallotReceipts', 'vectorAuditDisclosures',
-	  ...(dkgV5 ? ['keyCeremony'] : []), 'signatures'], { vector: true }));
+	  ...(dkgV5 ? ['keyCeremony'] : []), 'signatures'], { vector: true, deniable }));
   if (bundle?.algorithms?.tally !== VECTOR_THRESHOLD_ALGORITHM) errors.push('algorithms.tally: vector-v3 required (downgrade rejected)');
   const candidates = bundle?.configuration?.candidates;
   if (!Array.isArray(candidates) || candidates.length < 2 || new Set(candidates).size !== candidates.length) errors.push('configuration.candidates: invalid');
@@ -658,13 +703,24 @@ function prepareVectorBundle(bundle) {
   // already-invalid bundle must not force minutes of modular proof work.
   // Honest bundles and proof-only mutations still execute every ZKP below.
   if (Array.isArray(ballots) && y && Array.isArray(candidates)) ballots.forEach((ballot, index) => check(`ballots[${index}].binding`, () => {
-    requireExactKeys(ballot, ['nullifierHash', 'preparedBallotID', 'candidateCommitment', 'ciphertextVector', 'validityProof'], `ballots[${index}]`);
+    requireExactKeys(ballot, ['nullifierHash', 'preparedBallotID', 'candidateCommitment', 'ciphertextVector', 'validityProof', ...(deniable ? ['countedSlotChain'] : [])], `ballots[${index}]`);
     if (!/^[0-9a-f]{64}$/.test(ballot.nullifierHash) || seen.has(ballot.nullifierHash)) throw new Error('invalid/duplicate nullifier');
     seen.add(ballot.nullifierHash);
     const canonicalVector = JSON.stringify(ballot.ciphertextVector);
     if (ballot.candidateCommitment !== sha256Hex(`${bundle.configuration.electionID}|${ballot.nullifierHash}|${canonicalVector}`)) throw new Error('candidate commitment mismatch');
     if (!Array.isArray(ballot.ciphertextVector) || ballot.ciphertextVector.length !== candidates.length) throw new Error('invalid ciphertext vector dimensions');
-    ballot.ciphertextVector.forEach((ciphertext, candidateIndex) => {
+    let tallied = ballot.ciphertextVector;
+    if (deniable) {
+      // The tally aggregates the final counted slot; the visible ballot must be the chain's last cast.
+      const chain = ballot.countedSlotChain;
+      if (!Array.isArray(chain) || chain.length === 0) throw new Error('countedSlotChain missing');
+      const last = chain[chain.length - 1];
+      if (canonicalize(last?.encryptedCandidateVector) !== canonicalize(ballot.ciphertextVector) ||
+          canonicalize(last?.vectorBallotValidityProof) !== canonicalize(ballot.validityProof)) throw new Error('countedSlotChain does not end at the published ballot');
+      if (!Array.isArray(last.countedVector) || last.countedVector.length !== candidates.length) throw new Error('counted vector dimensions');
+      tallied = last.countedVector;
+    }
+    tallied.forEach((ciphertext, candidateIndex) => {
       const c1 = parseHex(ciphertext?.c1, `ciphertextVector[${candidateIndex}].c1`);
       const c2 = parseHex(ciphertext?.c2, `ciphertextVector[${candidateIndex}].c2`);
       aggregates[candidateIndex].c1 = (aggregates[candidateIndex].c1 * c1) % P;
@@ -674,8 +730,12 @@ function prepareVectorBundle(bundle) {
   const aggregateHex = aggregates.map((value) => ({ c1: value.c1.toString(16), c2: value.c2.toString(16) }));
   if (canonicalize(bundle?.aggregateCiphertextVector) !== canonicalize(aggregateHex)) errors.push('aggregateCiphertextVector: mismatch');
   if (bundle?.tally?.totalVotes !== ballots?.length) errors.push('tally.totalVotes: ballot count mismatch');
-  if (Array.isArray(candidates) && bundle?.tally?.results && candidates.reduce((sum, candidate) => sum + (bundle.tally.results[candidate] ?? -1), 0) !== bundle.tally.totalVotes) errors.push('tally.results: sum mismatch');
-  return { bundle, errors, check, y, candidates, ballots };
+  if (Array.isArray(candidates) && bundle?.tally?.results) {
+    const sum = candidates.reduce((total, candidate) => total + (bundle.tally.results[candidate] ?? -1), 0);
+    // deniable: a panic-only voter's counted slot is the zero vector.
+    if (deniable ? sum > bundle.tally.totalVotes : sum !== bundle.tally.totalVotes) errors.push('tally.results: sum mismatch');
+  }
+  return { bundle, errors, check, y, candidates, ballots, deniable };
 }
 
 function finalizeVectorBundle(prepared, canonicalBundle, proofErrors) {
@@ -699,6 +759,10 @@ function verifyPreparedVectorProofs(prepared) {
   ballots.forEach((ballot, index) => {
     try { verifyVectorBallotProof(y, ballot, candidates.length); }
     catch (error) { proofErrors.push(`ballots[${index}].proof: ${error.message}`); }
+    if (prepared.deniable) {
+      try { verifyCountedSlotChain(y, prepared.bundle.configuration.electionID, ballot, candidates.length); }
+      catch (error) { proofErrors.push(`ballots[${index}].countedSlotChain: ${error.message}`); }
+    }
   });
   return proofErrors;
 }
@@ -709,7 +773,7 @@ function verifyVectorBundle(bundle, canonicalBundle) {
 }
 
 function verifyBundleUnchecked(bundle, canonicalBundle) {
-	if (bundle?.schema === 'mongbas-election-bundle/v4' || bundle?.schema === 'mongbas-election-bundle/v5') return verifyVectorBundle(bundle, canonicalBundle);
+	if (bundle?.schema === 'mongbas-election-bundle/v4' || bundle?.schema === 'mongbas-election-bundle/v5' || bundle?.schema === DENIABLE_BUNDLE_SCHEMA) return verifyVectorBundle(bundle, canonicalBundle);
   const errors = [];
   let validSignatures = 0;
   const check = (label, fn) => {

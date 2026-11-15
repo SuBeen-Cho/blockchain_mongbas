@@ -18,6 +18,9 @@ const crypto = require('crypto');
 const express = require('express');
 const { connectGateway, connectGatewayForShareIndex } = require('../gateway');
 const { internalDemoHeaders } = require('../lib/internalDemoCall');
+// The counted-slot prover is shared with the phone kiosk (ESM, WebCrypto).
+const loadCountedSlot = () => import(require('node:url').pathToFileURL(
+  require('node:path').join(__dirname, '../../../frontend/src/utils/countedSlot.js')).href);
 const { submitTransactionAndWait } = require('../lib/submitTransaction');
 const liveCount = require('../lib/liveCount');  // [부스 시연] 라이브 투표 카운터
 const demoLive  = require('../lib/demoLive');   // [부스 시연] 라이브 암호문 표 + 셔플 + 이벤트 버스
@@ -213,7 +216,7 @@ router.get('/:id', async (req, res) => {
 // Body: { electionID, title, description, candidates: [], startTime, endTime }
 // startTime, endTime: Unix timestamp (초), startTime 생략 시 현재 시각 사용
 router.post('/', async (req, res) => {
-  const { electionID, title, description, candidates, startTime, endTime, encryptionMode, dkgTranscript } = req.body;
+  const { electionID, title, description, candidates, startTime, endTime, encryptionMode, dkgTranscript, panicPolicy } = req.body;
 
   if (!electionID || !title || !candidates || !Array.isArray(candidates) || !endTime) {
     return res.status(400).json({
@@ -239,6 +242,10 @@ router.post('/', async (req, res) => {
     return res.status(400).json({ error: 'dkgTranscript는 elgamal-vector-v3의 정상적인 Feldman DKG transcript여야 합니다.' });
   }
 
+  if (panicPolicy !== undefined && panicPolicy !== '' &&
+      (panicPolicy !== 'deniable-slot-v1' || mode !== 'elgamal-vector-v3')) {
+    return res.status(400).json({ error: 'panicPolicy는 elgamal-vector-v3 선거의 "deniable-slot-v1"만 지원합니다.' });
+  }
   const actualStartTime = startTime || Math.floor(Date.now() / 1000);
 
   const { gateway, contract } = await connectGateway();
@@ -251,6 +258,7 @@ router.post('/', async (req, res) => {
       //   transient는 오더러/원장에 기록되지 않으므로 키가 공개 데이터로 재계산되지 않는다.
       //   서버는 seed를 저장/로깅하지 않고 즉시 폐기한다(trusted dealer 가정).
       proposalOpts.transientData = { encryptionMode: Buffer.from(mode) };
+      if (panicPolicy === 'deniable-slot-v1') proposalOpts.transientData.panicPolicy = Buffer.from(panicPolicy);
       if (dkgTranscript) {
         proposalOpts.transientData.dkgTranscript = Buffer.from(JSON.stringify(dkgTranscript));
       } else {
@@ -367,10 +375,16 @@ router.post('/:id/seed-votes', requireDemoEndpoint, async (req, res) => {
             clientNonceHash: crypto.createHash('sha256').update(clientNonce).digest('hex'),
             encryptedCandidateVector: ballot.encryptedCandidateVector,
             vectorBallotValidityProof: ballot.vectorBallotValidityProof }) });
+        const castBody = { electionID: id, nullifierHash: nh, ballotID: prepared.ballotID,
+          encryptedCandidateVector: ballot.encryptedCandidateVector,
+          vectorBallotValidityProof: ballot.vectorBallotValidityProof };
+        if (election.panicPolicy === 'deniable-slot-v1') {
+          const { buildCountedSlot } = await loadCountedSlot();
+          castBody.countedSlot = await buildCountedSlot({ pubKey: pub, electionID: id, nullifierHash: nh,
+            visible: ballot.encryptedCandidateVector, previous: null, branch: 'normal' });
+        }
         await J('/api/vote/cast-vector', { method: 'POST', headers: { 'x-idemix-credential': cred },
-          body: JSON.stringify({ electionID: id, nullifierHash: nh, ballotID: prepared.ballotID,
-            encryptedCandidateVector: ballot.encryptedCandidateVector,
-            vectorBallotValidityProof: ballot.vectorBallotValidityProof }) });
+          body: JSON.stringify(castBody) });
       } else {
         const v = elgamalEncryptWithZKP(pub, idx, cands.length);
         await J('/api/vote', { method: 'POST', headers: { 'x-idemix-credential': cred }, body: JSON.stringify({ electionID: id, encryptedCandidateID: v.encrypted, nullifierHash: nh, ballotValidityProof: JSON.stringify(v.proof) }) });
@@ -905,6 +919,7 @@ router.get('/:id/election-bundle-source', requireValidElectionID, async (req, re
         candidates: election.candidates,
         signatureThreshold,
         organizations,
+        ...(election.panicPolicy === 'deniable-slot-v1' ? { panicPolicy: election.panicPolicy } : {}),
       },
       provenance: { gitCommit, imageDigest, softwareVersion },
       publicKey: board.elgamalPubKey,

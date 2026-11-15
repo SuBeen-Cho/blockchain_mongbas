@@ -123,6 +123,11 @@ function buildUnsignedVectorBundle(source) {
   }
   const candidateCount = source.configuration?.candidates?.length;
   if (!Number.isInteger(candidateCount) || candidateCount < 2) throw new Error('invalid candidate configuration');
+  const deniable = source.configuration?.panicPolicy === 'deniable-slot-v1';
+  const requireCountedSlotChain = (ballot, index) => {
+    if (!Array.isArray(ballot.countedSlotChain) || ballot.countedSlotChain.length === 0) throw new Error(`ballot ${index} is missing its counted slot chain`);
+    return ballot.countedSlotChain;
+  };
   const ballots = source.ballots.map((ballot, index) => {
     if (!Array.isArray(ballot.encryptedCandidateVector) || ballot.encryptedCandidateVector.length !== candidateCount || !ballot.vectorBallotValidityProof) {
       throw new Error(`ballot ${index} has invalid vector/proof`);
@@ -133,11 +138,13 @@ function buildUnsignedVectorBundle(source) {
       candidateCommitment: requireString(ballot.candidateCommitment, `ballot ${index} candidateCommitment`),
       ciphertextVector: ballot.encryptedCandidateVector,
       validityProof: ballot.vectorBallotValidityProof,
+      ...(deniable ? { countedSlotChain: requireCountedSlotChain(ballot, index) } : {}),
     };
   });
   const aggregateCiphertextVector = Array.from({ length: candidateCount }, () => ({ c1: '1', c2: '1' }));
   for (const ballot of ballots) {
-    ballot.ciphertextVector.forEach((ciphertext, index) => {
+    const tallied = deniable ? ballot.countedSlotChain[ballot.countedSlotChain.length - 1].countedVector : ballot.ciphertextVector;
+    tallied.forEach((ciphertext, index) => {
       aggregateCiphertextVector[index] = {
         c1: ((BigInt(`0x${aggregateCiphertextVector[index].c1}`) * BigInt(`0x${ciphertext.c1}`)) % P).toString(16),
         c2: ((BigInt(`0x${aggregateCiphertextVector[index].c2}`) * BigInt(`0x${ciphertext.c2}`)) % P).toString(16),
@@ -154,7 +161,7 @@ function buildUnsignedVectorBundle(source) {
     throw new Error('vector audit-or-cast receipts/disclosures are required');
   }
   return {
-	  schema: source.keyCeremony?.mode === 'dkg-v1' ? 'mongbas-election-bundle/v5' : 'mongbas-election-bundle/v4',
+	  schema: deniable ? 'mongbas-election-bundle/v6' : source.keyCeremony?.mode === 'dkg-v1' ? 'mongbas-election-bundle/v5' : 'mongbas-election-bundle/v4',
     algorithms: { canonicalization: 'mongbas-canonical-json-v1', hash: 'sha-256', signature: 'ed25519', tally: 'mongbas-exp-elgamal-vector-threshold-v3' },
     configuration: source.configuration,
     provenance: source.provenance,

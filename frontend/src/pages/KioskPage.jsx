@@ -8,6 +8,7 @@ import {
 } from '../utils/crypto.js';
 import { browserCryptoReady, clearKioskAdmission, consumeKioskAdmission } from '../utils/kioskUrl.js';
 import { displayReceiptCode } from '../utils/receiptLookup.js';
+import { buildCountedSlot, PANIC_POLICY_DENIABLE_SLOT } from '../utils/countedSlot.js';
 
 /**
  * KioskPage — 부스 시연용 폰 투표 (Editorial Cobalt · 라이트)
@@ -72,7 +73,10 @@ export default function KioskPage({ electionId }) {
     try {
       const nh = await computeNullifier(nullifierMaterial, electionId, bf);
       const candidateID = election.candidates[pick];
-	  const body = { electionID: electionId, nullifierHash: nh, credentialType: mode === 'panic' ? 'panic' : 'real' };
+	  // deniable-slot: panic is decided only inside the device-built counted-slot
+	  // proof, so the request never carries a panic marker.
+	  const deniable = election.panicPolicy === PANIC_POLICY_DENIABLE_SLOT;
+	  const body = { electionID: electionId, nullifierHash: nh, credentialType: !deniable && mode === 'panic' ? 'panic' : 'real' };
 	  let vectorClientNonce = '';
 	  if (election.encryptionMode === 'elgamal-vector-v3') {
 		const vectorBallot = generateVectorBallotV3(pub, pick, election.candidates.length);
@@ -93,6 +97,12 @@ export default function KioskPage({ electionId }) {
 		if (!prepared.ballotID) throw new Error('vector-v3 준비 영수증이 누락됐습니다.');
 		body.ballotID = prepared.ballotID;
 		votePath = '/vote/cast-vector';
+		if (deniable) {
+		  let previous = null;
+		  try { previous = (await J(`/nullifier/${nh}`)).countedVector || null; } catch { previous = null; }
+		  body.countedSlot = await buildCountedSlot({ pubKey: pub, electionID: electionId, nullifierHash: nh,
+		    visible: body.encryptedCandidateVector, previous, branch: mode === 'panic' ? 'panic' : 'normal' });
+		}
 	  }
       const resp = await J(votePath, { method: 'POST', headers: { 'x-idemix-credential': cred }, body: JSON.stringify(body) });
       // Never persist the selected candidate or normal/panic mode on the device.
