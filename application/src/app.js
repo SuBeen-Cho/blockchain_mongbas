@@ -32,6 +32,7 @@ const { fabricConcurrencyGate } = require('./lib/fabricConcurrencyGate');
 const { demoEndpointsEnabled } = require('./lib/demoFeatures');
 const { validateRuntimeSecurity, apiRequestShapeGuard } = require('./lib/runtimeSecurity');
 const { isInternalDemoCall } = require('./lib/internalDemoCall');
+const { localAdminHandler, isLocalAdminRequest } = require('./lib/localAdmin');
 
 const app  = express();
 app.disable('x-powered-by');
@@ -156,11 +157,13 @@ if (runtimeSecurity.benchEndpoints) {
 }
 
 // ── 헬스 체크 ───────────────────────────────────────────────────
-app.get('/health', (_req, res) => {
+app.get('/health', (req, res) => {
   const mem = process.memoryUsage();
   res.json({
     status:    'ok',
     timestamp: new Date().toISOString(),
+    localAdmin: isLocalAdminRequest(req),
+    publicVoterOrigin: runtimeSecurity.publicVoterOrigin || null,
     idemix:    idemixStatus(),
     benchmark: {
       authEndpointEnabled: runtimeSecurity.benchEndpoints,
@@ -253,5 +256,15 @@ app.listen(PORT, runtimeSecurity.listenHost, HTTP_LISTEN_BACKLOG, () => {
   → ./scripts/network.sh deploy
 `);
 });
+
+// ── 부스 관리자 전용 입구 (선택) ─────────────────────────────────
+// 127.0.0.1에만 열리므로 같은 맥의 관제판만 토큰 없이 관리 기능 사용.
+// 터널은 PORT로만 연결해야 한다.
+if (runtimeSecurity.adminLocalPort) {
+  require('node:http').createServer(localAdminHandler(app))
+    .listen(runtimeSecurity.adminLocalPort, '127.0.0.1', () => {
+      console.log(`[INFO] 관리자 전용 관제판: http://localhost:${runtimeSecurity.adminLocalPort}/?app=control (이 컴퓨터에서만 접속 가능)`);
+    });
+}
 
 module.exports = app;

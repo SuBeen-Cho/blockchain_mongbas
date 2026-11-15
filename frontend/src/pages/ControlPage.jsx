@@ -1,7 +1,14 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, lazy, Suspense } from 'react';
 import QRCode from 'qrcode';
 import { buildSecureKioskUrl, displayKioskUrl } from '../utils/kioskUrl.js';
-import { verifyMerkleReceipt } from '../utils/merkleVerification.js';
+import { fetchMongbasJSON, verifyMerkleNullifier } from '../utils/merkleVerification.js';
+import { findUniqueReceiptMatch, normalizeReceiptPrefix } from '../utils/receiptLookup.js';
+import { sha256 } from '../utils/crypto.js';
+import { verifyVectorBallotProofBrowser } from '../utils/ballotProof.js';
+import { verifyCountedSlot, zeroSlot, PANIC_POLICY_DENIABLE_SLOT } from '../utils/countedSlot.js';
+import { buildTallyStory, shortHex } from '../utils/tallyStory.js';
+// three.js는 개표 화면에서만 받음 (휴대폰 투표 화면 번들에서 제외)
+const TallyAnimation = lazy(() => import('../components/TallyAnimation.jsx'));
 
 /**
  * ControlPage — 발표자 관제판 (Editorial Cobalt 개편)
@@ -22,8 +29,8 @@ const T = {
   paper: '#ffffff', paper2: '#eef1ff', ink: '#0a0f24', sub: '#54607a', line: '#d7dcfb', panel: '#f5f7ff',
 };
 const tr = (s, n = 10) => (s ? `${s.slice(0, n)}…${s.slice(-4)}` : '—');
-function kioskURL(electionID, admissionToken = '') {
-  const configured = String(import.meta.env.VITE_PUBLIC_VOTER_ORIGIN || '').trim();
+function kioskURL(electionID, admissionToken = '', serverVoterOrigin = '') {
+  const configured = String(serverVoterOrigin || import.meta.env.VITE_PUBLIC_VOTER_ORIGIN || '').trim();
   return buildSecureKioskUrl(electionID, window.location.origin, configured, admissionToken);
 }
 
@@ -37,45 +44,6 @@ async function J(path, opts = {}) {
   const t = await r.text(); let j; try { j = JSON.parse(t); } catch { j = {}; }
   if (!r.ok) throw new Error(j.error || `${path} ${r.status}`);
   return j;
-}
-
-// 개표 집계 과정 실제값 계산 (공개 데이터: 게시판 암호문 + pubkey + 결과)
-function computeTallyMath(pubKey, ballots, results, candidates) {
-  try {
-    const p = BigInt('0x' + pubKey.p), g = BigInt('0x' + pubKey.g);
-    const mod = (a, b) => ((a % b) + b) % b;
-    const modPow = (b, e, m) => { b = mod(b, m); let r = 1n; while (e > 0n) { if (e & 1n) r = mod(r * b, m); e >>= 1n; b = mod(b * b, m); } return r; };
-	const vectorMode = ballots.some((ballot) => Array.isArray(ballot.encryptedCandidateVector));
-	if (vectorMode) {
-	  const aggregates = candidates.map(() => ({ c1: 1n, c2: 1n }));
-	  let n = 0;
-	  for (const ballot of ballots) {
-		if (ballot.encryptedCandidateVector?.length !== candidates.length) continue;
-		ballot.encryptedCandidateVector.forEach((ciphertext, index) => {
-		  aggregates[index].c1 = mod(aggregates[index].c1 * BigInt('0x' + ciphertext.c1), p);
-		  aggregates[index].c2 = mod(aggregates[index].c2 * BigInt('0x' + ciphertext.c2), p);
-		});
-		n++;
-	  }
-	  return { ballotCount: n, vector: aggregates.map((value) => ({ c1: value.c1.toString(16), c2: value.c2.toString(16) })), shares: [1, 2],
-		perCand: candidates.map((cn) => ({ cn, v: results[cn] || 0, w: 'vector component' })) };
-	}
-    let c1 = 1n, c2 = 1n, n = 0;
-    for (const b of ballots) {
-      const [c1h, c2h] = String(b.encryptedCandidateID || '').split(':');
-      if (!c1h || !c2h) continue;
-      c1 = mod(c1 * BigInt('0x' + c1h), p); c2 = mod(c2 * BigInt('0x' + c2h), p); n++;
-    }
-    const B = 10000n; let sum = 0n;
-    candidates.forEach((cn, i) => { sum += BigInt(results[cn] || 0) * (B ** BigInt(i)); });
-    const M = modPow(g, sum, p);
-    return {
-      ballotCount: n,
-      c1: c1.toString(16), c2: c2.toString(16),
-      shares: [1, 2], sum: sum.toString(), M: M.toString(16),
-      perCand: candidates.map((cn, i) => ({ cn, v: results[cn] || 0, w: (B ** BigInt(i)).toString() })),
-    };
-  } catch { return null; }
 }
 
 export default function ControlPage() {
@@ -99,13 +67,31 @@ export default function ControlPage() {
   const [vcode, setVcode] = useState('');
   const [inj, setInj] = useState([1, 1, 1]);        // 후보별 커스텀 주입 개수
   const [rootHash, setRootHash] = useState('');     // 공개된 Merkle root (검증 탭 상단 표시)
-  const [tallyMath, setTallyMath] = useState(null); // 개표 집계 과정 실제 계산값
+  const [story, setStory] = useState(null);         // 공개 게시판에서 다시 계산한 개표 과정 값
+  const loadStory = useCallback(async (electionID, tallyResults) => {
+    try {
+      const board = await J(`/elections/${encodeURIComponent(electionID)}/bulletin-board`);
+      setStory(buildTallyStory(board, CANDIDATES, tallyResults));
+    } catch { setStory(null); }
+  }, []);
   const [narrow, setNarrow] = useState(typeof window !== 'undefined' && window.innerWidth < 860);
   const pollRef = useRef(null); const evRef = useRef(0);
   const pendingVerifyRef = useRef('');
+  // 관리자 전용 입구(127.0.0.1)로 열린 관제판인지 서버에 확인 → 토큰 입력 생략
+  const [localAdmin, setLocalAdmin] = useState(false);
+  const [voterOrigin, setVoterOrigin] = useState('');
+  useEffect(() => {
+    fetch('/health').then((r) => r.json()).then((h) => {
+      setLocalAdmin(h.localAdmin === true);
+      setVoterOrigin(h.publicVoterOrigin || '');
+    }).catch(() => {});
+  }, []);
   let kioskUrl = ''; let kioskUrlError = '';
   if (eid && admission?.token) {
-    try { kioskUrl = kioskURL(eid, admission.token); } catch (error) { kioskUrlError = error.message; }
+    if (localAdmin && !voterOrigin) kioskUrlError = '휴대폰용 공개 주소가 아직 없음 · 터널 실행 뒤 PUBLIC_VOTER_ORIGIN 설정';
+    else {
+      try { kioskUrl = kioskURL(eid, admission.token, voterOrigin); } catch (error) { kioskUrlError = error.message; }
+    }
   }
   useEffect(() => { const f = () => setNarrow(window.innerWidth < 860); window.addEventListener('resize', f); return () => window.removeEventListener('resize', f); }, []);
   const addLog = useCallback((m) => setLog((l) => [`${new Date().toLocaleTimeString()} ${m}`, ...l].slice(0, 10)), []);
@@ -120,11 +106,12 @@ export default function ControlPage() {
           const closedTally = await J(`/elections/${encodeURIComponent(eid)}/tally`);
           setResults(closedTally.results); setDecrypted(!!closedTally.decrypted);
           try { const mk = await J(`/elections/${encodeURIComponent(eid)}/merkle`); setRootHash(mk.rootHash || ''); } catch { /* 아직 미구축 */ }
+          if (closedTally.decrypted) loadStory(eid, closedTally.results);
           setView('tally');
         }
       })
       .catch((error) => addLog('세션 복구 오류: ' + error.message));
-  }, [eid, status, addLog]);
+  }, [eid, status, addLog, loadStory]);
 
   useEffect(() => {
     let cancelled = false;
@@ -198,11 +185,11 @@ export default function ControlPage() {
     setEid(id); setStatus('CREATING'); setLive(0); setVotes([]); setCastEvents([]); setPaddingCount(0); setShuffled(false);
     const nextUrl = new URL(window.location.href); nextUrl.searchParams.set('e', id); window.history.replaceState(null, '', nextUrl);
     setAdmission(null); setResults(null); setDecrypted(false); setView('session');
-    setVres(null); setVfail(''); setRootHash(''); setTallyMath(null); evRef.current = 0;
+    setVres(null); setVfail(''); setRootHash(''); setStory(null); evRef.current = 0;
     addLog(`새 세션 생성 요청: ${id}`);
     try {
       const now = Math.floor(Date.now() / 1000);
-      await J('/elections', { method: 'POST', body: JSON.stringify({ electionID: id, title: '2026 모의 선거', candidates: CANDIDATES, encryptionMode: 'elgamal-vector-v3', endTime: now + 24 * 3600 }) });
+      await J('/elections', { method: 'POST', body: JSON.stringify({ electionID: id, title: '2026 모의 선거', candidates: CANDIDATES, encryptionMode: 'elgamal-vector-v3', endTime: now + 24 * 3600, panicPolicy: PANIC_POLICY_DENIABLE_SLOT }) });
       setStatus('CREATED'); setBusy('선거 활성화 중…'); addLog('선거 생성 커밋 확인');
       await J(`/elections/${id}/activate`, { method: 'POST' });
       setStatus('ACTIVE'); setBusy('세션 공용 QR 발급 중…'); addLog('선거 활성화 확인');
@@ -246,6 +233,7 @@ export default function ControlPage() {
         const closedTally = await J(`/elections/${encodeURIComponent(eid)}/tally`);
         setResults(closedTally.results); setDecrypted(!!closedTally.decrypted);
         try { const mk = await J(`/elections/${encodeURIComponent(eid)}/merkle`); setRootHash(mk.rootHash || ''); } catch { /* 아직 미구축 */ }
+        if (closedTally.decrypted) await loadStory(eid, closedTally.results);
       } catch (e) { addLog('집계 결과 조회 오류: ' + e.message); }
       setBusy(''); return;
     }
@@ -306,12 +294,8 @@ export default function ControlPage() {
         } catch (publishError) {
           addLog(`감사 게시판 공개 경고: ${publishError.message} · Merkle 검증은 계속 가능`);
         }
-        // 집계 과정 실제 계산값 (공개 데이터로 클라이언트 계산)
-        if (bulletinPublished) try {
-          const bb = await J(`/elections/${encodeURIComponent(eid)}/bulletin-board`);
-          const pk = await J(`/elections/${encodeURIComponent(eid)}/elgamal-pubkey`);
-          setTallyMath(computeTallyMath(pk.pubKey, bb.encryptedBallots || [], t.results, CANDIDATES));
-        } catch { /* noop */ }
+        // 개표 과정 연출·단계 값은 공개 게시판에서 다시 계산한 실제 값만 사용
+        if (bulletinPublished) await loadStory(eid, t.results);
         if (pendingVerifyRef.current) {
           setVfail('Merkle 봉인이 준비됐습니다. 검증 화면에서 [추적하기]를 눌러 직접 검증하세요.');
         }
@@ -320,24 +304,95 @@ export default function ControlPage() {
     setBusy('');
   }
 
-  // 실제 검증: 추적번호 → 게시판 매칭 → Merkle 봉인 재계산
+  // 실제 검증: 추적번호 → 게시판 → 표 규칙 증명 → 집계 칸 이력 → 봉인 재계산 → 공개 봉인 비교
   async function runVerify(rawCode, tampered = false) {
     if (!eid) return;
     if (status !== 'CLOSED') {
-      setVfail('아직 개표 전입니다. 먼저 [개표]에서 선거를 종료한 뒤 추적하세요.');
+      setVfail('아직 개표 전이라 게시판이 없음. [개표]로 선거를 종료한 뒤 추적 진행');
       return;
     }
-    setBusy('검증 중…'); setVres(null); setVfail('');
+    setBusy('검증 진행 중…'); setVres(null); setVfail('');
+    const steps = [];
+    const push = (step) => { steps.push(step); return step; };
+    const skipRest = (from) => { for (const title of from) push({ title, status: 'skip', lines: ['앞 단계에서 멈춰서 진행 안 함'] }); };
+    const REST = ['규칙대로 만든 표인지 확인', '집계 칸 기록 다시 따라가기', '봉인 다시 계산', '공개 봉인과 비교'];
+    let board = null, ballot = null, index = -1, full = '';
     try {
-      const verified = await verifyMerkleReceipt({ electionID: eid, receipt: rawCode });
-      const { full, index: idx, ballots, leafHash, chainRoot, computedRoot, sealMatch } = verified;
-	  setVres({ full, idx, total: ballots.length, ballots, leafHash, chainRoot, computedRoot, sealMatch });
-      addLog(`검증: ${tr(full, 8)} → ${sealMatch ? '봉인 일치 ✓' : '불일치 ✗'}`);
-    } catch (e) {
-      setVfail(tampered
-        ? '한 글자를 바꾼 추적번호는 원장의 Merkle leaf와 일치하지 않아 포함 증명이 거부됐습니다. (변조 탐지 성공)'
-        : e.message);
+      board = await fetchMongbasJSON(`/api/elections/${encodeURIComponent(eid)}/bulletin-board`);
+      const ballots = board.encryptedBallots || [];
+      const prefix = normalizeReceiptPrefix(rawCode);
+      if (/^[0-9a-f]{64}$/.test(prefix)) index = ballots.findIndex((b) => String(b.nullifierHash).toLowerCase() === prefix);
+      else index = findUniqueReceiptMatch(ballots, prefix).index;
+      ballot = ballots[index];
+      if (!ballot) throw new Error('not found');
+      full = ballot.nullifierHash;
+      push({ title: '게시판에서 내 표 찾기', status: 'ok', lines: [
+        `공개 게시판 표 ${ballots.length}개 중 ${index + 1}번째 줄에서 확인`,
+        `추적번호 ${String(rawCode).slice(0, 12)} → 기록 번호 ${shortHex(full, 12, 6)}`,
+      ] });
+    } catch {
+      push({ title: '게시판에서 내 표 찾기', status: 'fail', lines: tampered
+        ? ['한 글자 바뀐 번호라 게시판 어디에도 없음', '검증 여기서 중단 · 변조 탐지 확인']
+        : ['이 번호의 표를 게시판에서 찾지 못함', '번호를 다시 확인한 뒤 추적 진행'] });
+      skipRest(REST);
+      setVres({ steps, ok: false, tampered }); setBusy(''); return;
     }
+
+    const pub = board.elgamalPubKey;
+    const candidates = CANDIDATES;
+    const proof = await verifyVectorBallotProofBrowser(pub, ballot.encryptedCandidateVector, ballot.vectorBallotValidityProof);
+    push({ title: '규칙대로 만든 표인지 확인', status: proof.ok ? 'ok' : 'fail', lines: [
+      ...candidates.map((c, k) => `${c} 칸: 0 또는 1만 들어 있음 ${proof.bits[k] ? '확인' : '실패'}`),
+      `전체에서 선택이 정확히 1개 ${proof.sum ? '확인' : '실패'}`,
+      '어느 후보를 골랐는지는 끝까지 열지 않음',
+    ] });
+
+    const deniable = board.panicPolicy === PANIC_POLICY_DENIABLE_SLOT;
+    if (deniable) {
+      const chain = ballot.countedSlotChain || [];
+      let previous = zeroSlot(candidates.length), chainOk = chain.length > 0;
+      const lines = [];
+      for (const [i, step] of chain.entries()) {
+        const ok = await verifyCountedSlot({ pubKey: pub, electionID: eid, nullifierHash: full,
+          visible: step.encryptedCandidateVector, previous, next: step.countedVector, proof: step.countedSlotProof });
+        lines.push(`${i + 1}번째 투표 기록: 집계 칸이 규칙대로 바뀌었는지 ${ok ? '확인' : '실패'}`);
+        chainOk = chainOk && ok;
+        previous = step.countedVector;
+      }
+      const lastMatches = JSON.stringify(previous) === JSON.stringify(ballot.countedVector);
+      chainOk = chainOk && lastMatches;
+      lines.push(`마지막 집계 칸 = 개표에 들어간 칸 ${lastMatches ? '확인' : '실패'}`);
+      lines.push('각 기록이 새 표인지 패닉 표인지는 증명 안에 숨겨져 있음');
+      push({ title: '집계 칸 기록 다시 따라가기', status: chainOk ? 'ok' : 'fail', lines });
+    } else {
+      push({ title: '집계 칸 기록 다시 따라가기', status: 'skip', lines: ['이 선거는 마지막 표를 그대로 집계하는 방식이라 해당 없음'] });
+    }
+
+    try {
+      const merkle = await verifyMerkleNullifier({ electionID: eid, nullifierHash: full });
+      const lines = [`내 표 봉인값 ${shortHex(merkle.leafHash, 12, 6)}`];
+      let current = merkle.leafHash;
+      if (!merkle.proof.length) {
+        current = await sha256(current);
+        lines.push(`표가 1개뿐이라 봉인값을 한 번 더 감싸서 ${shortHex(current, 12, 6)}`);
+      }
+      for (const [i, node] of merkle.proof.entries()) {
+        current = node.position === 'left' ? await sha256(node.hash + current) : await sha256(current + node.hash);
+        lines.push(`${i + 1}단계: ${node.position === 'left' ? '왼쪽' : '오른쪽'} 이웃 ${shortHex(node.hash, 8, 4)}과 합쳐 ${shortHex(current, 12, 6)}`);
+      }
+      lines.push(`비밀키 없이 공개된 값만으로 ${merkle.proof.length}단계 계산 진행`);
+      push({ title: '봉인 다시 계산', status: 'ok', lines });
+      push({ title: '공개 봉인과 비교', status: merkle.sealMatch ? 'ok' : 'fail', lines: [
+        `내가 계산한 봉인   ${merkle.computedRoot}`,
+        `블록체인 공개 봉인 ${merkle.chainRoot}`,
+        merkle.sealMatch ? '두 값이 글자 하나까지 같음 · 내 표가 빠지거나 바뀌지 않았음 확인' : '두 값이 다름 · 변조 의심',
+      ] });
+      addLog(`검증: ${tr(full, 8)} → ${merkle.sealMatch ? '봉인 일치 ✓' : '불일치 ✗'}`);
+    } catch (e) {
+      push({ title: '봉인 다시 계산', status: 'fail', lines: [e.message] });
+      push({ title: '공개 봉인과 비교', status: 'skip', lines: ['앞 단계에서 멈춰서 진행 안 함'] });
+    }
+    setVres({ steps, ok: steps.every((st) => st.status !== 'fail'), tampered, index, total: (board.encryptedBallots || []).length, ballots: board.encryptedBallots || [] });
     setBusy('');
   }
   function tamper() {
@@ -364,7 +419,9 @@ export default function ControlPage() {
         <Nav label="검증" sub="Merkle 봉인" active={view === 'verify'} onClick={() => setView('verify')} />
         <div style={{ height: 1, background: T.line, margin: '14px 0' }} />
         <div style={{ fontSize: 11, fontWeight: 900, letterSpacing: '0.14em', color: T.sub, marginBottom: 6 }}>세션 제어</div>
-        <input
+        {localAdmin ? (
+          <div style={{ fontSize: 11.5, fontWeight: 800, color: T.blue, background: T.paper2, padding: '9px 10px', marginBottom: 6, lineHeight: 1.45 }}>관리자 전용 화면 · 이 컴퓨터에서만 열림</div>
+        ) : <input
           type="password"
           autoComplete="off"
           aria-label="관리자 API 토큰"
@@ -372,7 +429,7 @@ export default function ControlPage() {
           value={adminToken}
           onChange={(e) => { activeControlAdminToken = e.target.value; setAdminToken(e.target.value); }}
           style={{ width: '100%', boxSizing: 'border-box', border: `1px solid ${T.line}`, borderRadius: 8, padding: '9px 10px', fontSize: 12, marginBottom: 6 }}
-        />
+        />}
         <SBtn onClick={newSession} disabled={dis} solid>＋ 새 세션 시작</SBtn>
         <div style={{ fontSize: 11, fontWeight: 800, color: T.sub, margin: '10px 0 2px' }}>커스텀 투표 주입 (후보별)</div>
         {CANDIDATES.map((c, i) => {
@@ -430,7 +487,7 @@ export default function ControlPage() {
           </>
         )}
 
-        {eid && view === 'tally' && <TallyView results={results} decrypted={decrypted} total={totalRes} max={maxRes} busy={busy} votes={votes} shuffled={shuffled} live={live} math={tallyMath} rootHash={rootHash} />}
+        {eid && view === 'tally' && <TallyView results={results} decrypted={decrypted} total={totalRes} max={maxRes} busy={busy} votes={votes} shuffled={shuffled} live={live} story={story} rootHash={rootHash} />}
 
         {eid && view === 'verify' && (
           <VerifyView code={vcode} setCode={setVcode} run={() => runVerify(vcode)} tamper={tamper} res={vres} fail={vfail} busy={busy} status={status} rootHash={rootHash} />
@@ -583,42 +640,58 @@ function LogCard({ log }) {
     </section>
   );
 }
-function TallyView({ results, decrypted, total, max, busy, votes, shuffled, live, math, rootHash }) {
-  const panic = Math.max(0, (live || 0) - (total || 0));
-  const m = math || {};
-  const tc = (h) => (h ? `${h.slice(0, 16)}…${h.slice(-6)}` : '—');
-  const STEPS = [
-    { n: '①', t: '암호문 동형 합산', f: '∏ Eᵢ = ( ∏ g^rᵢ , g^Σmᵢ · y^Σrᵢ )', d: '암호문들을 곱하면 평문을 보지 않고 합계의 암호문 1개가 됩니다',
-      val: m.c1 ? [`c₁ = ${tc(m.c1)}`, `c₂ = ${tc(m.c2)}`] : null, vd: `게시판 암호문 ${m.ballotCount || 0}개를 모두 곱한 실제 합계 암호문입니다` },
-    { n: '②', t: '2-of-3 키 복원', f: 'x = Σ λⱼ · sⱼ  (라그랑주 보간)', d: '3개 기관 중 2개의 Shamir 조각으로 개인키 x 복원',
-      val: ['사용한 조각 = [1, 2]', 'x = ●●●●●● (비공개)'], vd: '개인키 x는 복원되지만 화면엔 안 띄웁니다 — 공개하면 보안 위반이라서요' },
-    { n: '③', t: '복호화', f: 'M = c₂ / c₁ˣ = g^Σmᵢ', d: '복원한 키로 합계의 암호문만 복호화',
-      val: m.M ? [`g^Σmᵢ = ${tc(m.M)}`] : null, vd: '합계 암호문을 복호화한 실제 값입니다 (= g의 Σmᵢ 제곱)' },
-    { n: '④', t: '이산로그 (BSGS)', f: 'g^Σmᵢ → Σmᵢ → 후보별 분해 (base B=10000)', d: 'Baby-step Giant-step으로 합계 지수 복원 후 후보별로 분리',
-      val: m.sum ? [`Σmᵢ = ${m.sum}`, (m.perCand || []).map((c) => `${c.cn} ${c.v}`).join(' · ')] : null, vd: '지수 합 Σmᵢ를 10000진법으로 풀면 후보별 실제 득표가 됩니다' },
-    { n: '⑤', t: 'Merkle 게시판 공개', f: 'root = H( … )', d: '모든 암호문을 봉인해 누구나 독립 검증 가능',
-      val: rootHash ? [tc(rootHash)] : null, vd: '게시판 전체 암호문을 봉인한 실제 루트 해시입니다' },
-  ];
+function TallyView({ results, decrypted, total, max, busy, votes, shuffled, live, story, rootHash }) {
+  const deniable = !!story?.deniable;
+  const panic = deniable ? 0 : Math.max(0, (live || 0) - (total || 0));
+  const orgName = (msp) => ({ ElectionCommissionMSP: '선거관리위원회', PartyObserverMSP: '참관 정당', CivilSocietyMSP: '시민단체' }[msp] || msp);
+  const STEPS = story ? [
+    { t: deniable ? '집계 칸 모으기' : '게시된 암호문 모으기',
+      f: deniable ? '유권자마다 증명이 붙은 집계 칸 1개' : '유권자마다 마지막 암호문 1개',
+      d: deniable ? '공개된 표가 아니라 집계 칸을 사용 · 패닉 투표는 집계 칸을 바꾸지 못함' : '재투표하면 마지막 표만 남음',
+      val: [`유권자 ${story.voters}명 · 누적 투표 기록 ${story.totalCasts}건`] },
+    { t: '후보별 암호문 합산', f: 'Cₖ = ∏ 집계칸ₖ   (암호문끼리 곱하기 = 속 내용 더하기)',
+      d: '표를 하나도 열지 않고 후보별 합계의 암호문만 만듦',
+      val: story.candidates.map((c, k) => `${c}  ${shortHex(story.aggregate[k]?.c1, 14, 6)}`),
+      note: story.aggregateMatches ? '게시판의 합산값과 직접 다시 계산한 값 일치 확인' : '게시판 합산값과 다름 · 확인 필요' },
+    { t: '2-of-3 부분 복호화', f: 'dⱼ = c₁^sⱼ   (기관 j의 열쇠 조각 sⱼ)',
+      d: '3개 기관 중 2곳이 각자 계산 · 열쇠 원본은 어디에도 모이지 않음',
+      val: story.partials.map((pd) => `${orgName(pd.mspID)}  ${shortHex(pd.values[0], 12, 4)}  · 증명 ${pd.proofs}개`) },
+    { t: '부분값 합쳐서 득표 수 찾기', f: 'g^득표 = c₂ / ∏ dⱼ^λⱼ  →  득표 수',
+      d: '합계만 나오고 개별 표의 선택은 끝까지 열리지 않음',
+      val: story.candidates.map((c, k) => `${c}  ${story.counts[k]}표`) },
+    { t: '게시판 봉인', f: 'root = H( 모든 표 … )', d: '누구나 내 표가 들어갔는지 따로 확인 가능',
+      val: rootHash ? [shortHex(rootHash, 18, 8)] : ['봉인 생성 전'] },
+  ] : [];
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
       <section style={{ ...box }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16, gap: 10, flexWrap: 'wrap' }}>
           <div style={{ fontSize: 17, fontWeight: 900, letterSpacing: '-0.03em' }}>최종 결과 <span style={{ color: T.sub, fontWeight: 800, fontSize: 13 }}>· {total}표</span></div>
-          <span style={{ fontSize: 12, fontWeight: 900, background: decrypted ? '#fff' : T.paper2, color: T.blue, border: `1.5px solid ${T.blue}`, padding: '6px 12px' }}>{busy ? busy : decrypted ? '복호화 완료 ✓' : '복호화 대기'}</span>
+          <span style={{ fontSize: 12, fontWeight: 900, background: decrypted ? '#fff' : T.paper2, color: T.blue, border: `1.5px solid ${T.blue}`, padding: '6px 12px' }}>{busy ? busy : decrypted ? '복호화 완료' : '복호화 대기'}</span>
         </div>
         {decrypted && (
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 16 }}>
-            <span style={{ fontSize: 12.5, fontWeight: 900, padding: '6px 11px', background: T.paper2, color: T.blue }}>현재 active ballot {Math.max(live || 0, total)}개</span>
-            <span style={{ fontSize: 12.5, fontWeight: 900, padding: '6px 11px', background: T.blue, color: '#fff' }}>정상 {total}표 집계</span>
-            {panic > 0 && <span style={{ fontSize: 12.5, fontWeight: 900, padding: '6px 11px', background: T.ink, color: '#fff' }}>🟦 패닉 {panic}표 집계 제외 (연구 데모)</span>}
+            {deniable ? (
+              <>
+                <span style={{ fontSize: 12.5, fontWeight: 900, padding: '6px 11px', background: T.paper2, color: T.blue }}>투표한 사람 {story.voters}명</span>
+                <span style={{ fontSize: 12.5, fontWeight: 900, padding: '6px 11px', background: T.blue, color: '#fff' }}>집계 반영 {total}표</span>
+                <span style={{ fontSize: 12.5, fontWeight: 900, padding: '6px 11px', background: T.ink, color: '#fff' }}>패닉 보호 켜짐</span>
+              </>
+            ) : (
+              <>
+                <span style={{ fontSize: 12.5, fontWeight: 900, padding: '6px 11px', background: T.paper2, color: T.blue }}>현재 active ballot {Math.max(live || 0, total)}개</span>
+                <span style={{ fontSize: 12.5, fontWeight: 900, padding: '6px 11px', background: T.blue, color: '#fff' }}>정상 {total}표 집계</span>
+                {panic > 0 && <span style={{ fontSize: 12.5, fontWeight: 900, padding: '6px 11px', background: T.ink, color: '#fff' }}>패닉 {panic}표 집계 제외</span>}
+              </>
+            )}
           </div>
         )}
-        {panic > 0 && decrypted && (
-          <div style={{ fontSize: 12.5, fontWeight: 700, color: T.sub, marginBottom: 14, lineHeight: 1.5 }}>
-            제한된 API 응답 크기·타이밍 실험은 관측된 차이를 줄였지만, PDC 운영자·네트워크·재투표 패턴을 포함한 전체 강압저항성은 미검증입니다.
+        {deniable && decrypted && (
+          <div style={{ fontSize: 12.5, fontWeight: 700, color: T.sub, marginBottom: 14, lineHeight: 1.55 }}>
+            패닉 투표는 일반 재투표와 똑같은 모양으로 기록돼서 화면·서버·운영자 누구도 따로 구분 못 함. 먼저 낸 진짜 표는 패닉 뒤에도 그대로 집계.
           </div>
         )}
-        {results ? CANDIDATES.map((c, i) => {
+        {results ? CANDIDATES.map((c) => {
           const v = results[c] ?? 0; const lead = v === max && max > 0;
           return (
             <div key={c} style={{ marginBottom: 13 }}>
@@ -633,92 +706,116 @@ function TallyView({ results, decrypted, total, max, busy, votes, shuffled, live
         }) : <div style={{ color: T.sub, fontWeight: 700, padding: 14 }}>{busy || '집계 진행 중…'}</div>}
       </section>
 
-      <section style={{ ...box }}>
-        <div style={{ ...over, marginBottom: 4 }}>집계 과정 · 동형암호로 비밀키 없이 합산 <span style={{ color: T.blue }}>— 오른쪽은 실제 계산값</span></div>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
-          {STEPS.map((s, i) => (
-            <div key={i} style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 280px), 1fr))', gap: 16, padding: '16px 0', borderTop: i ? `1px solid ${T.line}` : 'none' }}>
-              {/* 왼쪽: 수식/설명 */}
-              <div style={{ display: 'flex', gap: 12, minWidth: 0 }}>
-                <div style={{ width: 34, height: 34, flex: 'none', background: T.blue, color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 900, fontSize: 17 }}>{s.n}</div>
-                <div style={{ minWidth: 0 }}>
-                  <div style={{ fontSize: 15, fontWeight: 900, letterSpacing: '-0.03em' }}>{s.t}</div>
-                  <div style={{ marginTop: 5, display: 'inline-block', fontFamily: 'monospace', fontSize: 12.5, fontWeight: 700, background: T.ink, color: '#fff', padding: '5px 10px', maxWidth: '100%', wordBreak: 'break-all' }}>{s.f}</div>
-                  <div style={{ marginTop: 6, fontSize: 12, color: T.sub, fontWeight: 600, lineHeight: 1.5 }}>{s.d}</div>
+      {decrypted && story && (
+        <Suspense fallback={<section style={{ ...box, background: T.ink, color: '#c3cdf5', fontWeight: 800, textAlign: 'center', padding: 40 }}>개표 화면 불러오는 중…</section>}>
+          <TallyAnimation story={story} />
+        </Suspense>
+      )}
+
+      {story && (
+        <section style={{ ...box }}>
+          <div style={{ ...over, marginBottom: 4 }}>집계 과정 · 표를 열지 않고 합산 <span style={{ color: T.blue }}>— 오른쪽은 게시판에서 다시 계산한 실제 값</span></div>
+          <div style={{ display: 'flex', flexDirection: 'column' }}>
+            {STEPS.map((st, i) => (
+              <div key={st.t} style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 280px), 1fr))', gap: 16, padding: '16px 0', borderTop: i ? `1px solid ${T.line}` : 'none' }}>
+                <div style={{ display: 'flex', gap: 12, minWidth: 0 }}>
+                  <div style={{ width: 34, height: 34, flex: 'none', background: T.blue, color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 900, fontSize: 15 }}>{i + 1}</div>
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ fontSize: 15, fontWeight: 900, letterSpacing: '-0.03em' }}>{st.t}</div>
+                    <div style={{ marginTop: 5, display: 'inline-block', fontFamily: 'monospace', fontSize: 12.5, fontWeight: 700, background: T.ink, color: '#fff', padding: '5px 10px', maxWidth: '100%', wordBreak: 'break-all' }}>{st.f}</div>
+                    <div style={{ marginTop: 6, fontSize: 12.5, color: T.sub, fontWeight: 600, lineHeight: 1.5 }}>{st.d}</div>
+                  </div>
+                </div>
+                <div style={{ borderLeft: `2px solid ${T.blue}`, paddingLeft: 14, minWidth: 0 }}>
+                  <div style={{ fontSize: 10.5, fontWeight: 900, letterSpacing: '.12em', color: T.blue }}>실제 값</div>
+                  {st.val.map((v, j) => (
+                    <div key={j} style={{ marginTop: 4, fontFamily: 'monospace', fontSize: 12.5, fontWeight: 800, color: T.ink, wordBreak: 'break-all', lineHeight: 1.4 }}>{v}</div>
+                  ))}
+                  {st.note && <div style={{ marginTop: 7, fontSize: 12, color: T.blue, fontWeight: 800 }}>{st.note}</div>}
                 </div>
               </div>
-              {/* 오른쪽: 실제 값 + 간단 설명 */}
-              <div style={{ borderLeft: `2px solid ${T.blue}`, paddingLeft: 14, minWidth: 0 }}>
-                <div style={{ fontSize: 10.5, fontWeight: 900, letterSpacing: '.12em', color: T.blue }}>실제 값</div>
-                {s.val ? s.val.map((v, j) => (
-                  <div key={j} style={{ marginTop: 4, fontFamily: 'monospace', fontSize: 12.5, fontWeight: 800, color: T.ink, wordBreak: 'break-all', lineHeight: 1.4 }}>{v}</div>
-                )) : <div style={{ marginTop: 4, fontSize: 12, color: T.sub, fontWeight: 600 }}>{busy ? '계산 중…' : '—'}</div>}
-                <div style={{ marginTop: 7, fontSize: 11.5, color: T.sub, fontWeight: 600, lineHeight: 1.55 }}>{s.vd}</div>
-              </div>
-            </div>
-          ))}
-        </div>
-      </section>
+            ))}
+          </div>
+        </section>
+      )}
       <VoteTable votes={votes} shuffled={shuffled} status="CLOSED" />
     </div>
   );
 }
+
 function VerifyView({ code, setCode, run, tamper, res, fail, busy, status, rootHash }) {
+  const [shown, setShown] = useState(0);
+  useEffect(() => {
+    if (!res?.steps) { setShown(0); return undefined; }
+    setShown(0);
+    const reduce = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+    if (reduce) { setShown(res.steps.length); return undefined; }
+    let i = 0;
+    const timer = setInterval(() => { i += 1; setShown(i); if (i >= res.steps.length) clearInterval(timer); }, 650);
+    return () => clearInterval(timer);
+  }, [res]);
+  const allShown = res?.steps && shown >= res.steps.length;
+  const mark = { ok: ['확인', T.blue, '#fff'], fail: ['실패', '#b42318', '#fff'], skip: ['건너뜀', T.paper2, T.sub], run: ['진행 중', T.paper2, T.blue] };
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 18, maxWidth: 920 }}>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 18, maxWidth: 980 }}>
       {rootHash && (
         <section style={{ background: T.blue, color: '#fff', padding: '18px 20px' }}>
-          <div style={{ fontSize: 11, fontWeight: 900, letterSpacing: '.14em', opacity: 0.85 }}>공개된 봉인 해시 · MERKLE ROOT</div>
+          <div style={{ fontSize: 11, fontWeight: 900, letterSpacing: '.14em', opacity: 0.85 }}>블록체인에 공개된 봉인값</div>
           <div style={{ marginTop: 7, fontFamily: 'monospace', fontSize: 'clamp(13px,1.4vw,15px)', fontWeight: 800, wordBreak: 'break-all', lineHeight: 1.4 }}>{rootHash}</div>
-          <div style={{ marginTop: 8, fontSize: 12.5, fontWeight: 700, opacity: 0.92 }}>추적하면 “내가 다시 계산한 봉인 = 이 공개 봉인” 이 일치합니다 — 비밀키 없이 누구나 검증.</div>
+          <div style={{ marginTop: 8, fontSize: 12.5, fontWeight: 700, opacity: 0.92 }}>내 번호로 이 값을 직접 다시 만들어서 같으면, 내 표가 빠지거나 바뀌지 않았다는 뜻</div>
         </section>
       )}
       <section style={{ ...box }}>
-        <div style={over}>추적번호로 내 표 검증 (실제 Merkle 봉인)</div>
+        <div style={over}>추적번호로 내 표 확인</div>
         <div style={{ display: 'flex', gap: 10, marginTop: 12, flexWrap: 'wrap' }}>
-          <input value={code} onChange={(e) => setCode(e.target.value)} placeholder="예: 7F3A-90 또는 무효화 해시"
+          <input value={code} onChange={(e) => setCode(e.target.value)} placeholder="예: 7F3A-90"
             style={{ flex: '1 1 240px', height: 46, padding: '0 14px', fontSize: 15, fontWeight: 800, fontFamily: 'monospace', border: `1.5px solid ${T.line}`, color: T.ink, outline: 'none' }} />
-          <SBtn onClick={run} disabled={busy} solid>추적하기</SBtn>
-          <SBtn onClick={tamper} disabled={busy || !code}>번호 한 글자 바꿔보기</SBtn>
+          <SBtn onClick={run} disabled={!!busy} solid>추적하기</SBtn>
+          <SBtn onClick={tamper} disabled={!!busy || !code}>번호 한 글자 바꿔보기</SBtn>
         </div>
-        {status !== 'CLOSED' && <div style={{ marginTop: 10, fontSize: 12.5, color: T.sub, fontWeight: 700 }}>※ 게시판은 개표(종료) 후 공개됩니다. 먼저 [개표]를 진행하세요.</div>}
-        {fail && <div style={{ marginTop: 14, padding: 14, background: '#fff', border: `1.5px solid ${T.ink}`, color: T.ink, fontWeight: 800, fontSize: 13.5 }}>✗ {fail}</div>}
+        {status !== 'CLOSED' && <div style={{ marginTop: 10, fontSize: 12.5, color: T.sub, fontWeight: 700 }}>게시판은 개표 뒤에 공개됨 · 먼저 [개표] 진행</div>}
+        {fail && <div style={{ marginTop: 14, padding: 14, background: '#fff', border: `1.5px solid ${T.ink}`, color: T.ink, fontWeight: 800, fontSize: 13.5 }}>{fail}</div>}
       </section>
 
-      {res && (
-        <>
-          {res.ballots.length > 0 && <section style={{ ...box, padding: 0, overflow: 'hidden' }}>
-            <div style={{ ...over, padding: '14px 18px', borderBottom: `1.5px solid ${T.line}` }}>공개 게시판 — 내 줄 하이라이트 ({res.idx + 1}/{res.total})</div>
-            <div style={{ maxHeight: 240, overflowY: 'auto', fontFamily: 'monospace', fontSize: 12.5 }}>
-              {res.ballots.map((b, i) => (
-                <div key={i} style={{ display: 'flex', gap: 10, padding: '8px 18px', background: i === res.idx ? T.blue : '#fff', color: i === res.idx ? '#fff' : T.sub, fontWeight: i === res.idx ? 900 : 600, borderBottom: `1px solid ${T.line}` }}>
-                  <span>{i === res.idx ? '➡' : '　'}</span><span>#{String(i + 1).padStart(2, '0')}</span><span>{(b.nullifierHash || '').slice(0, 28)}…</span>
+      {res?.steps && (
+        <section style={{ ...box, padding: 0, overflow: 'hidden' }}>
+          <div style={{ ...over, padding: '14px 18px', borderBottom: `1.5px solid ${T.line}` }}>검증 단계 · 서버를 믿지 않고 이 화면에서 직접 계산</div>
+          {res.steps.map((st, i) => {
+            const visible = i < shown;
+            const state = visible ? st.status : i === shown ? 'run' : null;
+            if (!state) return null;
+            const [label, bg, fg] = mark[state];
+            return (
+              <div key={st.title} style={{ display: 'grid', gridTemplateColumns: '44px 1fr auto', gap: 12, alignItems: 'start', padding: '14px 18px', borderTop: i ? `1px solid ${T.line}` : 'none', animation: 'cvrow .45s ease', background: state === 'fail' ? '#fff5f4' : '#fff' }}>
+                <div style={{ width: 34, height: 34, display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 900, background: state === 'fail' ? '#b42318' : state === 'skip' ? T.paper2 : T.blue, color: state === 'skip' ? T.sub : '#fff' }}>{i + 1}</div>
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ fontSize: 15.5, fontWeight: 900, letterSpacing: '-0.03em', color: state === 'skip' ? T.sub : T.ink }}>{st.title}</div>
+                  {visible && st.lines.map((line, j) => (
+                    <div key={j} style={{ marginTop: 5, fontSize: 12.5, fontWeight: 700, color: T.sub, lineHeight: 1.5, wordBreak: 'break-all', fontFamily: /[0-9a-f]{16}/.test(line) ? 'monospace' : 'inherit' }}>{line}</div>
+                  ))}
+                  {!visible && <div style={{ marginTop: 5, fontSize: 12.5, fontWeight: 700, color: T.blue }}>계산 진행 중…</div>}
                 </div>
-              ))}
-            </div>
-          </section>}
-          {res.ballots.length === 0 && <section style={{ ...box, color: T.sub, fontSize: 12.5, fontWeight: 700 }}>
-            공개 게시판 projection은 아직 게시되지 않았지만, 원장에 저장된 leaf·경로·Root를 이용한 포함 증명은 아래에서 독립 검증했습니다.
-          </section>}
-          <section style={{ ...box, background: res.sealMatch ? T.blue : T.ink, color: '#fff', border: 'none' }}>
-            <div style={{ fontSize: 18, fontWeight: 900, letterSpacing: '-0.03em' }}>{res.sealMatch ? '✓ 포함 증명 일치 — 공개 게시판 Root 재계산 성공' : '✗ 포함 증명 불일치'}</div>
-            <div style={{ marginTop: 12, display: 'grid', gridTemplateColumns: '1fr', gap: 6, fontFamily: 'monospace', fontSize: 12 }}>
-              <Kv k="내가 다시 계산한 봉인(root)" v={res.computedRoot} />
-              <Kv k="블록체인에 저장된 봉인(root)" v={res.chainRoot} />
-              <Kv k="내 표 leaf 해시" v={res.leafHash} />
-            </div>
-            <div style={{ marginTop: 12, fontSize: 13, fontWeight: 700, opacity: 0.92 }}>
-              {res.sealMatch ? '내 표를 넣어 봉인을 다시 계산해도 블록체인의 봉인과 똑같습니다 — 비밀키 없이 누구나 검증.' : '봉인이 달라 변조가 즉시 드러납니다.'}
-            </div>
-          </section>
-        </>
+                <span style={{ fontSize: 12, fontWeight: 900, padding: '5px 10px', background: bg, color: fg, whiteSpace: 'nowrap' }}>{label}</span>
+              </div>
+            );
+          })}
+        </section>
+      )}
+
+      {allShown && (
+        <section style={{ ...box, background: res.ok ? T.blue : (res.tampered ? T.ink : '#b42318'), color: '#fff', border: 'none' }}>
+          <div style={{ fontSize: 19, fontWeight: 900, letterSpacing: '-0.03em' }}>
+            {res.ok ? '내 표가 그대로 집계에 들어간 것 확인' : res.tampered ? '바뀐 번호는 통과 못 함 · 변조 탐지 확인' : '검증 실패 · 기록 확인 필요'}
+          </div>
+          <div style={{ marginTop: 8, fontSize: 13, fontWeight: 700, opacity: 0.92, lineHeight: 1.55 }}>
+            {res.ok ? '내가 누구를 찍었는지는 열지 않고, 표가 빠지거나 바뀌지 않았다는 사실만 확인. 같은 계산은 누구나 할 수 있음.' : res.tampered ? '추적번호가 한 글자만 달라도 게시판과 봉인이 맞지 않아 바로 드러남.' : '위에서 실패한 단계를 확인.'}
+          </div>
+        </section>
       )}
     </div>
   );
 }
-function Kv({ k, v }) {
-  return <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}><span style={{ opacity: 0.7, minWidth: 200 }}>{k}</span><span style={{ wordBreak: 'break-all', fontWeight: 800 }}>{v}</span></div>;
-}
+
 function Empty() {
   return (
     <div style={{ ...box, padding: 48, textAlign: 'center' }}>

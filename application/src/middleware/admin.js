@@ -2,6 +2,7 @@
 
 const crypto = require('crypto');
 const { logAdminAuthorization } = require('../lib/audit-log');
+const { isLocalAdminRequest } = require('../lib/localAdmin');
 
 const ADMIN_API_TOKEN = process.env.ADMIN_API_TOKEN || '';
 const ALLOW_INSECURE_ADMIN_API = process.env.ALLOW_INSECURE_ADMIN_API === 'true';
@@ -20,6 +21,10 @@ function bearerToken(req) {
 }
 
 function requireAdmin(req, res, next) {
+  if (isLocalAdminRequest(req)) {
+    logAdminAuthorization({ success: true, method: req.method, route: req.path, reason: 'local-admin-listener', sourceAddress: req.ip });
+    return next();
+  }
   if (!ADMIN_API_TOKEN) {
     if (!IS_PRODUCTION && ALLOW_INSECURE_ADMIN_API) return next();
     logAdminAuthorization({ success: false, method: req.method, route: req.path, reason: 'admin-not-configured', sourceAddress: req.ip });
@@ -41,8 +46,9 @@ const ADMIN_GET_PATH = /^\/[^/]+\/shares\/[^/]+$/;
 const DASHBOARD_READ_PATH = /^\/api\/elections\/[^/]+\/(?:live-count|live-votes|demo-events)$/;
 
 function skipAuthenticatedDashboardRead(req) {
-  return req.method === 'GET' && DASHBOARD_READ_PATH.test(req.path) && ADMIN_API_TOKEN.length >= 32 &&
-    constantTimeTokenEqual(bearerToken(req), ADMIN_API_TOKEN);
+  if (req.method !== 'GET' || !DASHBOARD_READ_PATH.test(req.path)) return false;
+  if (isLocalAdminRequest(req)) return true;
+  return ADMIN_API_TOKEN.length >= 32 && constantTimeTokenEqual(bearerToken(req), ADMIN_API_TOKEN);
 }
 
 function guardElectionAdminRoutes(req, res, next) {

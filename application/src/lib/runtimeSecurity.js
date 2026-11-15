@@ -1,6 +1,7 @@
 'use strict';
 
 const path = require('node:path');
+const { parseAdminLocalPort, parsePublicVoterOrigin, localAdminOrigins } = require('./localAdmin');
 
 function parseListenHost(value = '127.0.0.1') {
   const host = String(value || '127.0.0.1').trim();
@@ -71,8 +72,14 @@ function validateRuntimeSecurity(env = process.env) {
 
   const trustProxyHops = parseTrustProxyHops(env.TRUST_PROXY_HOPS || '0');
   const listenHost = parseListenHost(env.LISTEN_HOST);
+  const adminLocalPort = parseAdminLocalPort(env);
+  const publicVoterOrigin = parsePublicVoterOrigin(env);
   const allowedOrigins = String(env.CORS_ORIGIN || 'http://localhost:5173,http://localhost:3000')
     .split(',').map(value => value.trim()).filter(Boolean);
+  if (publicVoterOrigin && !allowedOrigins.includes(publicVoterOrigin)) {
+    throw new Error('PUBLIC_VOTER_ORIGIN must also be listed in CORS_ORIGIN');
+  }
+  for (const origin of localAdminOrigins(adminLocalPort)) if (!allowedOrigins.includes(origin)) allowedOrigins.push(origin);
   if (allowedOrigins.length === 0 || allowedOrigins.includes('*')) throw new Error('CORS_ORIGIN must contain explicit origins and cannot contain *');
   for (const origin of allowedOrigins) {
     let parsed;
@@ -90,6 +97,8 @@ function validateRuntimeSecurity(env = process.env) {
     hsts: production || env.ENABLE_HSTS === 'true',
     demoAdmissionRequired: !production && env.REQUIRE_DEMO_ADMISSION === 'true',
     rateLimits: parseRateLimits(env),
+    adminLocalPort,
+    publicVoterOrigin,
   };
 }
 

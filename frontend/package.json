@@ -13,7 +13,8 @@
     "framer-motion": "^12.40.0",
     "qrcode": "^1.5.4",
     "react": "^18.2.0",
-    "react-dom": "^18.2.0"
+    "react-dom": "^18.2.0",
+    "three": "^0.181.2"
   },
   "devDependencies": {
     "@vitejs/plugin-react": "^6.1.1",
