@@ -26,6 +26,8 @@ demo_owned_pid() {
     cwd="$(readlink "/proc/${pid}/cwd" 2>/dev/null || true)"
   elif command -v lsof >/dev/null 2>&1; then
     cwd="$(lsof -a -p "${pid}" -d cwd -Fn 2>/dev/null | sed -n 's/^n//p' | head -n 1)"
+    # macOS lsof prints non-ASCII path bytes as \xHH (e.g. Korean folder names)
+    cwd="$(printf '%b' "${cwd}")"
   else
     return 1
   fi

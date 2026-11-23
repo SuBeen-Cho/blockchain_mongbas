@@ -178,7 +178,7 @@ export default function KioskPage({ electionId }) {
       <button onClick={() => { setMode('panic'); setPhase('ready'); }}
         style={{ width: '100%', textAlign: 'left', padding: '20px 18px', border: `2px solid ${C.blue}`, background: '#fff', color: C.ink, fontFamily: 'inherit', cursor: 'pointer', boxSizing: 'border-box' }}>
         <div style={{ fontSize: 20, fontWeight: 900, letterSpacing: '-0.03em', color: C.blue }}>패닉(강압) 투표</div>
-        <div style={{ fontSize: 13, fontWeight: 600, color: C.sub, marginTop: 4 }}>강압 상황을 가정한 연구용 필터링 데모입니다</div>
+        <div style={{ fontSize: 13, fontWeight: 600, color: C.sub, marginTop: 4 }}>먼저 낸 진짜 표는 그대로 집계 · 화면엔 일반 재투표처럼 보임</div>
       </button>
       <p style={{ textAlign: 'center', color: C.sub, fontSize: 11.5, marginTop: 16, fontWeight: 600, lineHeight: 1.5 }}>현재 화면 동작만으로 강압 저항이 검증된 것은 아닙니다.<br />네트워크·시간·기관 공모 공격 평가가 추가로 필요합니다.</p>
     </Shell>

@@ -408,9 +408,11 @@ router.post('/cast-vector', async (req, res) => {
     releaseFabricSlot = await fabricConcurrencyGate.acquire();
     const connection = await connectGateway();
     gateway = connection.gateway;
+    const commit = {};
     await submitTransactionAndWait(connection.contract, 'CastPreparedVectorBallotWithHistory',
       [electionID, ballotID, nullifierHash], {
         transientData,
+        commitObservation: commit,
         // A successful prepare commit can briefly be invisible to another
         // endorsement peer. Retry only that pre-submit ABORTED condition; a
         // commit failure or any cryptographic/credential rejection is final.
@@ -426,7 +428,11 @@ router.post('/cast-vector', async (req, res) => {
       if (evictCount === 0) {
         try { liveCount.increment(electionID); } catch (_) { /* display-only */ }
       }
-      try { demoLive.recordVote(electionID, { nullifierHash, ciphertext: '[vector-v3]', zkpValid: true }); } catch (_) { /* display-only */ }
+      try {
+        demoLive.recordVote(electionID, { nullifierHash, ciphertext: '[vector-v3]', zkpValid: true,
+          ledger: { blockNumber: commit.blockNumber, transactionId: commit.transactionId,
+            ciphertext: String(encryptedCandidateVector[0]?.c1 || '') } });
+      } catch (_) { /* display-only */ }
     }
     res.json({ message: evictCount > 0 ? '재투표가 완료되었습니다.' : '투표가 완료되었습니다.',
       electionID, ballotID, ...((normalLookupToken && panicLookupToken) ? {} : { nullifierHash }),

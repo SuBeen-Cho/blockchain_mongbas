@@ -4,6 +4,8 @@ import App from './App.jsx';
 import KioskPage from './pages/KioskPage.jsx';
 import ControlPage from './pages/ControlPage.jsx';
 import TrackPage from './pages/TrackPage.jsx';
+// Pretendard는 앱에 포함 (CSP font-src 'self' · 부스 인터넷이 느려도 바로 표시)
+import 'pretendard/dist/web/variable/pretendardvariable-dynamic-subset.css';
 import './index.css';
 
 // [부스 시연] URL 쿼리 기반 라우팅 (react-router 미사용 — 경량)

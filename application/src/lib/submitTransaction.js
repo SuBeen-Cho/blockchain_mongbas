@@ -39,6 +39,11 @@ async function submitTransactionAndWait(contract, transactionName, argumentsList
     error.commitStatus = status.code;
     throw error;
   }
+  // Optional: expose where the commit landed (display feeds, evidence).
+  if (options.commitObservation && typeof options.commitObservation === 'object') {
+    options.commitObservation.transactionId = status.transactionId || submitted.getTransactionId?.() || '';
+    options.commitObservation.blockNumber = status.blockNumber !== undefined ? String(status.blockNumber) : '';
+  }
   return result;
 }
 

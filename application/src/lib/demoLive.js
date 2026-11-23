@@ -21,7 +21,7 @@ let evSeq = 0;
 
 const now = () => Date.now();
 
-function recordVote(electionID, { nullifierHash, ciphertext, zkpValid }) {
+function recordVote(electionID, { nullifierHash, ciphertext, zkpValid, ledger }) {
   let arr = votesMap.get(electionID);
   if (!arr) { arr = []; votesMap.set(electionID, arr); }
   const [c1, c2] = String(ciphertext || '').split(':');
@@ -37,7 +37,11 @@ function recordVote(electionID, { nullifierHash, ciphertext, zkpValid }) {
   if (!castEvents) { castEvents = []; castEventsMap.set(electionID, castEvents); }
   // 공개 피드에서는 동일 투표자의 재투표 여부를 연결할 수 없도록 nullifier,
   // ciphertext, supersession/revote 정보를 의도적으로 포함하지 않는다.
-  castEvents.push({ seq: castEvents.length + 1, ts: now() });
+  // ledger: 커밋된 위치(블록·트랜잭션)와 암호문 앞부분만. 누가 냈는지 이을 값은 넣지 않는다.
+  const short = (value, n) => (/^[0-9a-f]+$/i.test(String(value || '')) ? String(value).toLowerCase().slice(0, n) : '');
+  castEvents.push({ seq: castEvents.length + 1, ts: now(),
+    ...(ledger ? { block: /^[0-9]+$/.test(String(ledger.blockNumber || '')) ? String(ledger.blockNumber) : '',
+      tx: short(ledger.transactionId, 64), cipher: short(ledger.ciphertext, 512) } : {}) });
   pushEvent(electionID, 'vote', { nullifierHash });
 }
 

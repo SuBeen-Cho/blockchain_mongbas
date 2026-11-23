@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback, lazy, Suspense } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import QRCode from 'qrcode';
 import { buildSecureKioskUrl, displayKioskUrl } from '../utils/kioskUrl.js';
 import { fetchMongbasJSON, verifyMerkleNullifier } from '../utils/merkleVerification.js';
@@ -7,8 +7,7 @@ import { sha256 } from '../utils/crypto.js';
 import { verifyVectorBallotProofBrowser } from '../utils/ballotProof.js';
 import { verifyCountedSlot, zeroSlot, PANIC_POLICY_DENIABLE_SLOT } from '../utils/countedSlot.js';
 import { buildTallyStory, shortHex } from '../utils/tallyStory.js';
-// three.js는 개표 화면에서만 받음 (휴대폰 투표 화면 번들에서 제외)
-const TallyAnimation = lazy(() => import('../components/TallyAnimation.jsx'));
+import LedgerFeed from '../components/LedgerFeed.jsx';
 
 /**
  * ControlPage — 발표자 관제판 (Editorial Cobalt 개편)
@@ -123,12 +122,26 @@ export default function ControlPage() {
     return () => { cancelled = true; };
   }, [kioskUrl]);
 
+  // 세션 QR은 15분짜리. 만료 30초 전에 같은 세션의 새 QR로 조용히 교체한다.
+  // (발표자가 따로 누를 버튼 없음 · 세션이 끝나면 갱신도 멈춤)
   useEffect(() => {
     if (!admission?.expiresAt) return undefined;
-    const delay = Math.max(0, admission.expiresAt - Date.now());
-    const timer = setTimeout(() => setAdmission(null), delay);
-    return () => clearTimeout(timer);
-  }, [admission]);
+    const timers = [];
+    const renew = async () => {
+      if (!eid || status !== 'ACTIVE') return;
+      try {
+        const issued = await J('/credential/demo-admission', { method: 'POST', body: JSON.stringify({ electionID: eid, ttlSeconds: 900 }) });
+        setAdmission(issued);
+        addLog('QR 자동 갱신');
+      } catch (e) {
+        addLog('QR 자동 갱신 실패 · 10초 뒤 다시 시도: ' + e.message);
+        if (admission.expiresAt - Date.now() > 10000) timers.push(setTimeout(renew, 10000));
+      }
+    };
+    timers.push(setTimeout(renew, Math.max(0, admission.expiresAt - Date.now() - 30000)));
+    timers.push(setTimeout(() => setAdmission(null), Math.max(0, admission.expiresAt - Date.now())));
+    return () => timers.forEach(clearTimeout);
+  }, [admission, eid, status, addLog]);
 
   // ── 폴링: 라이브 카운트/표 + 모바일 이벤트 ──
   useEffect(() => {
@@ -197,17 +210,6 @@ export default function ControlPage() {
       setAdmission(issuedAdmission);
       addLog(`새 세션 시작: ${id}`);
     } catch (e) { addLog('오류: ' + e.message); setBusy(''); return; }
-    setBusy('');
-  }
-
-  async function renewAdmission() {
-    if (!eid || status !== 'ACTIVE') return;
-    setBusy('새 세션 공용 QR 발급 중…');
-    try {
-      const issued = await J('/credential/demo-admission', { method: 'POST', body: JSON.stringify({ electionID: eid, ttlSeconds: 900 }) });
-      setAdmission(issued);
-      addLog('새 세션 공용 QR 발급');
-    } catch (e) { addLog('오류: ' + e.message); }
     setBusy('');
   }
 
@@ -468,19 +470,16 @@ export default function ControlPage() {
         {eid && view === 'session' && (
           <>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(180px,1fr))', gap: 14, marginBottom: 18 }}>
-              <KPI label="현재 active ballot" value={live} unit="표" big />
-              <KPI label="누적 커밋 확인" value={castEvents.length} unit="건" sub="최초 투표와 재투표 모두" />
+              <KPI label="투표한 사람" value={live} unit="명" big />
+              <KPI label="원장 기록" value={castEvents.length} unit="건" sub="재투표도 새 기록으로 쌓임" />
               <KPI label="후보" value={CANDIDATES.length} unit="명" sub="치킨·피자·떡볶이" />
               <KPI label="암호화" value="ElGamal" unit="+ZKP" sub="동형암호" small />
               <KPI label="검증 합의" value="2-of-3" unit="" sub="3개 기관" small />
             </div>
             <div style={{ display: 'grid', gridTemplateColumns: narrow ? '1fr' : 'minmax(0,1.6fr) minmax(0,1fr)', gap: 18, alignItems: 'start' }}>
+              <LedgerFeed events={castEvents} status={status} />
               <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
-                <VoteTable votes={votes} shuffled={shuffled} status={status} />
-                <CastEventLog events={castEvents} status={status} />
-              </div>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
-                <QRCard qr={qr} url={kioskUrl} error={kioskUrlError} onRenew={renewAdmission} disabled={dis || status !== 'ACTIVE'} expiresAt={admission?.expiresAt} />
+                <QRCard qr={qr} url={kioskUrl} error={kioskUrlError} />
                 <LogCard log={log} />
               </div>
             </div>
@@ -585,34 +584,7 @@ function VoteTable({ votes, shuffled, status }) {
     </section>
   );
 }
-function CastEventLog({ events, status }) {
-  return (
-    <section style={{ ...box, padding: 0, overflow: 'hidden' }}>
-      <div style={{ padding: '14px 18px', borderBottom: `1.5px solid ${T.line}` }}>
-        <div style={{ fontSize: 16, fontWeight: 900, letterSpacing: '-0.03em' }}>⛓ 누적 원장 커밋 확인</div>
-        <div style={{ fontSize: 12, color: T.sub, fontWeight: 700, marginTop: 2 }}>
-          최초 투표와 재투표를 모두 누적 · 재투표 연결정보와 무효화 해시는 숨김
-        </div>
-      </div>
-      <div style={{ maxHeight: 210, overflowY: 'auto' }}>
-        {events.length === 0 ? (
-          <div style={{ padding: 24, textAlign: 'center', color: T.sub, fontSize: 12, fontWeight: 700 }}>
-            {status === 'ACTIVE' ? '원장 커밋이 확인되면 여기에 순서대로 표시됩니다' : '누적 기록이 없습니다'}
-          </div>
-        ) : events.slice().reverse().map((event) => (
-          <div key={event.seq} style={{ display: 'flex', justifyContent: 'space-between', gap: 12, padding: '9px 14px', borderBottom: `1px solid ${T.line}`, fontSize: 12 }}>
-            <span style={{ fontFamily: 'monospace', fontWeight: 900, color: T.blue }}>CAST #{String(event.seq).padStart(2, '0')}</span>
-            <span style={{ color: T.sub, fontWeight: 700 }}>{event.recovered ? '원장 상태에서 합계 복구 · 순서 미복구' : `${new Date(event.ts).toLocaleTimeString()} · COMMITTED`}</span>
-          </div>
-        ))}
-      </div>
-      <div style={{ padding: '9px 14px', background: T.paper2, color: T.sub, fontSize: 10.5, fontWeight: 700, lineHeight: 1.45 }}>
-        이 목록은 Fabric 커밋 성공 뒤 갱신되는 시연용 피드입니다. 권위 있는 불변 이력은 cast-event export와 bundle 검증으로 확인합니다.
-      </div>
-    </section>
-  );
-}
-function QRCard({ qr, url, error, onRenew, disabled, expiresAt }) {
+function QRCard({ qr, url, error }) {
   return (
     <section style={{ ...box, textAlign: 'center' }}>
       <div style={over}>여기 찍고 투표하세요</div>
@@ -621,12 +593,7 @@ function QRCard({ qr, url, error, onRenew, disabled, expiresAt }) {
           : <div style={{ width: 200, height: 200, padding: 18, boxSizing: 'border-box', background: T.paper2, display: 'flex', alignItems: 'center', justifyContent: 'center', color: error ? '#b42318' : T.sub, fontSize: 13, fontWeight: 700 }}>{error || '새 세션 시작 시 QR 표시'}</div>}
       </div>
       {url && <div style={{ marginTop: 10, fontSize: 10.5, color: T.sub, wordBreak: 'break-all', fontFamily: 'monospace' }}>{displayKioskUrl(url)}</div>}
-      {expiresAt && <div style={{ marginTop: 8, fontSize: 11.5, color: T.sub, fontWeight: 700 }}>세션 공용 QR · {new Date(expiresAt).toLocaleTimeString()}까지</div>}
-      <button onClick={onRenew} disabled={disabled}
-        style={{ width: '100%', marginTop: 12, padding: 11, border: `1.5px solid ${T.blue}`, background: disabled ? T.paper2 : '#fff', color: disabled ? T.sub : T.blue, fontSize: 13, fontWeight: 900, fontFamily: 'inherit', cursor: disabled ? 'not-allowed' : 'pointer' }}>
-        다음 참가자용 새 QR 발급
-      </button>
-      <div style={{ marginTop: 8, fontSize: 10.5, lineHeight: 1.5, color: T.sub }}>이 QR은 현재 세션의 여러 휴대폰에서 사용할 수 있습니다. 만료되면 QR을 갱신하세요.</div>
+      {qr && <div style={{ marginTop: 8, fontSize: 11.5, color: T.sub, fontWeight: 700, lineHeight: 1.5 }}>이번 세션 공용 QR · 여러 명이 같이 찍어도 됨<br />만료 전에 자동으로 새 QR로 바뀜</div>}
     </section>
   );
 }
@@ -705,12 +672,6 @@ function TallyView({ results, decrypted, total, max, busy, votes, shuffled, live
           );
         }) : <div style={{ color: T.sub, fontWeight: 700, padding: 14 }}>{busy || '집계 진행 중…'}</div>}
       </section>
-
-      {decrypted && story && (
-        <Suspense fallback={<section style={{ ...box, background: T.ink, color: '#c3cdf5', fontWeight: 800, textAlign: 'center', padding: 40 }}>개표 화면 불러오는 중…</section>}>
-          <TallyAnimation story={story} />
-        </Suspense>
-      )}
 
       {story && (
         <section style={{ ...box }}>
