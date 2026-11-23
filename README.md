@@ -9,6 +9,8 @@
   </p>
 </p>
 
+> **부스 시연 바로 실행하기** (macOS · Windows WSL2 · Linux, 노트북 한 대): [`BOOTH_QUICKSTART.md`](BOOTH_QUICKSTART.md) · 발표·전시 자료: [`SW경진대회/`](SW경진대회/)
+
 <p align="center">
   <img src="https://img.shields.io/badge/Hyperledger%20Fabric-2.5-blue?logo=hyperledger" alt="Fabric">
   <img src="https://img.shields.io/badge/Go-1.21-00ADD8?logo=go" alt="Go">

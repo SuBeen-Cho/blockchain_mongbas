@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# booth-down.sh — booth-up.sh가 띄운 백엔드·터널·잠자기 방지만 종료 (Fabric 원장은 그대로)
+# booth-down.sh — booth-up.sh가 띄운 백엔드·터널·잠자기 방지만 종료 (macOS · Linux · WSL2) (Fabric 원장은 그대로)
 set -Eeuo pipefail
 cd "$(dirname "$0")/.."
 source scripts/demo-process-lib.sh

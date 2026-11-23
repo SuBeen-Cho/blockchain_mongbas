@@ -390,7 +390,7 @@ services:
         condition: service_healthy
     volumes:
       - /var/run/docker.sock:/host/var/run/docker.sock
-      - ../fabric-samples/config/core.yaml:/etc/hyperledger/fabric/core.yaml
+      - ${FABRIC_PEER_CORE_YAML:-../fabric-samples/config/core.yaml}:/etc/hyperledger/fabric/core.yaml
       - ./crypto-config/peerOrganizations/ec.voting.example.com/peers/peer0.ec.voting.example.com/msp:/etc/hyperledger/fabric/msp
       - ./crypto-config/peerOrganizations/ec.voting.example.com/peers/peer0.ec.voting.example.com/tls:/etc/hyperledger/fabric/tls
       - peer0.ec.voting.example.com:/var/hyperledger/production
@@ -435,7 +435,7 @@ services:
         condition: service_healthy
     volumes:
       - /var/run/docker.sock:/host/var/run/docker.sock
-      - ../fabric-samples/config/core.yaml:/etc/hyperledger/fabric/core.yaml
+      - ${FABRIC_PEER_CORE_YAML:-../fabric-samples/config/core.yaml}:/etc/hyperledger/fabric/core.yaml
       - ./crypto-config/peerOrganizations/ec.voting.example.com/peers/peer1.ec.voting.example.com/msp:/etc/hyperledger/fabric/msp
       - ./crypto-config/peerOrganizations/ec.voting.example.com/peers/peer1.ec.voting.example.com/tls:/etc/hyperledger/fabric/tls
       - peer1.ec.voting.example.com:/var/hyperledger/production
@@ -483,7 +483,7 @@ services:
         condition: service_healthy
     volumes:
       - /var/run/docker.sock:/host/var/run/docker.sock
-      - ../fabric-samples/config/core.yaml:/etc/hyperledger/fabric/core.yaml
+      - ${FABRIC_PEER_CORE_YAML:-../fabric-samples/config/core.yaml}:/etc/hyperledger/fabric/core.yaml
       - ./crypto-config/peerOrganizations/party.voting.example.com/peers/peer0.party.voting.example.com/msp:/etc/hyperledger/fabric/msp
       - ./crypto-config/peerOrganizations/party.voting.example.com/peers/peer0.party.voting.example.com/tls:/etc/hyperledger/fabric/tls
       - peer0.party.voting.example.com:/var/hyperledger/production
@@ -531,7 +531,7 @@ services:
         condition: service_healthy
     volumes:
       - /var/run/docker.sock:/host/var/run/docker.sock
-      - ../fabric-samples/config/core.yaml:/etc/hyperledger/fabric/core.yaml
+      - ${FABRIC_PEER_CORE_YAML:-../fabric-samples/config/core.yaml}:/etc/hyperledger/fabric/core.yaml
       - ./crypto-config/peerOrganizations/civil.voting.example.com/peers/peer0.civil.voting.example.com/msp:/etc/hyperledger/fabric/msp
       - ./crypto-config/peerOrganizations/civil.voting.example.com/peers/peer0.civil.voting.example.com/tls:/etc/hyperledger/fabric/tls
       - peer0.civil.voting.example.com:/var/hyperledger/production

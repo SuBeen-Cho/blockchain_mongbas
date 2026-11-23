@@ -176,6 +176,9 @@ start_network() {
   step "3/5 Docker 컨테이너 실행..."
   cd "$NETWORK_DIR"
   "${NETWORK_DIR}/scripts/prepare-network-secrets.sh" "${NETWORK_DIR}"
+  # 피어 core.yaml은 사용 중인 Fabric 도구 세트의 것을 마운트한다 (clean clone에는 fabric-samples가 없음)
+  export FABRIC_PEER_CORE_YAML="${FABRIC_PEER_CORE_YAML:-${PEER_CFG_PATH}/core.yaml}"
+  [ -f "${FABRIC_PEER_CORE_YAML}" ] || error "peer core.yaml 없음: ${FABRIC_PEER_CORE_YAML}"
   docker compose up -d
   info "컨테이너 기동 대기 (35초)..."
   sleep 35

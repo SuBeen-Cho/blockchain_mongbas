@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# booth-up.sh — 부스 맥북 원클릭 기동 (Docker Fabric → 공개 터널 → 백엔드 → 관제판)
+# booth-up.sh — 부스 원클릭 기동 (Docker Fabric → 공개 터널 → 백엔드 → 관제판)
+#   macOS · Linux · Windows(WSL2) 공통. 새 컴퓨터는 먼저 ./scripts/booth-setup.sh 한 번
 #
 #   ./scripts/booth-up.sh            기동 (터널 주소가 바뀌어도 QR 설정까지 자동 반영)
 #   KEEP_TUNNEL=true ./scripts/booth-up.sh   터널(QR 주소)은 그대로 두고 백엔드만 재기동
@@ -11,7 +12,7 @@
 #   2. Cloudflare Quick Tunnel을 PORT(3000)로 열고 https 주소 확보
 #   3. 그 주소를 런타임 booth.env의 PUBLIC_VOTER_ORIGIN·CORS_ORIGIN에 반영 (저장소 밖)
 #   4. 백엔드 재기동 → 로컬·공개 주소 헬스 확인
-#   5. 백엔드가 떠 있는 동안 맥 잠자기 방지 (caffeinate)
+#   5. 백엔드가 떠 있는 동안 잠자기 방지 (macOS caffeinate · Linux systemd-inhibit)
 #   6. 관리자 전용 관제판(127.0.0.1:ADMIN_LOCAL_PORT) 열기
 #
 # 공개 범위: 터널은 PORT만 노출한다. 관리 기능은 PORT에서 계속 토큰이 필요하고,
@@ -30,8 +31,29 @@ OPEN_BROWSER="${OPEN_BROWSER:-true}"
 say() { printf '%s\n' "$*"; }
 fail() { printf '  ✗ %s\n' "$*" >&2; exit 1; }
 
-command -v docker >/dev/null || fail "docker가 없습니다."
-command -v cloudflared >/dev/null || fail "cloudflared가 없습니다. (brew install cloudflared)"
+OS="$(uname -s)"; WSL=false
+grep -qi microsoft /proc/version 2>/dev/null && WSL=true
+# booth-setup.sh가 저장소 밖에 설치한 도구 (Fabric CLI · cloudflared)
+STATE_DIR="$(dirname "${DEMO_RUNTIME_DIR}")"
+export PATH="${STATE_DIR}/tools/fabric-current/bin:${STATE_DIR}/tools/bin:${PATH}"
+
+command -v docker >/dev/null || fail "docker가 없습니다. 먼저 ./scripts/booth-setup.sh"
+command -v cloudflared >/dev/null || fail "cloudflared가 없습니다. 먼저 ./scripts/booth-setup.sh"
+[ -e application/.env ] && [ -d application/node_modules ] && [ -f frontend/dist/index.html ] \
+  || fail "처음 실행하는 컴퓨터입니다. 먼저 ./scripts/booth-setup.sh 를 실행하세요."
+start_docker() {
+  if [ "${OS}" = Darwin ]; then open -a Docker
+  elif [ "${WSL}" = true ] && [ -x "/mnt/c/Program Files/Docker/Docker/Docker Desktop.exe" ]; then
+    ("/mnt/c/Program Files/Docker/Docker/Docker Desktop.exe" >/dev/null 2>&1 &)
+  else fail "Docker가 꺼져 있습니다. (Linux: sudo systemctl start docker)"
+  fi
+}
+open_url() {
+  if [ "${OS}" = Darwin ]; then open "$1"
+  elif [ "${WSL}" = true ]; then explorer.exe "$1" >/dev/null 2>&1 || true
+  elif command -v xdg-open >/dev/null 2>&1; then xdg-open "$1" >/dev/null 2>&1 &
+  fi
+}
 
 # ── 런타임 설정 (처음 한 번만 생성, 비밀값은 저장소 밖) ─────────────────
 if [ ! -f "${ADMIN_TOKEN_FILE}" ]; then
@@ -77,6 +99,7 @@ ADMIN_LOCAL_PORT="${ADMIN_LOCAL_PORT:-3001}"
 # ── 1. Docker / Fabric ────────────────────────────────────────────
 say "[1/6] Docker · Fabric 확인"
 restart_docker_desktop() {
+  [ "${OS}" = Darwin ] || fail "컨테이너 I/O 오류: Docker Desktop을 직접 재시작한 뒤 다시 실행하세요."
   say "      Docker Desktop 재시작 진행"
   osascript -e 'quit app "Docker Desktop"' >/dev/null 2>&1 || osascript -e 'quit app "Docker"' >/dev/null 2>&1 || true
   for _ in $(seq 1 40); do docker info >/dev/null 2>&1 || break; sleep 3; done
@@ -85,17 +108,17 @@ restart_docker_desktop() {
   fail "Docker Desktop이 켜지지 않습니다."
 }
 if ! docker info >/dev/null 2>&1; then
-  say "      Docker Desktop 켜는 중"
-  open -a Docker
+  say "      Docker 켜는 중"
+  start_docker
   for _ in $(seq 1 80); do docker info >/dev/null 2>&1 && break; sleep 3; done
-  docker info >/dev/null 2>&1 || fail "Docker Desktop이 켜지지 않습니다."
+  docker info >/dev/null 2>&1 || fail "Docker가 켜지지 않습니다."
 fi
 # 밤새 SSD 연결이 끊긴 뒤에는 컨테이너가 Up이어도 exec가 I/O 오류를 낸다
 if docker ps --format '{{.Names}}' | grep -qx cli && ! docker exec cli true >/dev/null 2>&1; then
   say "      컨테이너 디스크 I/O 오류 확인 (SSD 연결이 끊겼던 흔적)"
   restart_docker_desktop
 fi
-CHAINCODE_CONTAINER="$(docker ps -a --format '{{.Names}}' | grep -E '^voting-chaincode-seq-[0-9]+$' | sort -t- -k4 -n | tail -1)"
+CHAINCODE_CONTAINER="$(docker ps -a --format '{{.Names}}' | grep -E '^voting-chaincode-seq-[0-9]+$' | sort -t- -k4 -n | tail -1 || true)"
 CHAINCODE_CONTAINER="${CHAINCODE_CONTAINER:-voting-chaincode}"
 start_group() { # 이미 켜진 것은 건드리지 않음
   local names=() n
@@ -173,20 +196,29 @@ for _ in $(seq 1 30); do
   sleep 2
 done
 [ -n "${OK}" ] && say "      ✓ ${URL} 접속 확인" || say "      ! 공개 주소 응답이 아직 없음 (DNS 반영 지연일 수 있음, 1분 뒤 다시 확인)"
-if [ -f "${CAFFEINATE_PID_FILE}" ]; then kill "$(cat "${CAFFEINATE_PID_FILE}")" 2>/dev/null || true; fi
-nohup caffeinate -dimsu -w "$(cat "${BACKEND_PID_FILE}")" >/dev/null 2>&1 &
-printf '%s\n' "$!" > "${CAFFEINATE_PID_FILE}"
-say "      ✓ 백엔드가 켜져 있는 동안 잠자기 방지"
+if [ -f "${CAFFEINATE_PID_FILE}" ]; then kill "$(cat "${CAFFEINATE_PID_FILE}")" 2>/dev/null || true; rm -f "${CAFFEINATE_PID_FILE}"; fi
+BACKEND_PID="$(cat "${BACKEND_PID_FILE}")"
+if [ "${OS}" = Darwin ]; then
+  nohup caffeinate -dimsu -w "${BACKEND_PID}" >/dev/null 2>&1 &
+  printf '%s\n' "$!" > "${CAFFEINATE_PID_FILE}"
+  say "      ✓ 백엔드가 켜져 있는 동안 잠자기 방지"
+elif [ "${WSL}" = false ] && command -v systemd-inhibit >/dev/null 2>&1 && systemd-inhibit --list >/dev/null 2>&1; then
+  nohup systemd-inhibit --what=idle:sleep --who=mongbas --why=booth tail --pid="${BACKEND_PID}" -f /dev/null >/dev/null 2>&1 &
+  printf '%s\n' "$!" > "${CAFFEINATE_PID_FILE}"
+  say "      ✓ 백엔드가 켜져 있는 동안 잠자기 방지"
+else
+  say "      ! 잠자기 방지는 직접 설정 (Windows: 설정 › 전원 › 화면·절전 '안 함')"
+fi
 
 # ── 6. 관제판 ───────────────────────────────────────────────────
 DASHBOARD="http://localhost:${ADMIN_LOCAL_PORT}/?app=control"
 say "[6/6] 관제판 열기"
-[ "${OPEN_BROWSER}" = true ] && open "${DASHBOARD}" || true
+[ "${OPEN_BROWSER}" = true ] && open_url "${DASHBOARD}" || true
 cat <<EOF
 
   ✅ 부스 준비 완료
   ───────────────────────────────────────────────────────
-  관제판 (이 맥 전용, 토큰 없음) : ${DASHBOARD}
+  관제판 (이 컴퓨터 전용, 토큰 없음) : ${DASHBOARD}
   휴대폰 공개 주소              : ${URL}
   → 관제판에서 [＋ 새 세션 시작]을 누르면 세션마다 새 QR 표시
   ───────────────────────────────────────────────────────

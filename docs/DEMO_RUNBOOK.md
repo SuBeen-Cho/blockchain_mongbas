@@ -51,7 +51,9 @@ Quick Tunnel URL은 임시이며 누구나 접근할 수 있다. QR fragment의 
 
 ---
 
-### 부스 맥북 원클릭 기동 (권장)
+### 부스 원클릭 기동 (권장 · macOS / Windows WSL2 / Linux)
+
+새 컴퓨터는 먼저 `./scripts/booth-setup.sh`를 한 번 실행한다 (도구·비밀값·원장 생성). 자세한 절차는 [`BOOTH_QUICKSTART.md`](../BOOTH_QUICKSTART.md).
 
 ```bash
 cd mongbas

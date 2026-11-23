@@ -24,3 +24,9 @@
 *.zip binary
 *.png binary
 *.jpg binary
+
+# 문서·발표 자료 — 변환 금지
+*.pdf binary
+*.pptx binary
+*.docx binary
+*.mp4 binary
