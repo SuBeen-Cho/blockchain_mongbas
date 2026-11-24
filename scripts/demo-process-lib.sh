@@ -28,6 +28,9 @@ demo_owned_pid() {
     cwd="$(lsof -a -p "${pid}" -d cwd -Fn 2>/dev/null | sed -n 's/^n//p' | head -n 1)"
     # macOS lsof prints non-ASCII path bytes as \xHH (e.g. Korean folder names)
     cwd="$(printf '%b' "${cwd}")"
+    # 외장 SSD가 잠자기 중 끊겼다 붙으면 macOS가 실행 중 프로세스의 cwd를 못 읽는다.
+    # 이때는 저장소 밖 0700 런타임 폴더의 PID 파일 + 명령 일치로 소유를 판단한다.
+    case "${cwd}" in /*) ;; *) cwd="${expected_cwd}" ;; esac  # 빈 값 또는 "cwd|rtd info error"
   else
     return 1
   fi
