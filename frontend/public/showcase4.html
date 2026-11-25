@@ -1,0 +1,513 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Mongbas — 표는 비밀로, 개표는 검증으로</title>
+<meta name="description" content="Hyperledger Fabric 기반 전자투표 연구 프로토타입. 표는 암호문 상태로 합산하고, 세 기관 중 두 곳이 협력해야 합계만 복호됩니다." />
+<meta name="theme-color" content="#2440F2" />
+<link rel="icon" href="/logo/mongbas-symbol-blue.svg" type="image/svg+xml" />
+<link rel="stylesheet" href="/showcase/css/pretendard.css" />
+<style>
+  /* 색: 흰색 · 일렉트릭 블루 · 검정 */
+  :root{ --blue:#2440F2; --ink:#0a0b10; --paper:#ffffff; --bw:4px; --pad:clamp(20px,6vw,80px) }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html{-webkit-text-size-adjust:100%}
+  body{background:var(--paper);color:var(--ink);overflow-x:hidden;line-height:1.5;
+    font-family:'Pretendard Variable',Pretendard,-apple-system,system-ui,'Apple SD Gothic Neo',sans-serif;
+    letter-spacing:-0.02em;word-break:keep-all;-webkit-font-smoothing:antialiased}
+  h1,h2,h3{line-height:1.02;letter-spacing:-0.05em;font-weight:900}
+  img{display:block;max-width:100%}
+  a{color:inherit}
+  .grid{position:fixed;inset:0;z-index:0;pointer-events:none;display:flex;justify-content:space-between;max-width:1280px;margin:0 auto;left:0;right:0;padding:0 var(--pad)}
+  .grid i{width:1px;background:var(--blue);opacity:.12}
+  #three{position:fixed;inset:0;z-index:1;pointer-events:none}
+  main{position:relative;z-index:2}
+  .wrap{max-width:1280px;margin:0 auto;padding:0 var(--pad);position:relative}
+  section{padding:clamp(170px,28vh,340px) 0;position:relative}
+  .kick{font-size:13px;font-weight:900;letter-spacing:.16em;color:var(--blue);text-transform:uppercase;display:flex;align-items:center;gap:12px}
+  .kick:before{content:"";width:14px;height:14px;background:currentColor;flex:none}
+  .ink-i{color:var(--blue)}
+  .js .reveal{opacity:0;transform:translateY(36px)}
+
+  /* 네비 */
+  nav{position:fixed;top:0;left:0;right:0;z-index:40;transition:background .3s,border-color .3s;border-bottom:var(--bw) solid transparent}
+  nav.solid{background:#fff;border-color:var(--ink)}
+  nav .wrap{display:flex;align-items:center;justify-content:space-between;height:66px}
+  .brand{font-weight:900;font-size:20px;letter-spacing:-0.06em;display:flex;align-items:center;gap:8px;color:#fff;transition:color .3s;text-decoration:none}
+  nav.solid .brand{color:var(--ink)}
+  .brand .dot{width:21px;height:21px;background:#fff;-webkit-mask:url(/logo/mongbas-symbol-white.svg) center/contain no-repeat;mask:url(/logo/mongbas-symbol-white.svg) center/contain no-repeat}
+  nav.solid .brand .dot{background:var(--blue)}
+  .nav-links{display:flex;gap:28px;font-size:14px;font-weight:800;color:#fff}
+  nav.solid .nav-links{color:var(--ink)}
+  .nav-links a{color:inherit;text-decoration:none;padding:4px 0;border-bottom:var(--bw) solid transparent}
+  .nav-links a:hover,.nav-links a.on{border-color:#fff}
+  nav.solid .nav-links a:hover,nav.solid .nav-links a.on{color:var(--blue);border-color:var(--blue)}
+  @media(max-width:760px){.nav-links{display:none}}
+  .side{position:fixed;right:18px;top:50%;transform:translateY(-50%) rotate(180deg);writing-mode:vertical-rl;font-size:11px;font-weight:900;letter-spacing:.2em;color:var(--blue);z-index:30}
+  @media(max-width:900px){.side{display:none}}
+
+  /* HERO = UnicornStudio 씬 (원래 그대로) */
+  .hero{position:relative;min-height:100vh;display:flex;align-items:flex-end;overflow:hidden;padding:0;background:#1a2be6 url(/showcase/img/hero-fallback.jpg) center/cover no-repeat}
+  #unicorn{position:absolute;inset:0;z-index:0}
+  .hero-scrim{position:absolute;inset:0;z-index:1;pointer-events:none;
+    background:linear-gradient(0deg, rgba(6,22,66,.84) 4%, rgba(6,22,66,.34) 30%, transparent 52%),
+               linear-gradient(90deg, rgba(6,22,66,.5) 0%, rgba(6,22,66,.08) 52%, transparent 66%)}
+  .hero .wrap{position:relative;z-index:2;width:100%;padding-bottom:clamp(48px,9vh,110px)}
+  .hero h1{font-size:clamp(42px,8vw,116px);font-weight:900;color:#fff;margin-top:24px;text-shadow:0 6px 40px rgba(0,30,90,.4)}
+  .hl{background:#fff;color:var(--blue);padding:0 .12em;box-decoration-break:clone;-webkit-box-decoration-break:clone}
+  .hero-wm{position:absolute;top:clamp(86px,13vh,140px);left:calc(max(0px, 50vw - 640px) + var(--pad));z-index:2;
+    font-size:clamp(36px,8.5vw,140px);font-weight:900;letter-spacing:-0.07em;line-height:.82;
+    color:rgba(255,255,255,.95);text-shadow:0 6px 40px rgba(0,40,110,.35);pointer-events:none}
+  .hero-wm .wmrow{display:flex;align-items:center;gap:.2em}
+  .hero-wm small{display:block;font-size:.13em;font-weight:700;letter-spacing:.34em;opacity:.8;margin-top:.4em}
+  .hero-wm .wmlogo{height:.72em;width:auto;flex:none;filter:drop-shadow(0 6px 30px rgba(0,40,110,.45))}
+  .hero p{margin-top:26px;max-width:580px;font-size:clamp(16px,1.7vw,20px);color:#fff;font-weight:500}
+  .hero .tags{display:flex;flex-wrap:wrap;gap:10px;margin-top:30px}
+  .htag{font-size:13px;font-weight:800;padding:9px 16px;border:2px solid #fff;color:#fff}
+  .htag.fill{background:#fff;color:var(--blue)}
+  .scrollcue{position:absolute;left:50%;bottom:24px;transform:translateX(-50%);z-index:3;color:#fff;font-size:12px;font-weight:800;letter-spacing:.1em;display:flex;flex-direction:column;align-items:center;gap:8px}
+  .scrollcue .b{width:2px;height:40px;background:linear-gradient(#fff,transparent)}
+
+  /* 흘러가는 글자 띠 */
+  .band{background:var(--ink);color:#fff;overflow:hidden;white-space:nowrap;padding:20px 0}
+  .band.bl{background:var(--blue)}
+  .band-in{display:inline-flex;animation:band 46s linear infinite;will-change:transform}
+  .band.bl .band-in{animation-direction:reverse}
+  .band span{display:inline-flex;align-items:center;gap:34px;padding-right:34px;font-size:clamp(15px,1.5vw,20px);font-weight:900;letter-spacing:.04em;text-transform:uppercase}
+  .band span:after{content:"";width:11px;height:11px;background:var(--blue)}
+  .band.bl span:after{background:#fff}
+  @keyframes band{to{transform:translateX(-50%)}}
+
+  /* 큰 영문 워드: 화면 밖으로 넘치게 */
+  .wm{font-size:clamp(88px,23vw,360px);font-weight:900;letter-spacing:-0.065em;color:var(--blue);line-height:.78;pointer-events:none;user-select:none;white-space:nowrap;will-change:transform}
+  .wm.r{text-align:right}
+  .wm.wh{color:#fff}
+  .wm.bleed{margin-left:calc(-1 * var(--pad) - 2vw)}
+  .stmt{font-size:clamp(32px,4.9vw,74px);font-weight:900;line-height:1.08;letter-spacing:-0.055em;max-width:1000px;-webkit-text-stroke:.4px currentColor}
+  .lede{margin-top:24px;max-width:640px;font-size:clamp(16px,1.6vw,20px);font-weight:500;line-height:1.6}
+  .lede b{font-weight:900}
+  .mark{background:var(--blue);color:#fff;padding:.02em .16em;-webkit-text-stroke:0;box-decoration-break:clone;-webkit-box-decoration-break:clone}
+  /* 제목은 왼쪽, 설명은 오른쪽 아래로 어긋나게 */
+  .split{margin-top:22px}
+  .split .lede{margin:clamp(30px,3.4vw,52px) 0 0;max-width:700px;font-size:clamp(17px,1.65vw,21px);line-height:1.7}
+  @media(min-width:901px){.side-r .kick{justify-content:flex-end}.side-r .split{text-align:right}.side-r .split .lede,.side-r .split .stmt{margin-left:auto}}
+
+  /* 도식: 틀·캡션 없이 가운데 */
+  .fig{margin:clamp(56px,8vw,120px) auto 0;max-width:1120px}
+  .fig.s{max-width:880px}
+  .fig.m{max-width:1000px}
+  .fig img{width:100%;height:auto;margin:0 auto}
+  @media(max-width:700px){.fig{overflow-x:auto;-webkit-overflow-scrolling:touch}.fig img{width:760px;max-width:none}}
+
+  /* 3D 오브제: 큰 글자 위에 겹침 */
+  .obj{position:absolute;pointer-events:none;z-index:0;will-change:transform;filter:drop-shadow(0 40px 50px rgba(36,64,242,.28))}
+  .wrap>*:not(.obj){position:relative;z-index:1}
+  @media(max-width:900px){.obj{position:relative;inset:auto!important;width:46vw!important;margin:0 0 -8vw auto}}
+
+  /* 7대 속성 — 흰/파랑 체커보드 (원래 구성) */
+  .propband{width:100vw;margin-left:calc(50% - 50vw);background:var(--blue)}
+  .pgrid{display:grid;grid-template-columns:repeat(4,1fr);gap:var(--bw);background:var(--blue);max-width:1340px;margin:0 auto}
+  .pitem{padding:clamp(24px,2.4vw,34px) clamp(20px,2vw,30px);min-height:258px;display:flex;flex-direction:column;align-items:center;text-align:center;transition:transform .25s ease;position:relative}
+  .pitem.w{background:#fff}
+  .pitem.b{background:var(--blue)}
+  .pitem:hover{transform:translateY(-3px);z-index:2}
+  .pitem .pn{font-size:12px;font-weight:900;letter-spacing:.12em}
+  .pitem.w .pn{color:var(--blue)} .pitem.b .pn{color:#fff}
+  .pitem .pi{width:58px;height:58px;margin:16px 0 18px;background:#fff;display:flex;align-items:center;justify-content:center;border:var(--bw) solid var(--blue)}
+  .pitem.b .pi{border-color:#fff}
+  .pitem .pi img{width:34px;height:34px;object-fit:contain}
+  .pitem h3{font-size:clamp(19px,1.5vw,23px);font-weight:900;letter-spacing:-.03em}
+  .pitem.b h3{color:#fff}
+  .pitem .pen{font-size:12px;font-weight:800;margin-top:4px}
+  .pitem.w .pen{color:var(--blue)} .pitem.b .pen{color:#fff}
+  .pitem p{font-size:14px;margin-top:12px;font-weight:700;line-height:1.55}
+  .pitem.b p{color:#fff}
+  @media(max-width:920px){.pgrid{grid-template-columns:repeat(2,1fr)}}
+  @media(max-width:560px){.pgrid{grid-template-columns:1fr}.pitem{min-height:0}.pitem.e{display:none}}
+
+  /* 파란 구간 */
+  .sec-blue{background:var(--blue);color:#fff}
+  .sec-blue .kick{color:#fff}
+  .sec-blue .mark{background:#fff;color:var(--blue)}
+  .strip{background:#fff;padding:clamp(28px,4vw,56px) var(--pad);margin-top:clamp(48px,6vw,90px)}
+  .strip img{width:100%;height:auto;max-width:900px;margin:0 auto}
+
+  /* 계단처럼 올라가는 숫자 블록 */
+  .steps{display:grid;grid-template-columns:repeat(4,1fr);gap:var(--bw);align-items:end;margin-top:clamp(56px,7vw,110px)}
+  .stp{display:flex;flex-direction:column}
+  .stp .blk{background:#fff;color:var(--blue);display:flex;align-items:flex-end;justify-content:flex-start;overflow:hidden;padding:0 0 0 8px}
+  .stp .blk b{font-size:clamp(120px,17vw,270px);font-weight:900;letter-spacing:-.08em;line-height:.74;margin-bottom:-.02em}
+  .stp:nth-child(1) .blk{height:clamp(150px,15vw,230px)}
+  .stp:nth-child(2) .blk{height:clamp(190px,21vw,320px)}
+  .stp:nth-child(3) .blk{height:clamp(230px,27vw,410px)}
+  .stp:nth-child(4) .blk{height:clamp(270px,33vw,500px)}
+  .stp h3{font-size:clamp(18px,1.7vw,24px);font-weight:900;letter-spacing:-.04em;line-height:1.2;margin-top:22px}
+  .stp p{margin-top:8px;font-size:15.5px;font-weight:600;line-height:1.55;padding-right:14px}
+  @media(max-width:820px){.steps{grid-template-columns:1fr 1fr;gap:28px var(--bw)}.stp .blk{height:42vw!important}}
+
+  .notes{display:grid;grid-template-columns:repeat(3,1fr);gap:0 clamp(20px,3vw,44px);margin-top:clamp(56px,7vw,100px)}
+  .note{padding:0}
+  .note b{display:block;font-size:17px;font-weight:900;letter-spacing:-.03em}
+  .note p{margin-top:6px;font-size:14.5px;font-weight:600;line-height:1.6}
+  @media(max-width:820px){.notes{grid-template-columns:1fr;gap:20px}}
+
+  /* 표 (실측): 굵은 줄 */
+  .tbl{margin-top:clamp(40px,5vw,72px)}
+  .tbl .tr{display:grid;grid-template-columns:minmax(150px,1fr) minmax(0,1.6fr) minmax(0,2fr);gap:0 28px;align-items:baseline;padding:24px 14px;transition:background .18s,color .18s}
+  .tbl .tr:hover{background:#fff;color:var(--blue)}
+  .tbl .c1{font-size:16px;font-weight:900;letter-spacing:-.03em}
+  .tbl .c1 small{display:block;font-size:11.5px;font-weight:800;letter-spacing:.08em;margin-top:3px;text-transform:uppercase;opacity:.85}
+  .tbl .c2{font-size:clamp(19px,2vw,28px);font-weight:900;letter-spacing:-.04em;font-variant-numeric:tabular-nums}
+  .tbl .c3{font-size:14.5px;font-weight:600;line-height:1.6}
+  @media(max-width:820px){.tbl .tr{grid-template-columns:1fr;gap:6px}}
+  .src{margin-top:18px;font-size:13.5px;font-weight:700}
+  .src a{color:#fff}
+
+  /* 체험 — 폰 (원래 목업 모양) */
+  .expg{display:grid;grid-template-columns:1fr;gap:48px;align-items:center}
+  @media(min-width:980px){.expg{grid-template-columns:1.05fr .95fr}}
+  .phone{justify-self:center;width:300px;height:620px;border-radius:46px;background:var(--blue);border:10px solid var(--blue);box-shadow:0 50px 110px rgba(36,64,242,.34);position:relative;overflow:hidden}
+  .phone .notch{position:absolute;top:14px;left:50%;transform:translateX(-50%);width:120px;height:26px;background:#000;border-radius:14px;z-index:5}
+  .pscreen{position:absolute;inset:0;background:#fff;border-radius:36px;overflow:hidden}
+  .pslide{position:absolute;inset:0;display:flex;flex-direction:column;padding:58px 22px 22px;opacity:0}
+  #s1{opacity:1}
+  .pslide .pt{font-size:19px;font-weight:900;text-align:center;margin-bottom:14px}
+  .opt{display:flex;align-items:center;gap:10px;padding:15px;border-radius:14px;background:#fff;border:2px solid var(--ink);margin-bottom:10px;font-weight:800;font-size:15px}
+  .opt.sel{border-color:var(--blue);box-shadow:inset 0 0 0 1.5px var(--blue)}
+  .opt i{width:18px;height:18px;border-radius:50%;border:2px solid var(--ink);flex:none}
+  .opt.sel i{border:6px solid var(--blue)}
+  .pbtn{margin-top:auto;padding:15px;border-radius:14px;background:var(--blue);color:#fff;text-align:center;font-weight:900;font-size:16px}
+  .receipt{display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;text-align:center;gap:10px}
+  .receipt .chk{width:74px;height:74px;border-radius:50%;background:var(--blue);display:flex;align-items:center;justify-content:center}
+  .receipt .chk svg{width:36px;height:36px}
+  .receipt .code{width:100%;padding:20px 0;border-radius:16px;background:var(--blue);color:#fff;font-size:30px;font-weight:900;letter-spacing:4px}
+
+  /* 폰 목업 3대 (원래 목업 모양) */
+  .phones{display:flex;justify-content:center;align-items:flex-end;gap:clamp(20px,2.6vw,44px);margin-top:clamp(60px,8vw,110px);flex-wrap:wrap}
+  .phwrap{display:flex;flex-direction:column;align-items:center;gap:18px}
+  .phwrap.mid{transform:translateY(-26px)}
+  .ph{position:relative;width:clamp(208px,20vw,244px);aspect-ratio:9/19;background:var(--ink);border-radius:40px;box-shadow:0 40px 90px rgba(10,11,16,.30);overflow:hidden;flex:none}
+  .phwrap.mid .ph{box-shadow:0 56px 120px rgba(36,64,242,.42)}
+  .ph .scr{position:absolute;inset:0;background:var(--ink);color:#fff;display:flex;flex-direction:column;padding:30px 17px 17px;overflow:hidden}
+  .ph .phk{font-size:10px;font-weight:900;letter-spacing:.14em;color:#fff;display:flex;justify-content:space-between;align-items:center}
+  .ph .live{font-size:9px;animation:blink 1s steps(1) infinite}
+  .ph .pht{font-size:clamp(26px,2.4vw,32px);font-weight:900;line-height:1.0;letter-spacing:-.04em;margin:13px 0 16px}
+  .ph .pht em{font-style:normal;color:#6f86ff}
+  .ph .prow{padding:13px;border:1.5px solid rgba(255,255,255,.4);font-weight:800;font-size:14.5px;color:#fff;margin-bottom:9px;display:flex;align-items:center;gap:9px}
+  .ph .prow i{width:15px;height:15px;border-radius:50%;border:2px solid #fff;flex:none}
+  .ph .prow.on{border-color:var(--blue);background:var(--blue);animation:selpulse 2.6s ease-in-out infinite}
+  .ph .prow.on i{border:5px solid #fff}
+  .ph .pseal{margin-top:auto;text-align:center;font-weight:900;font-size:13px;color:#fff;background:var(--blue);padding:13px}
+  .ph .pseal.ok{background:#fff;color:var(--blue)}
+  .ph .bar{display:grid;grid-template-columns:40px 1fr 34px;align-items:center;gap:7px;margin-bottom:13px;font-size:11.5px;font-weight:800;color:#fff}
+  .ph .bar .track{height:11px;background:rgba(255,255,255,.14);overflow:hidden}
+  .ph .bar .track i{display:block;height:100%;width:var(--w);background:var(--blue);animation:grow 2.8s ease-in-out infinite}
+  .ph .bar.lead .track i{background:#fff}
+  .ph .bar b{text-align:right}
+  .ph .trk{height:30px;border:1.5px solid rgba(255,255,255,.3);margin-bottom:9px;display:flex;align-items:center;padding:0 12px;font-size:11px;font-weight:800;color:rgba(255,255,255,.75);letter-spacing:1px}
+  .ph .trk.me{background:var(--blue);border-color:var(--blue);color:#fff;letter-spacing:3px;animation:selpulse 2.2s ease-in-out infinite}
+  .ph .popseal{margin-top:auto;text-align:center;font-weight:900;font-size:13px;color:var(--blue);background:#fff;padding:13px;animation:pop 2.8s ease-in-out infinite}
+  .phcap{text-align:center}
+  .phcap .ct{font-size:11.5px;font-weight:900;letter-spacing:.12em;color:var(--blue)}
+  .phcap .cd{font-size:15px;font-weight:900;margin-top:5px;letter-spacing:-.02em}
+  @keyframes blink{50%{opacity:.2}}
+  @keyframes selpulse{0%,100%{box-shadow:0 0 0 0 rgba(36,64,242,0)}50%{box-shadow:0 0 0 3px rgba(111,134,255,.7)}}
+  @keyframes grow{0%{width:0}45%,100%{width:var(--w)}}
+  @keyframes pop{0%,100%{transform:scale(1)}48%{transform:scale(1.06)}}
+  @media(max-width:820px){.phwrap.mid{transform:none}.ph{width:clamp(180px,44vw,230px)}}
+
+  /* 비교 (원래 구성) */
+  .vs{display:grid;grid-template-columns:1fr;gap:0;margin-top:clamp(40px,5vw,72px)}
+  @media(min-width:840px){.vs{grid-template-columns:1fr 1fr}}
+  .vc{padding:32px 32px 32px 0}
+  .vc.b{background:var(--blue);color:#fff;padding:32px}
+  .vc h3{font-size:clamp(27px,2.6vw,36px);font-weight:900;letter-spacing:-.04em;margin-bottom:20px}
+  .vr{display:flex;gap:12px;padding:11px 0;font-size:15px;font-weight:800}
+  .vr .m{font-weight:900;width:20px;flex:none}
+
+  /* CTA (원래 구성) */
+  .block{position:relative;background:var(--blue);color:#fff;padding:clamp(36px,5vw,72px);overflow:hidden}
+  .block .wmin{position:absolute;right:-1%;bottom:-14%;font-size:clamp(120px,20vw,320px);font-weight:900;color:#fff;opacity:.14;line-height:.8;pointer-events:none}
+  .cta .block{text-align:center}
+  .cta h2{font-size:clamp(34px,6vw,80px);color:#fff}
+  .cta .kick{color:#fff;justify-content:center}
+  .cta .btns{position:relative;display:flex;gap:12px;justify-content:center;flex-wrap:wrap;margin-top:30px}
+  .btn{display:inline-flex;align-items:center;gap:8px;height:54px;padding:0 26px;font-size:15px;font-weight:900;text-decoration:none;border:var(--bw) solid #fff;color:#fff;transition:background .2s,color .2s,border-color .2s}
+  .btn.fill{background:#fff;color:var(--blue)}
+  .btn:hover{background:var(--ink);border-color:var(--ink);color:#fff}
+  .logomark{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:11px;padding:clamp(34px,5.5vh,68px) 0;text-decoration:none;cursor:pointer;transition:transform .2s}
+  .logomark:hover{transform:translateY(-2px)}
+  .logomark img{width:clamp(52px,6.4vw,78px);height:auto}
+  .logomark span{font-size:12px;font-weight:900;letter-spacing:.26em;color:var(--blue)}
+  footer{padding:36px 0 44px;border-top:var(--bw) solid var(--ink);font-size:14px;font-weight:700;text-align:center;line-height:1.7}
+  @media (prefers-reduced-motion:reduce){.band-in,.ph *{animation:none!important}.js .reveal{opacity:1;transform:none}}
+</style>
+<script src="/showcase/js/boot.js"></script>
+</head>
+<body>
+<div class="grid"><i></i><i></i><i></i><i></i><i></i></div>
+<canvas id="three"></canvas>
+<div class="side">SCROLL — Mongbas — 2026</div>
+
+<nav id="nav"><div class="wrap">
+  <a class="brand" href="#top"><span class="dot"></span>MONGBAS</a>
+  <div class="nav-links"><a href="#paradox" class="on">개요</a><a href="#props">보안</a><a href="#flow">흐름</a><a href="#arch">구조</a><a href="#perf">실측</a><a href="#exp">체험</a></div>
+</div></nav>
+
+<main>
+  <!-- HERO = UnicornStudio 씬 (원래 그대로) -->
+  <header class="hero" id="top">
+    <div id="unicorn" data-us-project="jGXYSFzNxRakpi9mEF4l"></div>
+    <div class="hero-scrim"></div>
+    <div class="hero-wm"><span class="wmrow">MONGBAS<img class="wmlogo" src="/logo/mongbas-symbol-white.svg" alt="Mongbas 로고" /></span><small>하이퍼레저 패브릭 기반 전자투표 연구</small></div>
+    <div class="wrap">
+      <h1>표는 비밀로,<br>개표는 <span class="hl">검증</span>으로.</h1>
+      <p>휴대폰에서 암호화한 표를 암호문 상태로 합산. 세 기관 중 두 곳이 협력해야 합계만 복호.</p>
+      <div class="tags"><span class="htag fill">동형암호 · 영지식 증명</span><span class="htag">3곳 중 2곳 승인</span><span class="htag">재투표 · 패닉 투표</span></div>
+    </div>
+    <div class="scrollcue">SCROLL<div class="b"></div></div>
+  </header>
+
+  <div class="band" aria-hidden="true"><div class="band-in">
+    <span>Ballot Secrecy</span><span>Verifiability</span><span>Coercion Resistance</span><span>Hyperledger Fabric 2.5</span><span>Homomorphic Tally</span><span>Zero-Knowledge Proof</span><span>2-of-3 Threshold</span>
+    <span>Ballot Secrecy</span><span>Verifiability</span><span>Coercion Resistance</span><span>Hyperledger Fabric 2.5</span><span>Homomorphic Tally</span><span>Zero-Knowledge Proof</span><span>2-of-3 Threshold</span>
+    <span>Ballot Secrecy</span><span>Verifiability</span><span>Coercion Resistance</span><span>Hyperledger Fabric 2.5</span><span>Homomorphic Tally</span><span>Zero-Knowledge Proof</span><span>2-of-3 Threshold</span>
+    <span>Ballot Secrecy</span><span>Verifiability</span><span>Coercion Resistance</span><span>Hyperledger Fabric 2.5</span><span>Homomorphic Tally</span><span>Zero-Knowledge Proof</span><span>2-of-3 Threshold</span>
+  </div></div>
+
+  <!-- 역설 -->
+  <section id="paradox"><div class="wrap">
+    <div class="wm bleed reveal" data-drift="-5">PARADOX</div>
+    <div class="kick reveal" style="margin-top:34px">전자투표의 근본 난제</div>
+    <div class="split">
+      <h2 class="stmt reveal">투표는 <span class="ink-i">비밀</span>이어야 한다.<br>그런데 내 표가 제대로 세어졌는지 <span class="ink-i">검증</span>하고 싶다.</h2>
+      <p class="lede reveal">내 표의 반영 여부는 확인할 수 있어야 하지만, 그 확인 결과가 선택의 증거가 되면 매수와 협박에 악용. <b>비밀성 · 검증 가능성 · 강압 완화</b>는 서로 긴장 관계.</p>
+    </div>
+    <figure class="fig m wide reveal"><img src="/showcase/img/d-paradox.png" width="2874" height="1760" alt="투표 비밀성, 검증 가능성, 강압 완화가 서로 당기는 검증의 역설" loading="lazy" /></figure>
+    <figure class="fig wide reveal"><img src="/showcase/img/d-five.png" width="3200" height="682" alt="전자투표의 다섯 가지 핵심 쟁점: 투표 비밀성, 기록 신뢰성, 개표 정확성, 공개 검증, 강압 완화" loading="lazy" /></figure>
+  </div></section>
+
+  <!-- 7대 보안 속성 (체커보드) -->
+  <section id="props" style="padding-top:0"><div class="wrap">
+    <div class="kick reveal">7 Security Properties</div>
+    <h2 class="stmt reveal" style="margin-top:14px">7가지 보안 속성, <span class="mark">속성별 분리 검증.</span></h2>
+    <div class="propband reveal" style="margin-top:clamp(40px,5vw,72px)"><div class="pgrid">
+      <div class="pitem b"><div class="pn">01 / 07</div><div class="pi"><img src="/icons/free-icon-vote-8597002.png" alt="" /></div><h3>비밀투표</h3><div class="pen">Ballot Secrecy</div><p>개표 열쇠 분산 생성 · 두 기관 협력 복호</p></div>
+      <div class="pitem w"><div class="pn">02 / 07</div><div class="pi"><img src="/icons/free-icon-vote-8597093.png" alt="" /></div><h3>의도대로 투표</h3><div class="pen">Cast-as-Intended</div><p>고른 후보 그대로 암호화됐는지 제출 전 확인</p></div>
+      <div class="pitem b"><div class="pn">03 / 07</div><div class="pi"><img src="/icons/free-icon-absentee-ballot-16977065.png" alt="" /></div><h3>기록대로 투표</h3><div class="pen">Recorded-as-Cast</div><p>추적번호로 내 암호문의 게시판 포함 여부 확인</p></div>
+      <div class="pitem w"><div class="pn">04 / 07</div><div class="pi"><img src="/icons/free-icon-conclusion-18648709.png" alt="" /></div><h3>기록대로 집계</h3><div class="pen">Tallied-as-Recorded</div><p>암호문 상태 합산 · 복호화마다 증명 첨부</p></div>
+      <div class="pitem w"><div class="pn">05 / 07</div><div class="pi"><img src="/icons/free-icon-coordinate-8965026.png" alt="" /></div><h3>누구나 검증</h3><div class="pen">Universal Verifiability</div><p>공개 자료만으로 집계를 재계산하는 독립 검증기</p></div>
+      <div class="pitem b"><div class="pn">06 / 07</div><div class="pi"><img src="/icons/free-icon-validity-18648598.png" alt="" /></div><h3>자격 확인</h3><div class="pen">Eligibility</div><p>선거별 자격증명 · 무효화 값으로 중복 투표 차단</p></div>
+      <div class="pitem w"><div class="pn">07 / 07</div><div class="pi"><img src="/icons/free-icon-workflow-18648702.png" alt="" /></div><h3>강압 완화</h3><div class="pen">Coercion Resistance</div><p>기간 내 재투표 · 강요 상황의 패닉 투표</p></div>
+      <div class="pitem b e" aria-hidden="true"></div>
+    </div></div>
+  </div></section>
+
+  <!-- 투표 흐름 -->
+  <section id="flow"><div class="wrap side-r">
+    <img class="obj" data-float="-60" src="/showcase/img/o-box.png" alt="" style="width:clamp(180px,24vw,360px);left:1%;top:-2vw" />
+    <div class="wm r reveal" data-drift="5">FLOW</div>
+    <div class="kick reveal" style="margin-top:34px">Vote Flow · 처리 흐름</div>
+    <div class="split">
+      <h2 class="stmt reveal">한 표가 어떻게 <span class="mark">봉인되는가?</span></h2>
+      <p class="lede reveal">휴대폰 안에서 암호화와 영지식 증명 생성. 두 기관 이상이 승인한 표만 원장에 기록, 합계만 복호.</p>
+    </div>
+    <figure class="fig wide reveal"><img src="/showcase/img/d-flow1.png" width="3200" height="773" alt="유권자 단계: 후보 선택, 성분으로 변환, 암호화, 영지식 증명, 제출" loading="lazy" /></figure>
+    <figure class="fig wide reveal"><img src="/showcase/img/d-flow2.png" width="3200" height="832" alt="기록·개표·검증 단계: 승인과 기록, 성분별 곱셈 집계, 두 기관 협력 복호, 득표수 복원, 선거 검증" loading="lazy" /></figure>
+  </div></section>
+
+  <!-- 구조 -->
+  <section id="arch"><div class="wrap">
+    <img class="obj" data-float="70" src="/showcase/img/o-chain.png" alt="" style="width:clamp(200px,27vw,400px);left:38%;top:-5vw" />
+    <div class="wm bleed reveal" data-drift="-5">FABRIC</div>
+    <div class="kick reveal" style="margin-top:34px">Architecture · 구조</div>
+    <div class="split">
+      <h2 class="stmt reveal">한 기관만으로는<br>기록을 <span class="ink-i">바꿀 수 없다.</span></h2>
+      <p class="lede reveal">허가받은 기관만 참여하는 블록체인. 세 기관이 같은 원장을 나눠 보관, <b>3곳 중 2곳 이상</b> 승인 시에만 기록.</p>
+    </div>
+    <figure class="fig wide reveal"><img src="/showcase/img/d-fabric.png" width="3200" height="1798" alt="세 기관의 승인, 오더러 4대의 순서 합의, 각 기관 원장 기록" loading="lazy" /></figure>
+    <figure class="fig s wide reveal"><img src="/showcase/img/d-arch.png" width="3200" height="2056" alt="유권자 클라이언트, Fabric 네트워크, 개표위원, 독립 검증으로 이루어진 전체 구조" loading="lazy" /></figure>
+  </div></section>
+
+  <!-- 동형 집계 (파란 구간) -->
+  <section id="tally" class="sec-blue"><div class="wrap">
+    <img class="obj" data-float="-70" src="/showcase/img/o-lock.png" alt="" style="width:clamp(150px,19vw,290px);right:9%;top:-9vw;filter:drop-shadow(0 40px 50px rgba(10,11,16,.4))" />
+    <div class="wm wh bleed reveal" data-drift="-5">TALLY</div>
+    <div class="kick reveal" style="margin-top:34px">Homomorphic Tally · 동형 집계</div>
+    <div class="split">
+      <h2 class="stmt reveal">표를 열지 않고 <span class="mark">합산.</span></h2>
+      <p class="lede reveal">암호문끼리 곱하면 안의 값이 더해지는 동형암호. 개별 표는 끝까지 미개봉, 합계만 복호.</p>
+    </div>
+  </div>
+  <div class="strip reveal"><img src="/showcase/img/d-tally.png" width="2178" height="365" alt="암호문 다섯 개를 곱하면 합계가 든 암호문 하나가 된다" loading="lazy" /></div>
+  <div class="wrap">
+    <div class="steps">
+      <div class="stp reveal"><div class="blk"><b>1</b></div><h3>고른 후보에만 1</h3><p>후보마다 한 칸, 고른 칸에 1 · 나머지 0</p></div>
+      <div class="stp reveal"><div class="blk"><b>2</b></div><h3>칸마다 따로 암호화</h3><p>같은 0도 매번 다른 암호문 · 0과 1 구별 불가</p></div>
+      <div class="stp reveal"><div class="blk"><b>3</b></div><h3>암호문 상태로 합산</h3><p>암호문끼리 곱해 후보별 합계 생성 · 개별 표 미개봉</p></div>
+      <div class="stp reveal"><div class="blk"><b>4</b></div><h3>합계만 협력 복호</h3><p>개표위원 3명 중 2명 협력 · 1명으로는 복호 불가</p></div>
+    </div>
+  </div></section>
+
+  <!-- 강요 대응 -->
+  <section id="coercion"><div class="wrap side-r">
+    <div class="wm r reveal" data-drift="5">PANIC</div>
+    <div class="kick reveal" style="margin-top:34px">Coercion · 강요 대응</div>
+    <div class="split">
+      <h2 class="stmt reveal">“누구 찍었는지 <span class="mark">증명해.</span>”</h2>
+      <p class="lede reveal">기간 내 재투표 가능. 강요 상황에서는 패닉 투표. 화면과 원장 기록은 평소와 동일, 집계에는 혼자 낸 표만 반영.</p>
+    </div>
+    <figure class="fig m reveal"><img src="/showcase/img/d-coerce-a.png" width="3189" height="1086" alt="강요하는 사람과, 세 번의 투표 중 마지막 재투표만 집계되는 모습" loading="lazy" /></figure>
+    <figure class="fig s reveal"><img src="/showcase/img/d-coerce-b.png" width="3200" height="1307" alt="평소 투표, 패닉 투표, 재투표 모두 같은 완료 화면" loading="lazy" /></figure>
+    <div class="notes reveal">
+      <div class="note"><b>원장에서 구분 불가</b><p>패닉 투표는 일반 재투표와 같은 형태로 기록 · 패닉 표시는 서버로 미전송</p></div>
+      <div class="note"><b>남은 한계</b><p>자격증명을 빼앗겨 마지막에 대리 투표당하는 경우 · 기권 강요</p></div>
+      <div class="note"><b>부스 화면</b><p>시연용으로 패닉 투표 버튼 노출 · 실사용에는 구분되지 않는 입력 방식 필요</p></div>
+    </div>
+  </div></section>
+
+  <div class="band bl" aria-hidden="true"><div class="band-in">
+    <span>Reproducible</span><span>100 Elections</span><span>Single Linux Host</span><span>Independent Verifier</span><span>Tamper Cases Rejected</span><span>2-Hour Soak</span>
+    <span>Reproducible</span><span>100 Elections</span><span>Single Linux Host</span><span>Independent Verifier</span><span>Tamper Cases Rejected</span><span>2-Hour Soak</span>
+    <span>Reproducible</span><span>100 Elections</span><span>Single Linux Host</span><span>Independent Verifier</span><span>Tamper Cases Rejected</span><span>2-Hour Soak</span>
+    <span>Reproducible</span><span>100 Elections</span><span>Single Linux Host</span><span>Independent Verifier</span><span>Tamper Cases Rejected</span><span>2-Hour Soak</span>
+  </div></div>
+
+  <!-- 성능 (파란 구간) -->
+  <section id="perf" class="sec-blue"><div class="wrap">
+    <div class="kick reveal">Performance — 실측</div>
+    <div class="split">
+      <h2 class="stmt reveal">기능 소개가 아닌,<br><span class="mark">재현 가능한 실측.</span></h2>
+      <p class="lede reveal">Linux 서버 한 대 기준. 기존 원장을 유지한 채 선거 100개를 순차 생성. 기관이 물리적으로 분리된 환경의 성능은 아님.</p>
+    </div>
+    <div class="tbl reveal">
+      <div class="tr"><div class="c1">실험 규모<small>Scale</small></div><div class="c2">선거 100개 × 1,000표</div><div class="c3">선거를 하나씩 생성·종료하며 연속 실행</div></div>
+      <div class="tr"><div class="c1">총 투표 수<small>Ballots</small></div><div class="c2">10만 표 전부 처리</div><div class="c3">앞선 실행의 실패 4건 원인 수정 후 재측정</div></div>
+      <div class="tr"><div class="c1">처리량<small>Throughput</small></div><div class="c2">초당 4.845명</div><div class="c3">Fabric 거래 기준 초당 9.690건</div></div>
+      <div class="tr"><div class="c1">응답 시간<small>Latency</small></div><div class="c2">평균 8.24초</div><div class="c3">100건 중 95건이 9.66초 이내 응답</div></div>
+      <div class="tr"><div class="c1">장시간 실험<small>Soak</small></div><div class="c2">2시간 연속 실패 없음</div><div class="c3">7,208초 동안 선거 285개 · 2,850표 · 집계 전부 일치</div></div>
+      <div class="tr"><div class="c1">독립 검증기<small>Verifier</small></div><div class="c2">변조 사례 18종 전부 거부</div><div class="c3">10,000표 검증 자료 재계산에 393.74초</div></div>
+      <div class="tr"><div class="c1">부스 노트북<small>Booth</small></div><div class="c2">휴대폰 200대 동시 투표</div><div class="c3">노트북 한 대(Docker)에서 실패 없이 처리</div></div>
+    </div>
+    <p class="src reveal">측정 방법: <a href="https://github.com/SuBeen-Cho/blockchain_mongbas/tree/booth/aisw-festival-2026/docs/experiment-results" target="_blank" rel="noopener">저장소의 실험 보고서</a></p>
+  </div></section>
+
+  <!-- 체험 -->
+  <section id="exp"><div class="wrap">
+    <img class="obj" data-float="60" src="/showcase/img/o-key.png" alt="" style="width:clamp(170px,22vw,330px);left:36%;top:-4vw" />
+    <div class="expg">
+      <div>
+        <div class="kick reveal">The Experience</div>
+        <h2 class="stmt reveal" style="margin-top:14px">추적번호 하나로<br><span class="ink-i">내 표를 확인.</span></h2>
+        <p class="lede reveal">QR 접속 → 후보 선택 → 제출. 발급된 추적번호로 내 암호문의 개표 포함 여부를 직접 확인. 고른 후보는 비공개.</p>
+      </div>
+      <div class="phone reveal">
+        <div class="notch"></div>
+        <div class="pscreen">
+          <div class="pslide" id="s1">
+            <div class="pt">2026 모의 선거</div>
+            <div class="opt"><i></i>기호 1　치킨</div>
+            <div class="opt sel"><i></i>기호 2　피자</div>
+            <div class="opt"><i></i>기호 3　떡볶이</div>
+            <div class="pbtn">투표하기</div>
+          </div>
+          <div class="pslide" id="s2">
+            <div class="receipt">
+              <div class="chk"><svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12 5 5 9-10"/></svg></div>
+              <div style="font-weight:900;font-size:22px">투표 완료</div>
+              <div style="font-size:13px;font-weight:700">내 추적번호</div>
+              <div class="code">F427-C5A0</div>
+              <div style="font-size:12px;font-weight:700;padding:0 10px">이 번호로 내 암호문의<br>게시판 포함 여부 확인</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div></section>
+
+  <!-- 화면 -->
+  <section id="screens" style="padding-top:0"><div class="wrap">
+    <div class="kick reveal">Cast → Tally → Verify</div>
+    <h2 class="stmt reveal" style="margin-top:14px">찍고, 세고, <span class="ink-i">검증한다.</span></h2>
+    <div class="phones">
+      <figure class="phwrap reveal">
+        <div class="ph"><div class="scr">
+          <div class="phk"><span>01 · CAST</span></div>
+          <div class="pht">암호화<br><em>한 표</em></div>
+          <div class="prow"><i></i>치킨</div>
+          <div class="prow on"><i></i>피자</div>
+          <div class="prow"><i></i>떡볶이</div>
+          <div class="pseal">암호문과 증명만 전송</div>
+        </div></div>
+        <figcaption class="phcap"><div class="ct">VOTE · 암호화 투표</div><div class="cd">고른 후보는 휴대폰 밖으로 미전송</div></figcaption>
+      </figure>
+      <figure class="phwrap mid reveal">
+        <div class="ph"><div class="scr">
+          <div class="phk"><span>02 · TALLY</span><span class="live">● LIVE</span></div>
+          <div class="pht">2-of-3<br><em>개표</em></div>
+          <div class="bar"><span>치킨</span><div class="track"><i style="--w:40%"></i></div><b>40%</b></div>
+          <div class="bar"><span>피자</span><div class="track"><i style="--w:10%"></i></div><b>10%</b></div>
+          <div class="bar lead"><span>떡볶이</span><div class="track"><i style="--w:50%"></i></div><b>50%</b></div>
+          <div class="pseal ok">두 기관 협력 복호 완료</div>
+        </div></div>
+        <figcaption class="phcap"><div class="ct">CONTROL · 개표</div><div class="cd">두 기관 협력 시에만 합계 복호</div></figcaption>
+      </figure>
+      <figure class="phwrap reveal">
+        <div class="ph"><div class="scr">
+          <div class="phk"><span>03 · VERIFY</span></div>
+          <div class="pht">내 표<br><em>검증</em></div>
+          <div class="trk">0x9af…21</div>
+          <div class="trk me">F427-C5A0</div>
+          <div class="trk">0x4c2…8e</div>
+          <div class="trk">0xd71…05</div>
+          <div class="popseal">머클 트리 포함 확인</div>
+        </div></div>
+        <figcaption class="phcap"><div class="ct">VERIFY · 검증</div><div class="cd">추적번호로 포함 여부 직접 확인</div></figcaption>
+      </figure>
+    </div>
+  </div></section>
+
+  <!-- 비교 -->
+  <section id="why" style="padding-top:0"><div class="wrap">
+    <div class="kick reveal">Why Mongbas</div>
+    <h2 class="stmt reveal" style="margin-top:14px">한 곳에 몰린 신뢰의 <span class="mark">분산.</span></h2>
+    <div class="vs reveal">
+      <div class="vc"><h3>기존 전자투표</h3>
+        <div class="vr"><span class="m">✕</span>중앙 서버가 모든 표 열람</div>
+        <div class="vr"><span class="m">✕</span>내 표의 집계 반영 여부 확인 불가</div>
+        <div class="vr"><span class="m">✕</span>운영자의 결과 변경 탐지 곤란</div>
+        <div class="vr"><span class="m">✕</span>강요 상황에서 되돌릴 방법 없음</div></div>
+      <div class="vc b"><h3>Mongbas</h3>
+        <div class="vr"><span class="m">✓</span>운영자도 개별 표 복호 불가</div>
+        <div class="vr"><span class="m">✓</span>공개 자료로 집계 재계산</div>
+        <div class="vr"><span class="m">✓</span>한 기관 단독 기록 변경 불가</div>
+        <div class="vr"><span class="m">✓</span>강요받은 표는 재투표로 대체</div></div>
+    </div>
+  </div></section>
+
+  <!-- CTA -->
+  <section class="cta" id="try" style="padding-top:0"><div class="wrap">
+    <div class="block reveal">
+      <div class="wmin">VOTE</div>
+      <div class="kick">Try it</div>
+      <h2 style="margin-top:14px">직접 투표해 보세요.</h2>
+      <p style="position:relative;margin:20px auto 0;max-width:580px;font-weight:600;font-size:clamp(16px,1.6vw,19px)">투표 QR은 부스 관제판 화면에 표시. 한 표를 낸 뒤 추적번호로 내 암호문의 게시판 포함 여부 확인.</p>
+      <div class="btns">
+        <a class="btn fill" href="https://github.com/SuBeen-Cho/blockchain_mongbas" target="_blank" rel="noopener">GitHub에서 코드 보기</a>
+        <a class="btn" href="/showcase/doc/mongbas-slides.pdf" target="_blank" rel="noopener">발표자료 PDF</a>
+      </div>
+    </div>
+  </div></section>
+
+  <a class="logomark reveal" href="#top" aria-label="맨 위로"><img src="/logo/mongbas-symbol-blue.svg" alt="Mongbas" /><span>MONGBAS</span></a>
+
+  <footer>팀 몽바스 · 조수빈 정윤녕 윤서현 · 지도교수 서화정<br>한성대학교 융합보안학과 · 2026 캡스톤디자인 · Hyperledger Fabric 기반 전자투표 연구 프로토타입</footer>
+</main>
+
+<script src="/showcase/vendor/gsap.min.js" defer></script>
+<script src="/showcase/vendor/ScrollTrigger.min.js" defer></script>
+<script src="/showcase/js/showcase.js" defer></script>
+<script type="module" src="/showcase/js/wire.js"></script>
+</body>
+</html>

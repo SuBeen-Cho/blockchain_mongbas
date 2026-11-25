@@ -89,3 +89,6 @@ docs/security-eval/
 
 # 벤치 평가 원자료(로컬 유지, GitHub 미포함)
 application/benchmark-reports/
+
+# Netlify CLI 로컬 연결 정보
+.netlify/

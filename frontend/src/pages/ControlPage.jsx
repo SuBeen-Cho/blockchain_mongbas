@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, lazy, Suspense } from 'react';
 import QRCode from 'qrcode';
 import { buildSecureKioskUrl, displayKioskUrl } from '../utils/kioskUrl.js';
 import { fetchMongbasJSON, verifyMerkleNullifier } from '../utils/merkleVerification.js';
@@ -7,6 +7,8 @@ import { sha256 } from '../utils/crypto.js';
 import { verifyVectorBallotProofBrowser } from '../utils/ballotProof.js';
 import { verifyCountedSlot, zeroSlot, PANIC_POLICY_DENIABLE_SLOT } from '../utils/countedSlot.js';
 import { buildTallyStory, shortHex } from '../utils/tallyStory.js';
+// three.js는 개표 화면에서만 받음 (휴대폰 투표 화면 번들에서 제외)
+const TallyAnimation = lazy(() => import('../components/TallyAnimation.jsx'));
 import LedgerFeed from '../components/LedgerFeed.jsx';
 
 /**
@@ -67,6 +69,7 @@ export default function ControlPage() {
   const [inj, setInj] = useState([1, 1, 1]);        // 후보별 커스텀 주입 개수
   const [rootHash, setRootHash] = useState('');     // 공개된 Merkle root (검증 탭 상단 표시)
   const [story, setStory] = useState(null);         // 공개 게시판에서 다시 계산한 개표 과정 값
+  const [showAnim, setShowAnim] = useState(false);  // 개표 애니메이션: 기본 꺼짐, 새 세션마다 다시 꺼짐
   const loadStory = useCallback(async (electionID, tallyResults) => {
     try {
       const board = await J(`/elections/${encodeURIComponent(electionID)}/bulletin-board`);
@@ -198,7 +201,7 @@ export default function ControlPage() {
     setEid(id); setStatus('CREATING'); setLive(0); setVotes([]); setCastEvents([]); setPaddingCount(0); setShuffled(false);
     const nextUrl = new URL(window.location.href); nextUrl.searchParams.set('e', id); window.history.replaceState(null, '', nextUrl);
     setAdmission(null); setResults(null); setDecrypted(false); setView('session');
-    setVres(null); setVfail(''); setRootHash(''); setStory(null); evRef.current = 0;
+    setVres(null); setVfail(''); setRootHash(''); setStory(null); setShowAnim(false); evRef.current = 0;
     addLog(`새 세션 생성 요청: ${id}`);
     try {
       const now = Math.floor(Date.now() / 1000);
@@ -462,7 +465,10 @@ export default function ControlPage() {
             </h1>
             <p style={{ margin: '4px 0 0', fontSize: 13, color: T.sub, fontWeight: 600, fontFamily: 'monospace' }}>{eid || 'Mongbas 부스 시연 · 암호화·검증 투표'}</p>
           </div>
-          <Status status={status} />
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            <AnimToggle on={showAnim} onChange={setShowAnim} />
+            <Status status={status} />
+          </div>
         </header>
 
         {!eid && <Empty />}
@@ -486,7 +492,7 @@ export default function ControlPage() {
           </>
         )}
 
-        {eid && view === 'tally' && <TallyView results={results} decrypted={decrypted} total={totalRes} max={maxRes} busy={busy} votes={votes} shuffled={shuffled} live={live} story={story} rootHash={rootHash} />}
+        {eid && view === 'tally' && <TallyView results={results} decrypted={decrypted} total={totalRes} max={maxRes} busy={busy} votes={votes} shuffled={shuffled} live={live} story={story} rootHash={rootHash} showAnim={showAnim} />}
 
         {eid && view === 'verify' && (
           <VerifyView code={vcode} setCode={setVcode} run={() => runVerify(vcode)} tamper={tamper} res={vres} fail={vfail} busy={busy} status={status} rootHash={rootHash} />
@@ -607,7 +613,20 @@ function LogCard({ log }) {
     </section>
   );
 }
-function TallyView({ results, decrypted, total, max, busy, votes, shuffled, live, story, rootHash }) {
+/** 개표 애니메이션 켜기/끄기 스위치 (헤더 오른쪽 위) */
+function AnimToggle({ on, onChange }) {
+  return (
+    <label style={{ display: 'inline-flex', alignItems: 'center', gap: 7, cursor: 'pointer', userSelect: 'none', fontSize: 12, fontWeight: 700, color: on ? T.blue : T.sub }}>
+      <span>개표 애니메이션</span>
+      <button type="button" role="switch" aria-checked={on} aria-label="개표 애니메이션" onClick={() => onChange(!on)}
+        style={{ position: 'relative', width: 34, height: 20, padding: 0, border: 'none', borderRadius: 999, background: on ? T.blue : '#c9cfdf', cursor: 'pointer', transition: 'background .2s' }}>
+        <span style={{ position: 'absolute', top: 2, left: on ? 16 : 2, width: 16, height: 16, borderRadius: 999, background: '#fff', boxShadow: '0 1px 3px rgba(0,0,0,.25)', transition: 'left .2s' }} />
+      </button>
+    </label>
+  );
+}
+
+function TallyView({ results, decrypted, total, max, busy, votes, shuffled, live, story, rootHash, showAnim }) {
   const deniable = !!story?.deniable;
   const panic = deniable ? 0 : Math.max(0, (live || 0) - (total || 0));
   const orgName = (msp) => ({ ElectionCommissionMSP: '선거관리위원회', PartyObserverMSP: '참관 정당', CivilSocietyMSP: '시민단체' }[msp] || msp);
@@ -672,6 +691,12 @@ function TallyView({ results, decrypted, total, max, busy, votes, shuffled, live
           );
         }) : <div style={{ color: T.sub, fontWeight: 700, padding: 14 }}>{busy || '집계 진행 중…'}</div>}
       </section>
+
+      {showAnim && decrypted && story && (
+        <Suspense fallback={<section style={{ ...box, color: T.sub, fontWeight: 800, textAlign: 'center', padding: 40 }}>개표 화면 불러오는 중…</section>}>
+          <TallyAnimation story={story} />
+        </Suspense>
+      )}
 
       {story && (
         <section style={{ ...box }}>
